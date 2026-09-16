@@ -1,0 +1,35 @@
+# Render Blueprint — SecureNexus Interior Studio
+# Deploy: connect this repo, or 'New Web Service' -> 'From render.yaml'
+services:
+  - type: web
+    name: secure-nexus-studio
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Since MASTER_KEY encrypts every project/photo, it must never change.
+      # "Generate value" creates a one-time random value during first deploy.
+      - key: MASTER_KEY
+        generateValue: true
+      - key: PORT
+        value: 10000
+      # Payments default to DEMO mode (no credentials needed, fake checkout).
+      # Set PAYMENTS_MODE=live and add keys to go live:
+      #   RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET / RAZORPAY_WEBHOOK_SECRET
+      #   PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET  (PAYPAL_MODE=live for prod)
+      - key: PAYMENTS_MODE
+        value: demo
+        sync: false
+    # Recommended (paid plans): persistent disk so user data survives redeploys.
+    # On the FREE tier the SQLite file lives in the ephemeral filesystem and is
+    # reset on every deploy/restart. Add a disk and set:
+    #   env: SECURE_NEXUS_DATA_DIR=/var/data
+    # disk:
+    #   name: data
+    #   mountPath: /var/data
+    #   sizeGB: 1

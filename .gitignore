@@ -1,0 +1,10 @@
+node_modules/
+dist/
+server/data/
+.serverless/
+*.log
+.env
+.env.local
+.DS_Store
+Thumbs.db
+xauusd_liquidity_displacement.pine

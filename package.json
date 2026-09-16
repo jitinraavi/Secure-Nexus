@@ -1,0 +1,22 @@
+{
+  "name": "secure-nexus",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SecureNexus Interior Studio — encrypted interior-design workspace with 3D editor, CAD/OBJ/GLB export, payments and audit logging",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,cyan \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w client && npm run build -w server",
+    "start": "npm run start -w server",
+    "lint": "tsc --noEmit -p server && tsc --noEmit -p client"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
