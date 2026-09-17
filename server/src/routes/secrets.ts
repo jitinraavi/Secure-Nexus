@@ -8,7 +8,7 @@ import { createSecretSchema } from "../validate.js";
 
 const router = Router();
 const VAULT_KEY = deriveVaultKey(MASTER_KEY);
-const AAD = "secure-nexus:vault";
+const AAD = "groundwork:vault";
 
 router.use((req: AuthedRequest, res, next) => {
   const session = resolveSession(req);

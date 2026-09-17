@@ -87,7 +87,7 @@ export function Landing() {
       </section>
 
       <footer className="border-t border-slate-800/60 py-8 text-center text-xs text-slate-500">
-        SecureNexus Interior Studio · Reference full-stack application · Node 22 · SQLite · React · Three.js
+        Groundwork Design Studio · Node 22 · SQLite · React · Three.js · Google Maps
       </footer>
     </div>
   );

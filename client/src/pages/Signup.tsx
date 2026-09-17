@@ -118,7 +118,7 @@ export function Signup() {
       }
       await refresh();
       navigate("/dashboard", { replace: true });
-      toast.push({ title: "Account created", description: "Welcome to SecureNexus.", tone: "success" });
+      toast.push({ title: "Account created", description: "Welcome to Groundwork.", tone: "success" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed");
     } finally {
@@ -135,7 +135,7 @@ export function Signup() {
       navigate("/dashboard", { replace: true });
       toast.push({
         title: "Email verified",
-        description: res.alreadyVerified ? "Account already verified." : "Welcome to SecureNexus.",
+        description: res.alreadyVerified ? "Account already verified." : "Welcome to Groundwork.",
         tone: "success",
       });
     } catch (err) {

@@ -1,8 +1,8 @@
 {
-  "name": "secure-nexus",
+  "name": "groundwork",
   "version": "1.0.0",
   "private": true,
-  "description": "SecureNexus Interior Studio — encrypted interior-design workspace with 3D editor, CAD/OBJ/GLB export, payments and audit logging",
+  "description": "Groundwork Design Studio — encrypted design workspace with 3D editor, Google Maps site location, infrastructure wizards, CAD/OBJ/GLB export, payments and audit logging",
   "workspaces": [
     "server",
     "client"

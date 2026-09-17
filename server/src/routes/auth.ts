@@ -663,7 +663,7 @@ router.get(
     }
     const secret = generateTotpSecret();
     db.prepare("UPDATE users SET totp_secret = ?, updated_at = ? WHERE id = ?").run(secret, now(), session.user_id);
-    const uri = totpIssuerUri("SecureNexus", user.email, secret);
+    const uri = totpIssuerUri("Groundwork", user.email, secret);
     const qrDataUrl = await qrcode.toDataURL(uri, { margin: 1, width: 240 });
     logAudit(session.user_id, "auth.2fa_setup_started", "New TOTP secret issued", req);
     res.json({ secret, otpauthUrl: uri, qrDataUrl });

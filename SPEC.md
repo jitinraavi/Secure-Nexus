@@ -64,7 +64,7 @@ An app + web application for **interior designers and freelance architects** to:
 
 ## 5. Security (inherited from existing backend)
 
-Reuses the already-scaffolded **SecureNexus** backend:
+Reuses the already-scaffolded **Groundwork** backend:
 
 - **Authentication & sessions**: scrypt password hashing, server-side sessions (hashed tokens), httpOnly/sameSite cookies, idle + absolute expiry.
 - **MFA**: TOTP two-factor authentication.

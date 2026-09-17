@@ -14,18 +14,23 @@ function pickTransport():
   | { type: "resend" }
   | { type: "smtp"; transport: SmtpTransport }
   | { type: "console" } {
-  const provider = MAIL.provider || (MAIL.resendKey ? "resend" : MAIL.host ? "smtp" : "console");
+  const hasSmtpCreds = Boolean(MAIL.host && MAIL.user && MAIL.pass);
+  const provider = MAIL.provider || (MAIL.resendKey ? "resend" : hasSmtpCreds ? "smtp" : "console");
   if (provider === "resend" && MAIL.resendKey) return { type: "resend" };
-  if (provider === "smtp" && MAIL.host) {
-    return {
-      type: "smtp",
-      transport: nodemailer.createTransport({
-        host: MAIL.host,
-        port: MAIL.port,
-        secure: MAIL.secure,
-        auth: MAIL.user ? { user: MAIL.user, pass: MAIL.pass } : undefined,
-      }),
-    };
+  if (provider === "smtp") {
+    if (!hasSmtpCreds) {
+      console.warn("[groundwork] SMTP configured without MAIL_USER/MAIL_PASS - falling back to console log");
+    } else {
+      return {
+        type: "smtp",
+        transport: nodemailer.createTransport({
+          host: MAIL.host,
+          port: MAIL.port,
+          secure: MAIL.secure,
+          auth: { user: MAIL.user, pass: MAIL.pass },
+        }),
+      };
+    }
   }
   return { type: "console" };
 }
@@ -46,7 +51,7 @@ async function sendResend(to: string, subject: string, html: string): Promise<vo
 
 export async function sendMail(to: string, subject: string, text: string): Promise<MailResult> {
   const html = `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px">
-<h2 style="color:#0f172a;margin:0 0 8px">SecureNexus</h2>
+<h2 style="color:#0f172a;margin:0 0 8px">Groundwork</h2>
 <p style="color:#334155;font-size:15px;line-height:1.6">${text.replace(/\n/g, "<br/>")}</p>
 </div>`;
 
@@ -61,8 +66,8 @@ export async function sendMail(to: string, subject: string, text: string): Promi
     case "console":
     default:
       /* No provider configured: print to server log so the flow is usable while
-         developing. Never surfaces in production unless SECURE_NEXUS_DEV_OTP=1. */
-      console.log(`[secure-nexus] Email (${to}): ${subject}\n${text}`);
+         developing. Never surfaces in production unless GROUNDWORK_DEV_OTP=1. */
+      console.log(`[groundwork] Email (${to}): ${subject}\n${text}`);
       return { delivered: false, via: "console", devCode: !IS_PROD && MAIL.devOtp ? text.match(/\d{6}/)?.[0] : undefined };
   }
 }
@@ -70,7 +75,7 @@ export async function sendMail(to: string, subject: string, text: string): Promi
 export function sendOtpEmail(to: string, code: string): Promise<MailResult> {
   return sendMail(
     to,
-    "Your SecureNexus verification code",
-    `Hi there,\n\nYour SecureNexus email verification code is ${code}.\n\nThis code expires in 10 minutes. If you did not request it, you can ignore this email.`,
+    "Your Groundwork verification code",
+    `Hi there,\n\nYour Groundwork verification code is ${code}.\n\nThis code expires in 10 minutes. If you did not request it, you can ignore this email.`,
   );
 }

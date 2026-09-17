@@ -1,8 +1,8 @@
-# Render Blueprint — SecureNexus Interior Studio
+# Render Blueprint — Groundwork Design Studio
 # Deploy: connect this repo, or 'New Web Service' -> 'From render.yaml'
 services:
   - type: web
-    name: secure-nexus-studio
+    name: groundwork-design-studio
     runtime: node
     plan: free
     region: oregon
@@ -28,7 +28,7 @@ services:
     # Recommended (paid plans): persistent disk so user data survives redeploys.
     # On the FREE tier the SQLite file lives in the ephemeral filesystem and is
     # reset on every deploy/restart. Add a disk and set:
-    #   env: SECURE_NEXUS_DATA_DIR=/var/data
+    #   env: GROUNDWORK_DATA_DIR=/var/data
     # disk:
     #   name: data
     #   mountPath: /var/data

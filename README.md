@@ -1,11 +1,12 @@
-# SecureNexus Interior Studio
+# Groundwork Design Studio
 
-A deployable, full-stack app for interior designers and freelance architects:
+A deployable, full-stack design studio for interior designers, architects and site engineers:
 
 - **Capture a room** — camera or file upload (PNG/JPEG/WebP/GIF), traced as the canvas backdrop.
 - **Design in 3D** — place furniture, change finishes/colours, scale and rotate, paint walls/floors, add curtains (sheer/blackout/roman/panel) on any wall.
 - **Ship to CAD & 3D tools** — export DXF (AutoCAD-ready plan with layers), OBJ+MTL (Blender/3ds Max), GLB, and a furniture bill-of-materials CSV.
 - **Get paid** — subscription portal (Free / Pro ₹4,999·mo / Studio ₹11,999·yr) with UPI, card and PayPal; demo mode works with zero credentials.
+- **Design outside the box** — residential/commercial community builder and highway/airport/ports/dams infrastructure wizards anchored on a Google Maps site, with earth-distortion-free 3D scenes and takeoffs.
 - **Hardened by default** — scrypt password hashing, TOTP 2FA, encrypted-at-rest design data and photos (AES-256-GCM), CSRF, rate limiting, account lockout and a full audit log.
 
 Stack: Node 22 · Express · SQLite (`node:sqlite`) · React 18 · Vite · Tailwind v4 · three.js.
@@ -52,9 +53,9 @@ Option B — manual web service settings:
 | Health check path | `/api/health` |
 | Env: `NODE_ENV` | `production` |
 | Env: `MASTER_KEY` | **Generate value** (must never change after first deploy) |
-| Env: `SECURE_NEXUS_DATA_DIR` | e.g. `/var/data` with a persistent disk (see below) |
+| Env: `GROUNDWORK_DATA_DIR` | e.g. `/var/data` with a persistent disk (see below) |
 
-**Persistence:** on the free tier the SQLite database lives in the ephemeral filesystem and is wiped on every redeploy/restart. For real use, add a persistent disk (paid plans) mounted at `/var/data` and set `SECURE_NEXUS_DATA_DIR=/var/data` — the server will create the SQLite file there. DB path override: `DB_PATH=/var/data/app.db`.
+**Persistence:** on the free tier the SQLite database lives in the ephemeral filesystem and is wiped on every redeploy/restart. For real use, add a persistent disk (paid plans) mounted at `/var/data` and set `GROUNDWORK_DATA_DIR=/var/data` — the server will create the SQLite file there. DB path override: `DB_PATH=/var/data/app.db`.
 
 **Going live with payments:** set `PAYMENTS_MODE=live` and add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` (register the webhook URL `https://<your-app>/api/payments/webhook` for the `payment_link.paid` event) and `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` (set `PAYPAL_MODE=live` for production). In demo mode a "Confirm demo payment" button completes any checkout — never enable that with real credentials.
 

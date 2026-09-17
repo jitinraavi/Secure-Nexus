@@ -81,7 +81,7 @@ export function Checkout() {
       <Card className="p-6">
         <div className="flex items-center justify-between border-b border-slate-800 pb-4">
           <div>
-            <p className="text-sm text-slate-400">SecureNexus <span className="capitalize text-slate-200">{payment.plan}</span> plan</p>
+            <p className="text-sm text-slate-400">Groundwork <span className="capitalize text-slate-200">{payment.plan}</span> plan</p>
             <p className="mt-0.5 text-xs text-slate-500">Created {formatDate(payment.created_at)}</p>
           </div>
           <p className="text-2xl font-extrabold text-slate-50">

@@ -19,13 +19,13 @@ export const IS_PROD = NODE_ENV === "production";
 
 export const PORT = Number(process.env.PORT || 4000);
 
-export const DATA_DIR = process.env.SECURE_NEXUS_DATA_DIR
-  ? path.resolve(process.env.SECURE_NEXUS_DATA_DIR)
+export const DATA_DIR = process.env.GROUNDWORK_DATA_DIR
+  ? path.resolve(process.env.GROUNDWORK_DATA_DIR)
   : path.join(SERVER_ROOT, "data");
 ensureDir(DATA_DIR);
 export const DB_PATH = process.env.DB_PATH
-  ? path.resolve(process.env.DB_PATH, "secure-nexus.db")
-  : path.join(DATA_DIR, "secure-nexus.db");
+  ? path.resolve(process.env.DB_PATH, "groundwork.db")
+  : path.join(DATA_DIR, "groundwork.db");
 
 function loadOrCreateMasterKey(): Buffer {
   const envKey = process.env.MASTER_KEY;
@@ -38,7 +38,7 @@ function loadOrCreateMasterKey(): Buffer {
   if (!lines.some((l) => l.trim().startsWith("MASTER_KEY="))) {
     lines.push(`MASTER_KEY=${b64}`);
     fs.writeFileSync(ENV_PATH, lines.join("\n").trim() + "\n");
-    console.log("[secure-nexus] Generated MASTER_KEY and wrote it to server/.env");
+    console.log("[groundwork] Generated MASTER_KEY and wrote it to server/.env");
   }
   return key;
 }
@@ -67,7 +67,7 @@ export const MAIL = {
   secure: process.env.MAIL_SECURE === "true",
   user: process.env.MAIL_USER || "",
   pass: process.env.MAIL_PASS || "",
-  from: process.env.MAIL_FROM || "SecureNexus <no-reply@secure-nexus.app>",
+  from: process.env.MAIL_FROM || "Groundwork <groundwork.login@gmail.com>",
   resendKey: process.env.RESEND_API_KEY || "",
-  devOtp: process.env.SECURE_NEXUS_DEV_OTP !== "0",
+  devOtp: process.env.GROUNDWORK_DEV_OTP !== "0",
 };

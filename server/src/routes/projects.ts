@@ -9,8 +9,8 @@ import { z } from "zod";
 
 const router = Router();
 const VAULT_KEY = deriveVaultKey(MASTER_KEY);
-const PROJECT_AAD = "secure-nexus:project";
-const FILE_AAD = "secure-nexus:file";
+const PROJECT_AAD = "groundwork:project";
+const FILE_AAD = "groundwork:file";
 
 const upload = multer({
   storage: multer.memoryStorage(),

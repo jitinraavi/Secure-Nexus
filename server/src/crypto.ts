@@ -48,7 +48,7 @@ export function verifyPassword(password: string, salt: string, hashHex: string):
 }
 
 export function deriveVaultKey(masterKey: Buffer): Buffer {
-  return Buffer.from(hkdfSync("sha256", masterKey, Buffer.from("secure-nexus-vault"), Buffer.from("vault-key-ctx"), 32));
+  return Buffer.from(hkdfSync("sha256", masterKey, Buffer.from("groundwork-vault"), Buffer.from("vault-key-ctx"), 32));
 }
 
 export interface EncryptedPayload {

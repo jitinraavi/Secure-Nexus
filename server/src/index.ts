@@ -114,15 +114,15 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
-    console.error("[secure-nexus] Unhandled error:", err);
+    console.error("[groundwork] Unhandled error:", err);
     res.status(500).json({ error: "Internal server error" });
   },
 );
 
 app.listen(PORT, () => {
-  console.log(`[secure-nexus] API listening on http://localhost:${PORT}`);
-  console.log(`[secure-nexus] Environment: ${IS_PROD ? "production" : "development"}`);
+  console.log(`[groundwork] API listening on http://localhost:${PORT}`);
+  console.log(`[groundwork] Environment: ${IS_PROD ? "production" : "development"}`);
   if (fs.existsSync(path.join(CLIENT_DIST, "index.html"))) {
-    console.log(`[secure-nexus] Serving static client from ${CLIENT_DIST}`);
+    console.log(`[groundwork] Serving static client from ${CLIENT_DIST}`);
   }
 });

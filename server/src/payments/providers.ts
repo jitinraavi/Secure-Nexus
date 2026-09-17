@@ -92,7 +92,7 @@ const razorpayProvider: Provider = {
         amount,
         currency: "INR",
         accept_partial: false,
-        description: `SecureNexus ${p.plan.name} plan`,
+        description: `Groundwork ${p.plan.name} plan`,
         customer: { email: p.email, contact: "" },
         notes: { order_id: p.orderId, user_id: p.userId },
         callback_url: "", // frontend polls the order status
@@ -156,11 +156,11 @@ const paypalProvider: Provider = {
             reference_id: p.orderId,
             custom_id: p.userId,
             amount: { currency_code: info.currency, value },
-            description: `SecureNexus ${p.plan.name} plan`,
+description: `Groundwork ${p.plan.name} plan`,
           },
         ],
         application_context: {
-          brand_name: "SecureNexus",
+          brand_name: "Groundwork",
           user_action: "PAY_NOW",
         },
       }),
