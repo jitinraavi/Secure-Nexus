@@ -3,7 +3,9 @@ import { randomInt } from "node:crypto";
 import qrcode from "qrcode";
 import { logAudit } from "../audit.js";
 import {
+  IS_PROD,
   LOCK_SECONDS,
+  MAIL,
   MAX_FAILED_ATTEMPTS,
   OTP_MAX_ATTEMPTS,
   OTP_RESEND_COOLDOWN_SECONDS,
@@ -44,6 +46,41 @@ function issueOtp(userId: string, code: string, email: string): void {
   db.prepare(
     "UPDATE users SET otp_code_hash = ?, otp_expires_at = ?, otp_attempts = 0, updated_at = ? WHERE id = ?",
   ).run(sha256Hex(`${userId}:${code}`), now() + OTP_TTL_SECONDS, now(), userId);
+}
+
+interface UserRow {
+  id: string;
+  email: string;
+  username?: string | null;
+  email_verified?: number;
+  password_salt: string;
+  password_hash: string;
+  totp_secret?: string | null;
+  totp_enabled: number;
+  failed_attempts: number;
+  locked_until: number | null;
+  last_login_at: number | null;
+  password_changed_at: number;
+  created_at: number;
+  otp_code_hash?: string | null;
+  otp_expires_at?: number | null;
+  otp_attempts: number;
+}
+
+/* Resolve a sign-in identifier: an exact email, or a case-insensitive username. */
+function resolveUser(identifier: string): UserRow | undefined {
+  const byEmail = db.prepare("SELECT * FROM users WHERE email = ?").get(identifier) as UserRow | undefined;
+  if (byEmail) return byEmail;
+  return db.prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE").get(identifier) as
+    | UserRow
+    | undefined;
+}
+
+/** Dev-mode fallback so usable codes are shown even when SMTP is misconfigured. */
+function devLeak(code: string, mail: { via: string; devCode?: string }): string | undefined {
+  if (mail.devCode) return mail.devCode;
+  if (!IS_PROD && MAIL.devOtp && mail.via === "error") return code;
+  return undefined;
 }
 
 function publicUser(user: {
@@ -150,8 +187,8 @@ router.post(
           : "Account created. A 6-digit verification code was sent to your email.",
       emailDelivered: mail.via !== "error",
       mailError: mail.error,
-      devOtp: mail.via === "console" ? mail.devCode : undefined,
-      ...(mail.via !== "console" ? {} : { devOtpNote: "No mail provider configured — code printed to server log." }),
+      devOtp: devLeak(code, mail),
+      ...(devLeak(code, mail) ? { devOtpNote: "No mail provider configured — code printed to server log." } : {}),
     });
   }),
 );
@@ -165,24 +202,9 @@ router.post(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const { email, code } = parsed.data;
+    const { email: identifier, code } = parsed.data;
 
-    const user = db
-      .prepare("SELECT * FROM users WHERE email = ?")
-      .get(email) as
-      | {
-          id: string;
-          email: string;
-          email_verified: number;
-          otp_code_hash: string | null;
-          otp_expires_at: number | null;
-          otp_attempts: number;
-          totp_enabled: number;
-          created_at: number;
-          last_login_at: number | null;
-          password_changed_at: number;
-        }
-      | undefined;
+    const user = resolveUser(identifier);
 
     if (!user) {
       res.status(401).json({ error: "No account found for that email" });
@@ -241,12 +263,8 @@ router.post(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const { email } = parsed.data;
-    const user = db
-      .prepare("SELECT id, email, email_verified, otp_expires_at FROM users WHERE email = ?")
-      .get(email) as
-      | { id: string; email: string; email_verified: number; otp_expires_at: number | null }
-      | undefined;
+    const { email: identifier } = parsed.data;
+    const user = resolveUser(identifier);
     if (!user) {
       res.status(404).json({ error: "No account found for that email" });
       return;
@@ -271,7 +289,7 @@ router.post(
         mail.via === "error"
           ? "We couldn't send the email. Please try again shortly or contact support."
           : "A new 6-digit code was sent to your email.",
-      devOtp: mail.via === "console" ? mail.devCode : undefined,
+      devOtp: devLeak(code, mail),
     });
   }),
 );
@@ -285,10 +303,8 @@ router.post(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const { email } = parsed.data;
-    const user = db
-      .prepare("SELECT id, email, otp_expires_at FROM users WHERE email = ?")
-      .get(email) as { id: string; email: string; otp_expires_at: number | null } | undefined;
+    const { email: identifier } = parsed.data;
+    const user = resolveUser(identifier);
 
     if (!user) {
       /* Respond identically whether or not the account exists (no probing) */
@@ -317,7 +333,7 @@ router.post(
           : mail.via === "console"
             ? "If that email has an account, a 6-digit login code is on its way (dev mode)."
             : "If that email has an account, a 6-digit login code is on its way.",
-      devOtp: mail.via === "console" ? mail.devCode : undefined,
+      devOtp: devLeak(code, mail),
     });
   }),
 );
@@ -331,24 +347,9 @@ router.post(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const { email, code } = parsed.data;
+    const { email: identifier, code } = parsed.data;
 
-    const user = db
-      .prepare("SELECT * FROM users WHERE email = ?")
-      .get(email) as
-      | {
-          id: string;
-          email: string;
-          email_verified: number;
-          otp_code_hash: string | null;
-          otp_expires_at: number | null;
-          otp_attempts: number;
-          totp_enabled: number;
-          created_at: number;
-          last_login_at: number | null;
-          password_changed_at: number;
-        }
-      | undefined;
+    const user = resolveUser(identifier);
 
     if (!user) {
       res.status(401).json({ error: "No account found for that email" });
@@ -405,27 +406,9 @@ router.post(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const { email, password } = parsed.data;
+    const { email: identifier, password } = parsed.data;
 
-    const user = db
-      .prepare("SELECT * FROM users WHERE email = ?")
-      .get(email) as
-      | {
-          id: string;
-          email: string;
-          username?: string | null;
-          email_verified?: number;
-          password_salt: string;
-          password_hash: string;
-          totp_secret: string | null;
-          totp_enabled: number;
-          failed_attempts: number;
-          locked_until: number | null;
-          last_login_at: number | null;
-          password_changed_at: number;
-          created_at: number;
-        }
-      | undefined;
+    const user = resolveUser(identifier);
 
     if (user && user.email_verified === 0) {
       res.status(403).json({
@@ -436,13 +419,13 @@ router.post(
     }
 
     if (!user || !verifyPassword(password, user.password_salt, user.password_hash)) {
-      let detail = `Failed login for ${email}`;
+      let detail = `Failed login for ${identifier}`;
       if (user) {
         const failed = user.failed_attempts + 1;
         let lockedUntil: number | null = null;
         if (failed >= MAX_FAILED_ATTEMPTS) {
           lockedUntil = now() + LOCK_SECONDS;
-          detail = `Failed login for ${email} — account locked for ${LOCK_SECONDS / 60} min (${failed} attempts)`;
+          detail = `Failed login for ${identifier} — account locked for ${LOCK_SECONDS / 60} min (${failed} attempts)`;
         }
         db.prepare(
           "UPDATE users SET failed_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?",

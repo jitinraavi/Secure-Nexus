@@ -7,6 +7,17 @@ export const emailSchema = z
   .email("Enter a valid email address")
   .max(254);
 
+/* Sign-in identifier: an email address or a (case-insensitive) username. */
+export const identifierSchema = z
+  .string()
+  .trim()
+  .min(3, "Enter your email or username")
+  .max(254)
+  .transform((v) => (v.includes("@") ? v.toLowerCase() : v))
+  .refine((v) => !v.includes("@") || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v), {
+    message: "Enter a valid email address",
+  });
+
 export const passwordSchema = z
   .string()
   .min(8, "Password must be at least 8 characters")
@@ -77,7 +88,7 @@ export const signupSchema = z
   });
 
 export const loginSchema = z.object({
-  email: emailSchema,
+  email: identifierSchema,
   password: z.string().min(1, "Password is required").max(128),
 });
 
@@ -89,7 +100,7 @@ export const verifyTwoFactorSchema = z.object({
 });
 
 export const verifyEmailSchema = z.object({
-  email: emailSchema,
+  email: identifierSchema,
   code: z
     .string()
     .trim()
@@ -97,15 +108,15 @@ export const verifyEmailSchema = z.object({
 });
 
 export const resendOtpSchema = z.object({
-  email: emailSchema,
+  email: identifierSchema,
 });
 
 export const otpLoginRequestSchema = z.object({
-  email: emailSchema,
+  email: identifierSchema,
 });
 
 export const otpLoginVerifySchema = z.object({
-  email: emailSchema,
+  email: identifierSchema,
   code: z
     .string()
     .trim()

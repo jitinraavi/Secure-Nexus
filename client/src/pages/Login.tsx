@@ -13,7 +13,7 @@ export function Login() {
   const { refresh } = useAuth();
   const toast = useToast();
   const [mode, setMode] = useState<LoginMode>("password");
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
@@ -35,7 +35,7 @@ export function Login() {
     setError("");
     setLoading(true);
     try {
-      const res = await login(email.trim(), password);
+      const res = await login(identifier.trim(), password);
       await finishLogin(res.needsTwoFactor);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -46,14 +46,14 @@ export function Login() {
   };
 
   const sendCode = async () => {
-    if (!email.trim()) {
-      setError("Enter your email first");
+    if (!identifier.trim()) {
+      setError("Enter your email or username first");
       return;
     }
     setError("");
     setSendingCode(true);
     try {
-      const res = await requestOtpLogin(email.trim());
+      const res = await requestOtpLogin(identifier.trim());
       setOtpRequested(true);
       setCode("");
       const failed = res.delivered === false && !res.devOtp;
@@ -79,7 +79,7 @@ export function Login() {
     setError("");
     setLoading(true);
     try {
-      const res = await loginWithOtp(email.trim(), code.trim().replace(/\D/g, ""));
+      const res = await loginWithOtp(identifier.trim(), code.trim().replace(/\D/g, ""));
       await finishLogin(res.needsTwoFactor);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in");
@@ -135,12 +135,12 @@ export function Login() {
           {mode === "password" && (
             <form onSubmit={submitPassword} className="mt-6 space-y-4">
               <Input
-                label="Email"
-                type="email"
-                autoComplete="email"
-                placeholder="you@studio.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                label="Email or username"
+                type="text"
+                autoComplete="username"
+                placeholder="you@studio.com or username"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 required
               />
               <Input
@@ -156,6 +156,7 @@ export function Login() {
               <Button type="submit" loading={loading} className="w-full" size="lg">
                 Sign in
               </Button>
+              <p className="text-center text-xs text-slate-500">Sign in with your email or username.</p>
             </form>
           )}
 
@@ -168,12 +169,12 @@ export function Login() {
               }}
             >
               <Input
-                label="Email"
-                type="email"
-                autoComplete="email"
-                placeholder="you@studio.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                label="Email or username"
+                type="text"
+                autoComplete="username"
+                placeholder="you@studio.com or username"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 required
               />
               {error && <p className="text-sm text-rose-400">{error}</p>}
@@ -181,7 +182,7 @@ export function Login() {
                 Send me a code
               </Button>
               <p className="text-center text-xs text-slate-500">
-                No password needed — we'll email you a one-time login code.
+                No password needed — we'll email a one-time login code to the address on your account.
               </p>
             </form>
           )}
@@ -190,10 +191,10 @@ export function Login() {
             <form onSubmit={submitOtp} className="mt-6 space-y-4">
               <div className="flex items-center justify-between">
                 <Input
-                  label="Email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  label="Email or username"
+                  type="text"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
                   className="max-w-xs"
                 />
                 <button
