@@ -6,6 +6,7 @@ import type {
   DoorFacing,
   ExteriorPanel,
   TowerData,
+  TowerOpening,
   UnitSystem,
 } from "../types";
 import { Button, Input, Modal, Select, Toggle } from "../components/ui";
@@ -423,6 +424,26 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const patchTower = (id: string, patch: Partial<TowerData>) =>
     update({ towers: c.towers.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
 
+  const customizeOpenings = (tower: TowerData) => patchTower(tower.id, { openings: tower.openings ?? [] });
+
+  const addOpening = (tower: TowerData, kind: TowerOpening["kind"]) => {
+    const opening: TowerOpening = {
+      id: uid("op"),
+      kind,
+      face: tower.doorFacing,
+      floor: 1,
+      offset: 0,
+      width: kind === "door" ? 1.1 : 2,
+      height: kind === "door" ? 2.1 : 1.5,
+      sill: kind === "door" ? 0 : 1,
+    };
+    patchTower(tower.id, { openings: [...(tower.openings ?? []), opening] });
+  };
+
+  const patchOpening = (tower: TowerData, openingId: string, patch: Partial<TowerOpening>) => {
+    patchTower(tower.id, { openings: (tower.openings ?? []).map((o) => (o.id === openingId ? { ...o, ...patch } : o)) });
+  };
+
   const towersPanel = (
     <Section title={branch === "residential" ? "Apartment towers" : "Office blocks"}>
       <Button size="sm" onClick={addTower} className="mb-2">+ {branch === "residential" ? "Add tower" : "Add block"}</Button>
@@ -447,6 +468,49 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
             <div className="mt-2 grid grid-cols-2 gap-2">
               <Num label="Common area / floor" value={t.commonAreaPerFloor} onChange={(v) => patchTower(t.id, { commonAreaPerFloor: Math.max(v || 0, 0) })} step={1} unit=" m²" />
               <Num label="Open space / floor" value={t.openAreaPerFloor} onChange={(v) => patchTower(t.id, { openAreaPerFloor: Math.max(v || 0, 0) })} step={1} unit=" m²" />
+            </div>
+            <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-slate-300">Windows & doors</p>
+                {t.openings === undefined ? (
+                  <Button variant="secondary" size="sm" onClick={() => customizeOpenings(t)}>Customize</Button>
+                ) : (
+                  <div className="flex gap-1">
+                    <Button variant="secondary" size="sm" onClick={() => addOpening(t, "window")}>+ Window</Button>
+                    <Button variant="secondary" size="sm" onClick={() => addOpening(t, "door")}>+ Door</Button>
+                  </div>
+                )}
+              </div>
+              {t.openings === undefined ? (
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Uses a generated preview. Customize to place each opening yourself.</p>
+              ) : t.openings.length === 0 ? (
+                <p className="mt-1 text-[11px] text-slate-500">No openings yet. Add windows and doors to build this facade.</p>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {t.openings.map((o, openingIndex) => (
+                    <div key={o.id} className="rounded-lg border border-slate-800 p-2">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-semibold text-slate-400">Opening {openingIndex + 1}</span>
+                        <button onClick={() => patchTower(t.id, { openings: t.openings?.filter((x) => x.id !== o.id) })} className="text-[11px] font-semibold text-rose-400 hover:text-rose-300">Remove</button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Select label="Type" value={o.kind} onChange={(e) => patchOpening(t, o.id, { kind: e.target.value as TowerOpening["kind"] })}>
+                          <option value="window">Window</option>
+                          <option value="door">Door</option>
+                        </Select>
+                        <Select label="Face" value={o.face} onChange={(e) => patchOpening(t, o.id, { face: e.target.value as TowerOpening["face"] })}>
+                          <option value="north">North</option><option value="south">South</option><option value="east">East</option><option value="west">West</option>
+                        </Select>
+                        <Num label="Floor" value={o.floor} onChange={(v) => patchOpening(t, o.id, { floor: Math.max(Math.min(Math.round(v) || 1, t.floors), 1) })} min={1} step={1} />
+                        <Num label="Offset" value={o.offset} onChange={(v) => patchOpening(t, o.id, { offset: v || 0 })} step={0.5} unit=" m" />
+                        <Num label="Width" value={o.width} onChange={(v) => patchOpening(t, o.id, { width: Math.max(v || 0.3, 0.3) })} min={0.3} step={0.1} unit=" m" />
+                        <Num label="Height" value={o.height} onChange={(v) => patchOpening(t, o.id, { height: Math.max(v || 0.3, 0.3) })} min={0.3} step={0.1} unit=" m" />
+                        {o.kind === "window" && <Num label="Sill height" value={o.sill} onChange={(v) => patchOpening(t, o.id, { sill: Math.max(v || 0, 0) })} min={0} step={0.1} unit=" m" />}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <p className="mt-2 text-xs text-slate-500">Footprint: {towerMeters(t).w.toFixed(1)} × {towerMeters(t).d.toFixed(1)} m, height {towerMeters(t).h.toFixed(1)} m ({i > 0 ? "auto-placed" : "placed on site"})</p>
           </div>

@@ -208,6 +208,22 @@ export interface TowerData {
   doorFacing: DoorFacing;
   facadeMaterial: string;
   facadeColor: string;
+  /** When present, replaces the generated facade windows/entrance with explicit openings. */
+  openings?: TowerOpening[];
+}
+
+export type TowerOpeningKind = "window" | "door";
+export type TowerOpeningFace = "north" | "south" | "east" | "west";
+
+export interface TowerOpening {
+  id: string;
+  kind: TowerOpeningKind;
+  face: TowerOpeningFace;
+  floor: number;
+  offset: number;
+  width: number;
+  height: number;
+  sill: number;
 }
 
 export interface ExteriorPanel {

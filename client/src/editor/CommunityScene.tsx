@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import type { AmenityData, CommunityDesign, ExteriorPanel, TowerData } from "../types";
+import type { AmenityData, CommunityDesign, ExteriorPanel, TowerData, TowerOpening } from "../types";
 import { material, prism, prismAt } from "../lib/modelcore";
 import { amenityKind, facadeOption, landMeters, towerMeters, undergroundDepth } from "../lib/community";
 import { pitFootprint } from "../lib/takeoff";
@@ -234,6 +234,34 @@ function buildExteriorPanel(p: ExteriorPanel, tower: TowerData): THREE.Group {
   return g;
 }
 
+function buildTowerOpening(opening: TowerOpening, tower: TowerData): THREE.Mesh {
+  const { w, d } = towerMeters(tower);
+  const isDoor = opening.kind === "door";
+  const width = Math.max(opening.width, 0.3);
+  const height = Math.max(opening.height, 0.3);
+  const floor = Math.min(Math.max(Math.round(opening.floor), 1), Math.max(tower.floors, 1));
+  const sill = isDoor ? 0 : Math.max(opening.sill, 0);
+  const openingMesh = prism(
+    width,
+    height,
+    0.12,
+    material(isDoor ? "#6d4c41" : "#183b4d", { rough: isDoor ? 0.65 : 0.2, metal: isDoor ? 0.05 : 0.15 }),
+  );
+  const y = (floor - 1) * tower.floorHeight + sill + height / 2;
+  const offset = opening.offset;
+  const faces: Record<TowerOpening["face"], { x: number; z: number; ry: number }> = {
+    north: { x: offset, z: -d / 2 - 0.08, ry: 0 },
+    south: { x: offset, z: d / 2 + 0.08, ry: 0 },
+    east: { x: w / 2 + 0.08, z: offset, ry: Math.PI / 2 },
+    west: { x: -w / 2 - 0.08, z: offset, ry: Math.PI / 2 },
+  };
+  const face = faces[opening.face] ?? faces.south;
+  openingMesh.position.set(face.x, y, face.z);
+  openingMesh.rotation.y = face.ry;
+  openingMesh.userData.noSelect = true;
+  return openingMesh;
+}
+
 function buildTowerMesh(t: TowerData, panels: ExteriorPanel[]): THREE.Group {
   const g = new THREE.Group();
   const { w, d, h } = towerMeters(t);
@@ -254,23 +282,26 @@ function buildTowerMesh(t: TowerData, panels: ExteriorPanel[]): THREE.Group {
     g.add(band);
   }
 
-  /* Window strips on the door-facing facade */
-  const windows = windowGrid(w * 0.92, h * 0.9, Math.max(t.floors, 2), Math.max(3, Math.ceil(w / t.unitWidth)), "#253238");
-  windows.position.set(0, h / 2, d / 2 + 0.02);
-  g.add(windows);
+  if (t.openings) {
+    for (const opening of t.openings) g.add(buildTowerOpening(opening, t));
+  } else {
+    /* Legacy towers retain the generated facade until the user customizes openings. */
+    const windows = windowGrid(w * 0.92, h * 0.9, Math.max(t.floors, 2), Math.max(3, Math.ceil(w / t.unitWidth)), "#253238");
+    windows.position.set(0, h / 2, d / 2 + 0.02);
+    g.add(windows);
 
-  /* Door-facing indicator (red pad on the entrance side) */
-  const dirs: Record<string, { x: number; z: number; ry: number }> = {
-    north: { x: 0, z: -d / 2, ry: 0 },
-    south: { x: 0, z: d / 2, ry: 0 },
-    east: { x: w / 2, z: 0, ry: Math.PI / 2 },
-    west: { x: -w / 2, z: 0, ry: -Math.PI / 2 },
-  };
-  const ent = dirs[t.doorFacing] ?? dirs.south;
-  const pad = prism(3.5, 0.3, 2.5, material("#e53935", { rough: 0.6 }));
-  pad.position.set(ent.x * 0.98, 0.15, ent.z * 0.98);
-  pad.rotation.y = ent.ry;
-  g.add(pad);
+    const dirs: Record<string, { x: number; z: number; ry: number }> = {
+      north: { x: 0, z: -d / 2, ry: 0 },
+      south: { x: 0, z: d / 2, ry: 0 },
+      east: { x: w / 2, z: 0, ry: Math.PI / 2 },
+      west: { x: -w / 2, z: 0, ry: -Math.PI / 2 },
+    };
+    const ent = dirs[t.doorFacing] ?? dirs.south;
+    const pad = prism(3.5, 0.3, 2.5, material("#e53935", { rough: 0.6 }));
+    pad.position.set(ent.x * 0.98, 0.15, ent.z * 0.98);
+    pad.rotation.y = ent.ry;
+    g.add(pad);
+  }
 
   /* Per-tower exterior material panels */
   for (const p of panels) {
