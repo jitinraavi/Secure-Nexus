@@ -28,6 +28,7 @@ import {
   INTERIOR_TYPES,
   UNIT_LABELS,
   amenityKind,
+  amenitiesFor,
   defaultUnderground,
   interiorLabel,
   landAreaSqYards,
@@ -92,31 +93,6 @@ function Num({
   );
 }
 
-function Range({
-  label, value, onChange, min, max, step, unit,
-}: {
-  label: string; value: number; onChange: (v: number) => void;
-  min: number; max: number; step: number; unit: string;
-}) {
-  return (
-    <div>
-      <div className="mb-1 flex items-center justify-between">
-        <label className="text-xs font-medium text-slate-300">{label}</label>
-        <span className="text-xs text-slate-400">{value}{unit}</span>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={Number.isFinite(value) ? value : min}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full accent-emerald-500"
-      />
-    </div>
-  );
-}
-
 function UndergroundForm({
   park, update,
 }: {
@@ -132,18 +108,18 @@ function UndergroundForm({
         The site will be excavated below the tower footprint. Choose the number & height of basement levels and the excavation depth. The dig happens after you confirm these numbers.
       </p>
       <div className="grid grid-cols-2 gap-3">
-        <Num label="Basement floors" value={ug.levels} onChange={(v) => setUg({ levels: Math.max(Math.min(Math.round(v) || 1, 8), 1) })} min={1} max={8} step={1} unit=" lvl" />
-        <Num label="Clear height / floor" value={ug.floorHeight} onChange={(v) => setUg({ floorHeight: Math.max(v || 2.4, 2.4) })} min={2.4} max={6} step={0.1} unit=" m" />
+        <Num label="Basement floors" value={ug.levels} onChange={(v) => setUg({ levels: Math.max(Math.round(v) || 1, 1) })} min={1} step={1} unit=" lvl" />
+        <Num label="Clear height / floor" value={ug.floorHeight} onChange={(v) => setUg({ floorHeight: Math.max(v || 2.4, 2.4) })} min={2.4} step={0.1} unit=" m" />
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Num label="Foundation depth" value={ug.foundationDepth} onChange={(v) => setUg({ foundationDepth: Math.max(v || 0.5, 0.5) })} min={0.5} max={8} step={0.1} unit=" m" />
+        <Num label="Foundation depth" value={ug.foundationDepth} onChange={(v) => setUg({ foundationDepth: Math.max(v || 0.5, 0.5) })} min={0.5} step={0.1} unit=" m" />
         <Num label="Total dig depth" value={total} onChange={() => {}} disabled unit=" m" />
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Num label="Ramp width" value={ug.rampWidth} onChange={(v) => setUg({ rampWidth: Math.max(v || 2.5, 2.5) })} min={2.5} max={8} step={0.25} unit=" m" />
-        <Num label="Ramp length" value={ug.rampLength} onChange={(v) => setUg({ rampLength: Math.max(v || 8, 8) })} min={8} max={120} step={1} unit=" m" />
+        <Num label="Ramp width" value={ug.rampWidth} onChange={(v) => setUg({ rampWidth: Math.max(v || 2.5, 2.5) })} min={2.5} step={0.25} unit=" m" />
+        <Num label="Ramp length" value={ug.rampLength} onChange={(v) => setUg({ rampLength: Math.max(v || 8, 8) })} min={8} step={1} unit=" m" />
       </div>
-      <Range label="Ramp slope" value={ug.rampSlope} onChange={(v) => setUg({ rampSlope: v })} min={4} max={20} step={0.5} unit=" %" />
+      <Num label="Ramp slope" value={ug.rampSlope} onChange={(v) => setUg({ rampSlope: Math.max(v || 2, 2) })} min={2} step={0.5} unit=" %" />
     </>
   );
 }
@@ -151,7 +127,7 @@ function UndergroundForm({
 export function CommunityEditor({ branch, community, onChange, projectName }: CommunityEditorProps) {
   const toast = useToast();
   const [step, setStep] = useState<StepId>("land");
-  const [pickKind, setPickKind] = useState(AMENITIES[0].kind);
+  const [pickKind, setPickKind] = useState(() => amenitiesFor(branch)[0]?.kind ?? AMENITIES[0].kind);
   const [newRoomType, setNewRoomType] = useState("living");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [context, setContext] = useState<SceneContextTarget | null>(null);
@@ -293,8 +269,8 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Num label="Width" value={land.width} onChange={(v) => update({ land: { ...land, width: Math.max(v > 0 ? v : 1, 1) } })} min={1} max={1000} step={0.5} unit={` ${UNIT_LABELS[land.unit]}`} />
-        <Num label="Depth" value={land.depth} onChange={(v) => update({ land: { ...land, depth: Math.max(v > 0 ? v : 1, 1) } })} min={1} max={1000} step={0.5} unit={` ${UNIT_LABELS[land.unit]}`} />
+        <Num label="Width" value={land.width} onChange={(v) => update({ land: { ...land, width: Math.max(v > 0 ? v : 1, 1) } })} min={1} step={0.5} unit={` ${UNIT_LABELS[land.unit]}`} />
+        <Num label="Depth" value={land.depth} onChange={(v) => update({ land: { ...land, depth: Math.max(v > 0 ? v : 1, 1) } })} min={1} step={0.5} unit={` ${UNIT_LABELS[land.unit]}`} />
       </div>
     </Section>
   );
@@ -312,7 +288,7 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
         <option value="underground">Underground parking</option>
       </Select>
       {park.mode === "surface" && (
-        <Range label="Surface bays" value={park.surfaceBays} onChange={(v) => update({ parking: { ...park, surfaceBays: v } })} min={0} max={80} step={1} unit=" bays" />
+        <Num label="Surface bays" value={park.surfaceBays} onChange={(v) => update({ parking: { ...park, surfaceBays: Math.max(Math.round(v) || 0, 0) } })} min={0} step={1} unit=" bays" />
       )}
       {park.mode === "underground" && (
         <UndergroundForm park={park} update={update} />
@@ -329,16 +305,16 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   ) : (
     <Section title="Basement structure (below grade)">
       <div className="grid grid-cols-2 gap-3">
-        <Num label="Pillar spacing X" value={ug.pillarSpacingX} onChange={(v) => update({ parking: { ...park, underground: { ...ug, pillarSpacingX: Math.max(v || 4, 4) } } })} min={4} max={12} step={0.5} unit=" m" />
-        <Num label="Pillar spacing Z" value={ug.pillarSpacingZ} onChange={(v) => update({ parking: { ...park, underground: { ...ug, pillarSpacingZ: Math.max(v || 4, 4) } } })} min={4} max={12} step={0.5} unit=" m" />
+        <Num label="Pillar spacing X" value={ug.pillarSpacingX} onChange={(v) => update({ parking: { ...park, underground: { ...ug, pillarSpacingX: Math.max(v || 4, 4) } } })} min={4} step={0.5} unit=" m" />
+        <Num label="Pillar spacing Z" value={ug.pillarSpacingZ} onChange={(v) => update({ parking: { ...park, underground: { ...ug, pillarSpacingZ: Math.max(v || 4, 4) } } })} min={4} step={0.5} unit=" m" />
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Num label="Car bay width" value={ug.bayWidth} onChange={(v) => update({ parking: { ...park, underground: { ...ug, bayWidth: Math.max(v || 2.3, 2.3) } } })} min={2.3} max={4} step={0.05} unit=" m" />
-        <Num label="Car bay length" value={ug.bayLength} onChange={(v) => update({ parking: { ...park, underground: { ...ug, bayLength: Math.max(v || 4.8, 4.8) } } })} min={4.8} max={6.5} step={0.05} unit=" m" />
+        <Num label="Car bay width" value={ug.bayWidth} onChange={(v) => update({ parking: { ...park, underground: { ...ug, bayWidth: Math.max(v || 2.3, 2.3) } } })} min={2.3} step={0.05} unit=" m" />
+        <Num label="Car bay length" value={ug.bayLength} onChange={(v) => update({ parking: { ...park, underground: { ...ug, bayLength: Math.max(v || 4.8, 4.8) } } })} min={4.8} step={0.05} unit=" m" />
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <Num label="Bay columns" value={ug.bayCols} onChange={(v) => update({ parking: { ...park, underground: { ...ug, bayCols: Math.max(Math.min(Math.round(v) || 1, 20), 1) } } })} min={1} max={20} step={1} unit="" />
-        <Num label="Bay rows" value={ug.bayRows} onChange={(v) => update({ parking: { ...park, underground: { ...ug, bayRows: Math.max(Math.min(Math.round(v) || 1, 20), 1) } } })} min={1} max={20} step={1} unit="" />
+        <Num label="Bay columns" value={ug.bayCols} onChange={(v) => update({ parking: { ...park, underground: { ...ug, bayCols: Math.max(Math.round(v) || 1, 1) } } })} min={1} step={1} unit="" />
+        <Num label="Bay rows" value={ug.bayRows} onChange={(v) => update({ parking: { ...park, underground: { ...ug, bayRows: Math.max(Math.round(v) || 1, 1) } } })} min={1} step={1} unit="" />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <Toggle checked={ug.liftLobby} onChange={(v) => update({ parking: { ...park, underground: { ...ug, liftLobby: v } } })} label="Lift lobby" />
@@ -375,7 +351,7 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
       <div className="flex gap-2">
         <div className="flex-1">
           <Select value={pickKind} onChange={(e) => setPickKind(e.target.value)}>
-            {AMENITIES.map((a) => (
+            {amenitiesFor(branch).map((a) => (
               <option key={a.kind} value={a.kind}>{a.label}</option>
             ))}
           </Select>
@@ -437,8 +413,8 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
               <button onClick={() => update({ towers: c.towers.filter((x) => x.id !== t.id) })} className="mt-4 text-xs font-semibold text-rose-400 hover:text-rose-300">Remove</button>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
-              <Num label="Floors" value={t.floors} onChange={(v) => patchTower(t.id, { floors: Math.max(Math.min(Math.round(v) || 1, 100), 1) })} step={1} />
-              <Num label="Units / floor" value={t.unitsPerFloor} onChange={(v) => patchTower(t.id, { unitsPerFloor: Math.max(Math.min(Math.round(v) || 1, 24), 1) })} step={1} />
+              <Num label="Floors" value={t.floors} onChange={(v) => patchTower(t.id, { floors: Math.max(Math.round(v) || 1, 1) })} step={1} />
+              <Num label="Units / floor" value={t.unitsPerFloor} onChange={(v) => patchTower(t.id, { unitsPerFloor: Math.max(Math.round(v) || 1, 1) })} step={1} />
               <Num label="Unit width" value={t.unitWidth} onChange={(v) => patchTower(t.id, { unitWidth: Math.max(v || 3, 3) })} step={0.5} unit=" m" />
               <Num label="Unit depth" value={t.unitDepth} onChange={(v) => patchTower(t.id, { unitDepth: Math.max(v || 3, 3) })} step={0.5} unit=" m" />
               <Num label="Floor height" value={t.floorHeight} onChange={(v) => patchTower(t.id, { floorHeight: Math.max(v || 2.4, 2.4) })} step={0.1} unit=" m" />

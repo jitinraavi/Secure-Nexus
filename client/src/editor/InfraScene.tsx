@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { InfraDesign } from "../types";
 import { buildInfraScene, infraExtent } from "../lib/infra";
 
@@ -28,6 +29,8 @@ export function InfraScene({ infra }: { infra: InfraDesign }) {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
     renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(renderer.domElement);
 
@@ -36,6 +39,10 @@ export function InfraScene({ infra }: { infra: InfraDesign }) {
     const ext = infraExtent(infraRef.current);
     const span = Math.max(ext.w, ext.d);
     scene.fog = new THREE.Fog("#0b1220", span * 1.6, span * 4.5);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.45;
+    pmrem.dispose();
 
     const camera = new THREE.PerspectiveCamera(48, container.clientWidth / container.clientHeight, 0.5, span * 12);
     camera.position.set(span * 0.75, span * 0.65, span * 0.95);
@@ -52,7 +59,7 @@ export function InfraScene({ infra }: { infra: InfraDesign }) {
     controlsRef.current = controls;
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 0.85));
-    const sun = new THREE.DirectionalLight(0xfff4e0, 1.6);
+    const sun = new THREE.DirectionalLight(0xfff4e0, 1.9);
     sun.position.set(span * 0.6, span, span * 0.4);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -98,6 +105,7 @@ export function InfraScene({ infra }: { infra: InfraDesign }) {
 
     return () => {
       window.removeEventListener("resize", onResize);
+      scene.environment?.dispose();
       controls.dispose();
       renderer.dispose();
       group.clear();

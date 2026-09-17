@@ -338,9 +338,9 @@ export function Editor() {
 
       {panelTab === "room" && (
         <div className="flex-1 space-y-4 overflow-y-auto">
-          <SliderField label="Width" value={design.room.widthMm} display={`${design.room.widthMm / 1000} m`} min={2000} max={10000} step={500} onChange={(v) => changeDesign({ ...design, room: { ...design.room, widthMm: v } })} />
-          <SliderField label="Depth" value={design.room.depthMm} display={`${design.room.depthMm / 1000} m`} min={2000} max={10000} step={500} onChange={(v) => changeDesign({ ...design, room: { ...design.room, depthMm: v } })} />
-          <SliderField label="Ceiling height" value={design.room.wallHeightMm} display={`${design.room.wallHeightMm / 1000} m`} min={2200} max={3600} step={100} onChange={(v) => changeDesign({ ...design, room: { ...design.room, wallHeightMm: v } })} />
+          <RoomNum label="Width" value={design.room.widthMm} unit=" mm" step={100} min={100} onChange={(v) => changeDesign({ ...design, room: { ...design.room, widthMm: Math.max(Number.isFinite(v) ? v : 0, 100) } })} />
+          <RoomNum label="Depth" value={design.room.depthMm} unit=" mm" step={100} min={100} onChange={(v) => changeDesign({ ...design, room: { ...design.room, depthMm: Math.max(Number.isFinite(v) ? v : 0, 100) } })} />
+          <RoomNum label="Ceiling height" value={design.room.wallHeightMm} unit=" mm" step={100} min={100} onChange={(v) => changeDesign({ ...design, room: { ...design.room, wallHeightMm: Math.max(Number.isFinite(v) ? v : 0, 100) } })} />
           <ColorField label="Wall colour" value={design.room.wallColor} onChange={(c) => changeDesign({ ...design, room: { ...design.room, wallColor: c } })} />
           <ColorField label="Floor colour" value={design.room.floorColor} onChange={(c) => changeDesign({ ...design, room: { ...design.room, floorColor: c } })} />
         </div>
@@ -646,6 +646,39 @@ export function Editor() {
         open={cameraOpen}
         onClose={() => setCameraOpen(false)}
         onCapture={uploadFile}
+      />
+    </div>
+  );
+}
+
+function RoomNum({
+  label,
+  value,
+  unit,
+  step,
+  min,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  unit: string;
+  step: number;
+  min: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+        <p className="text-xs text-slate-400">{value.toLocaleString()}{unit}</p>
+      </div>
+      <input
+        type="number"
+        min={min}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500"
       />
     </div>
   );

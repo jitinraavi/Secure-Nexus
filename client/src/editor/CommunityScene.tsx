@@ -1,10 +1,12 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { AmenityData, CommunityDesign, ExteriorPanel, TowerData } from "../types";
 import { material, prism, prismAt } from "../lib/modelcore";
 import { amenityKind, facadeOption, landMeters, towerMeters, undergroundDepth } from "../lib/community";
 import { pitFootprint } from "../lib/takeoff";
+import { buildMapGround } from "../lib/mapGround";
 
 /* ---------------------------------- Builder ---------------------------------- */
 
@@ -294,6 +296,12 @@ function buildSite(design: CommunityDesign): THREE.Group {
   ground.position.y = -0.3;
   g.add(ground);
 
+  /* Map overlay slot (filled asynchronously with OSM / Google map) */
+  const mapSlot = new THREE.Group();
+  mapSlot.name = "map-ground";
+  mapSlot.userData.noSelect = true;
+  g.add(mapSlot);
+
   /* Plot boundary frame */
   const frameMat = material("#5d4037", { rough: 0.8 });
   g.add(prismAt(0, 0.12, halfD, W, 0.24, 0.24, frameMat));
@@ -306,7 +314,7 @@ function buildSite(design: CommunityDesign): THREE.Group {
   if (park.mode === "underground" && park.underground) {
     g.add(buildUnderground(design));
   } else if (park.mode === "surface" && park.surfaceBays > 0) {
-    const bays = Math.min(park.surfaceBays, 40);
+    const bays = Math.min(Math.max(park.surfaceBays, 0), 300);
     const bayW = 2.5;
     const bayD = 5;
     const perRow = 8;
@@ -520,6 +528,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
   const designRef = useRef(design);
   const selectedRef = useRef<string | null>(selectedId ?? null);
   const handlersRef = useRef({ onSelect, onChange, onContextTarget });
+  const mapToken = useRef(0);
   designRef.current = design;
   selectedRef.current = selectedId ?? null;
   handlersRef.current = { onSelect, onChange, onContextTarget };
@@ -527,10 +536,13 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
     renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
@@ -538,10 +550,16 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#0b1220");
     scene.fog = new THREE.Fog("#0b1220", 900, 2200);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.5;
+    pmrem.dispose();
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 5000);
-    camera.position.set(180, 150, 220);
+    const camHome = new THREE.Vector3(180, 150, 220);
+    const camIntro = new THREE.Vector3(340, 280, 400);
+    camera.position.copy(camIntro);
     scene.add(camera);
     cameraRef.current = camera;
 
@@ -551,15 +569,15 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     controls.target.set(0, 0, 0);
     controls.minDistance = 10;
     controls.maxDistance = 900;
+    controls.enabled = false;
     controlsRef.current = controls;
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 0.85));
-    const sun = new THREE.DirectionalLight(0xfff4e0, 1.7);
+    const sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
     sun.position.set(150, 260, 100);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 10;
-    sun.shadow.camera.far = 800;
     scene.add(sun);
 
     const grid = new THREE.GridHelper(600, 60, 0x1e293b, 0x1e293b);
@@ -567,18 +585,60 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     grid.material = new THREE.LineBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.35 });
     scene.add(grid);
 
+    const fitShadows = () => {
+      const { w: WW, d: DD } = landMeters(designRef.current.land);
+      const s = Math.max(WW, DD) * 0.7 + 20;
+      sun.shadow.camera.left = -s;
+      sun.shadow.camera.right = s;
+      sun.shadow.camera.top = s;
+      sun.shadow.camera.bottom = -s;
+      sun.shadow.camera.far = 1400;
+      sun.shadow.camera.updateProjectionMatrix();
+    };
+    fitShadows();
+
     const group = new THREE.Group();
     const rebuild = () => {
       group.clear();
-      group.add(buildCommunityScene(designRef.current, selectedRef.current));
-      scene.add(group);
+      const root = buildCommunityScene(designRef.current, selectedRef.current);
+      group.add(root);
+      if (!group.parent) scene.add(group);
       groupRef.current = group;
+      fitShadows();
+      const token = ++mapToken.current;
+      const slot = root.getObjectByName("map-ground");
+      if (slot) {
+        slot.clear();
+        const loc = designRef.current.location;
+        if (loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) {
+          buildMapGround(loc, designRef.current.land).then((map) => {
+            if (mapToken.current !== token) return;
+            slot.clear();
+            if (map.children.length) slot.add(map);
+          }).catch(() => {});
+        }
+      }
     };
     rebuildRef.current = rebuild;
     rebuild();
 
+    /* Intro fly-in */
+    let introStart = performance.now();
+    let introDone = false;
+    const introDur = 1100;
+    const finishIntro = () => { if (!introDone) { introDone = true; controls.enabled = true; } };
+    const onSkip = () => { introStart = 0; finishIntro(); };
+    renderer.domElement.addEventListener("pointerdown", onSkip, { once: true });
+    renderer.domElement.addEventListener("wheel", onSkip, { once: true });
+
     const animate = () => {
       requestAnimationFrame(animate);
+      if (!introDone) {
+        const t = Math.min((performance.now() - introStart) / introDur, 1);
+        const ease = 1 - Math.pow(1 - t, 3);
+        camera.position.lerpVectors(camIntro, camHome, ease);
+        if (t >= 1) finishIntro();
+      }
       controls.update();
       renderer.render(scene, camera);
     };
@@ -710,6 +770,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("pointercancel", onPointerUp);
       renderer.domElement.removeEventListener("contextmenu", onContextMenu);
+      scene.environment?.dispose();
       controls.dispose();
       renderer.dispose();
       group.clear();

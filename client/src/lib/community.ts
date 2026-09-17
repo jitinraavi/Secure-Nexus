@@ -45,34 +45,55 @@ export interface AmenityKind {
   defH: number;
   color: string;
   shape: AmenityShape;
+  /** Optional audience filter. Absent = available in every project branch. */
+  branch?: BuildingBranch;
 }
 
 export const AMENITIES: AmenityKind[] = [
+  /* Shared */
   { kind: "open-air-theatre", label: "Open-air theatre", defW: 22, defD: 18, defH: 4, color: "#8b7d6b", shape: "steps" },
   { kind: "amphitheatre", label: "Amphitheatre", defW: 26, defD: 20, defH: 5, color: "#a3907a", shape: "steps" },
-  { kind: "cycling-track", label: "Cycling track", defW: 80, defD: 40, defH: 0.15, color: "#455a64", shape: "track" },
-  { kind: "running-track", label: "Running track", defW: 120, defD: 60, defH: 0.15, color: "#b45309", shape: "track" },
-  { kind: "swimming-pool", label: "Swimming pool", defW: 25, defD: 12.5, defH: 1.6, color: "#2196f3", shape: "pool" },
-  { kind: "basketball", label: "Basketball court", defW: 28, defD: 15, defH: 0.1, color: "#ff8a65", shape: "court" },
-  { kind: "tennis", label: "Tennis court", defW: 23.77, defD: 10.97, defH: 0.1, color: "#4caf50", shape: "court" },
-  { kind: "pickleball", label: "Pickleball court", defW: 13.41, defD: 6.1, defH: 0.1, color: "#00bcd4", shape: "court" },
-  { kind: "volleyball", label: "Volleyball court", defW: 18, defD: 9, defH: 0.1, color: "#9e9d24", shape: "court" },
-  { kind: "sand-volleyball", label: "Sand volleyball", defW: 16, defD: 8, defH: 0.4, color: "#d7b98a", shape: "sand" },
-  { kind: "cricket-nets", label: "Cricket nets", defW: 20, defD: 4, defH: 4, color: "#5d4037", shape: "court" },
-  { kind: "practice-zones", label: "Cricket practice zones", defW: 30, defD: 20, defH: 0.1, color: "#8d6e63", shape: "green" },
-  { kind: "squash", label: "Squash courts", defW: 9.75, defD: 6.4, defH: 5.6, color: "#7986cb", shape: "box" },
-  { kind: "badminton-indoor", label: "Indoor badminton", defW: 13.4, defD: 6.1, defH: 3, color: "#7e57c2", shape: "box" },
-  { kind: "badminton-outdoor", label: "Outdoor badminton", defW: 13.4, defD: 6.1, defH: 0.1, color: "#26a69a", shape: "court" },
-  { kind: "kids-play", label: "Kids play area", defW: 16, defD: 16, defH: 1.2, color: "#f06292", shape: "kids" },
-  { kind: "sand-park", label: "Sand park", defW: 12, defD: 12, defH: 0.5, color: "#c5b28b", shape: "sand" },
-  { kind: "lawn", label: "Lawn", defW: 30, defD: 20, defH: 0.1, color: "#66bb6a", shape: "green" },
-  { kind: "garden", label: "Community garden", defW: 24, defD: 16, defH: 0.2, color: "#2e7d32", shape: "green" },
-  { kind: "clubhouse", label: "Clubhouse", defW: 20, defD: 15, defH: 4.5, color: "#546e7a", shape: "box" },
-  { kind: "gym", label: "Gym", defW: 20, defD: 12, defH: 3.5, color: "#37474f", shape: "box" },
-  { kind: "yoga", label: "Yoga deck", defW: 12, defD: 12, defH: 0.2, color: "#aed581", shape: "green" },
-  { kind: "jogging-path", label: "Jogging path", defW: 60, defD: 30, defH: 0.1, color: "#78909c", shape: "track" },
-  { kind: "walking-path", label: "Walking path", defW: 50, defD: 4, defH: 0.1, color: "#90a4ae", shape: "track" },
+  /* Residential communities */
+  { kind: "cycling-track", label: "Cycling track", defW: 80, defD: 40, defH: 0.15, color: "#455a64", shape: "track", branch: "residential" },
+  { kind: "running-track", label: "Running track", defW: 120, defD: 60, defH: 0.15, color: "#b45309", shape: "track", branch: "residential" },
+  { kind: "swimming-pool", label: "Swimming pool", defW: 25, defD: 12.5, defH: 1.6, color: "#2196f3", shape: "pool", branch: "residential" },
+  { kind: "basketball", label: "Basketball court", defW: 28, defD: 15, defH: 0.1, color: "#ff8a65", shape: "court", branch: "residential" },
+  { kind: "tennis", label: "Tennis court", defW: 23.77, defD: 10.97, defH: 0.1, color: "#4caf50", shape: "court", branch: "residential" },
+  { kind: "pickleball", label: "Pickleball court", defW: 13.41, defD: 6.1, defH: 0.1, color: "#00bcd4", shape: "court", branch: "residential" },
+  { kind: "volleyball", label: "Volleyball court", defW: 18, defD: 9, defH: 0.1, color: "#9e9d24", shape: "court", branch: "residential" },
+  { kind: "sand-volleyball", label: "Sand volleyball", defW: 16, defD: 8, defH: 0.4, color: "#d7b98a", shape: "sand", branch: "residential" },
+  { kind: "cricket-nets", label: "Cricket nets", defW: 20, defD: 4, defH: 4, color: "#5d4037", shape: "court", branch: "residential" },
+  { kind: "practice-zones", label: "Cricket practice zones", defW: 30, defD: 20, defH: 0.1, color: "#8d6e63", shape: "green", branch: "residential" },
+  { kind: "squash", label: "Squash courts", defW: 9.75, defD: 6.4, defH: 5.6, color: "#7986cb", shape: "box", branch: "residential" },
+  { kind: "badminton-indoor", label: "Indoor badminton", defW: 13.4, defD: 6.1, defH: 3, color: "#7e57c2", shape: "box", branch: "residential" },
+  { kind: "badminton-outdoor", label: "Outdoor badminton", defW: 13.4, defD: 6.1, defH: 0.1, color: "#26a69a", shape: "court", branch: "residential" },
+  { kind: "kids-play", label: "Kids play area", defW: 16, defD: 16, defH: 1.2, color: "#f06292", shape: "kids", branch: "residential" },
+  { kind: "sand-park", label: "Sand park", defW: 12, defD: 12, defH: 0.5, color: "#c5b28b", shape: "sand", branch: "residential" },
+  { kind: "lawn", label: "Lawn", defW: 30, defD: 20, defH: 0.1, color: "#66bb6a", shape: "green", branch: "residential" },
+  { kind: "garden", label: "Community garden", defW: 24, defD: 16, defH: 0.2, color: "#2e7d32", shape: "green", branch: "residential" },
+  { kind: "clubhouse", label: "Clubhouse", defW: 20, defD: 15, defH: 4.5, color: "#546e7a", shape: "box", branch: "residential" },
+  { kind: "gym", label: "Gym", defW: 20, defD: 12, defH: 3.5, color: "#37474f", shape: "box", branch: "residential" },
+  { kind: "yoga", label: "Yoga deck", defW: 12, defD: 12, defH: 0.2, color: "#aed581", shape: "green", branch: "residential" },
+  { kind: "jogging-path", label: "Jogging path", defW: 60, defD: 30, defH: 0.1, color: "#78909c", shape: "track", branch: "residential" },
+  { kind: "walking-path", label: "Walking path", defW: 50, defD: 4, defH: 0.1, color: "#90a4ae", shape: "track", branch: "residential" },
+  /* Commercial / workplace campuses */
+  { kind: "urban-plaza", label: "Urban plaza", defW: 30, defD: 22, defH: 0.15, color: "#78909c", shape: "court", branch: "commercial" },
+  { kind: "fountain", label: "Fountain", defW: 6, defD: 6, defH: 2, color: "#29b6f6", shape: "pool", branch: "commercial" },
+  { kind: "food-court", label: "Food court", defW: 26, defD: 18, defH: 4.2, color: "#a1887f", shape: "box", branch: "commercial" },
+  { kind: "alfresco-dining", label: "Alfresco dining", defW: 16, defD: 10, defH: 0.2, color: "#bcaaa4", shape: "court", branch: "commercial" },
+  { kind: "retail-kiosks", label: "Retail kiosks", defW: 16, defD: 8, defH: 3.2, color: "#607d8b", shape: "box", branch: "commercial" },
 ];
+
+/** Amenity presets available for a project branch (residential or commercial). */
+export function amenitiesFor(branch: BuildingBranch): AmenityKind[] {
+  return AMENITIES.filter((a) => !a.branch || a.branch === branch);
+}
+
+/** True when an existing amenity kind is allowed in the given branch. */
+export function amenityAllowed(kind: string, branch: BuildingBranch): boolean {
+  const k = amenityKind(kind);
+  return !k || !k.branch || k.branch === branch;
+}
 
 export function amenityKind(kind: string): AmenityKind | undefined {
   return AMENITIES.find((a) => a.kind === kind);
@@ -173,17 +194,26 @@ export function defaultTower(branch: BuildingBranch, label: string, x: number, z
 }
 
 export function defaultCommunity(branch: BuildingBranch): CommunityDesign {
+  const presets: Record<BuildingBranch, [string, number, number][]> = {
+    residential: [
+      ["lawn", -40, -6],
+      ["swimming-pool", 24, -20],
+      ["kids-play", 40, 2],
+      ["clubhouse", 6, -18],
+    ],
+    commercial: [
+      ["urban-plaza", -32, -8],
+      ["fountain", 26, -10],
+      ["food-court", 10, -18],
+      ["alfresco-dining", 34, 12],
+    ],
+  };
   return {
     version: 1,
     branch,
     land: { unit: "m", width: 140, depth: 90 },
     parking: { mode: "underground", surfaceBays: 16, underground: defaultUnderground() },
-    amenities: [
-      makeAmenity("lawn", -40, -6),
-      makeAmenity("swimming-pool", 24, -20),
-      makeAmenity("kids-play", 40, 2),
-      makeAmenity("clubhouse", 6, -18),
-    ],
+    amenities: presets[branch].map(([k, x, z]) => makeAmenity(k, x, z)),
     towers: [
       defaultTower(branch, branch === "residential" ? "Tower A" : "Block A", -12, 16),
       defaultTower(branch, branch === "residential" ? "Tower B" : "Block B", 14, 18),

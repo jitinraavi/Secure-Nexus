@@ -29,7 +29,7 @@ const LOCATOR_MODE: Record<InfraKind, LocatorMode> = {
   dams: "route",
 };
 
-const clamp = (n: number, lo: number, hi: number) => Math.max(Math.min(n, hi), lo);
+const clamp = (n: number, lo: number, _hi: number) => { void _hi; return Math.max(n, lo); };
 
 interface InfraEditorProps {
   kind: InfraKind;
