@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AmenityData,
   BuildingBranch,
@@ -128,6 +128,7 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const toast = useToast();
   const [step, setStep] = useState<StepId>("land");
   const [focusMode, setFocusMode] = useState(false);
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const [pickKind, setPickKind] = useState(() => amenitiesFor(branch)[0]?.kind ?? AMENITIES[0].kind);
   const [newRoomType, setNewRoomType] = useState("living");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -135,6 +136,26 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const [gen, setGen] = useState<{ mode: "site" | "room"; roomId?: string; x: number; z: number; text: string } | null>(null);
   const [furnishRoomId, setFurnishRoomId] = useState<string | null>(null);
   const c = community;
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setFocusMode(document.fullscreenElement === workspaceRef.current);
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  const toggleFocusMode = async () => {
+    if (document.fullscreenElement === workspaceRef.current) {
+      await document.exitFullscreen?.();
+      return;
+    }
+    try {
+      await workspaceRef.current?.requestFullscreen?.();
+    } catch {
+      setFocusMode((value) => !value);
+    }
+  };
 
   const takeoff = useMemo(() => computeTakeoff(c), [c]);
 
@@ -674,9 +695,9 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const activeIndex = STEPS.findIndex((s) => s.id === step);
 
   return (
-    <div className={cn(
+    <div ref={workspaceRef} className={cn(
       "flex min-h-0 flex-1 flex-col",
-      focusMode && "fixed inset-0 z-50 bg-slate-950 p-3",
+      focusMode && "fixed left-0 top-0 z-50 h-[100dvh] w-screen bg-slate-950 p-3",
     )}>
       <div className="mb-2 flex min-h-10 items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/80 px-2 py-1.5 backdrop-blur">
         <span className="hidden px-2 text-xs font-semibold uppercase tracking-wide text-slate-500 sm:inline">
@@ -704,7 +725,7 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => setFocusMode((value) => !value)}
+          onClick={() => void toggleFocusMode()}
           title={focusMode ? "Show feature panels" : "Expand the 3D workspace"}
         >
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
