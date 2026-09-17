@@ -684,7 +684,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
         return;
       }
       handlersRef.current.onSelect?.(target.id);
-      const node = group.children.find((c) => c.userData?.selectId === target.id) ?? null;
+      const node = group.getObjectByProperty("selectId", target.id);
       const ground = groundAt(e.clientX, e.clientY);
       if (!node || !ground || !handlersRef.current.onChange) return;
       drag = {
