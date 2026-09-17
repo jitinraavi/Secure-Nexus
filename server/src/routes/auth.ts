@@ -149,6 +149,7 @@ router.post(
           ? "Account created, but we couldn't send the verification email. Please try the login page's Email code option or contact support."
           : "Account created. A 6-digit verification code was sent to your email.",
       emailDelivered: mail.via !== "error",
+      mailError: mail.error,
       devOtp: mail.via === "console" ? mail.devCode : undefined,
       ...(mail.via !== "console" ? {} : { devOtpNote: "No mail provider configured — code printed to server log." }),
     });
@@ -265,6 +266,7 @@ router.post(
     res.json({
       ok: true,
       delivered: mail.via !== "error",
+      mailError: mail.error,
       message:
         mail.via === "error"
           ? "We couldn't send the email. Please try again shortly or contact support."
@@ -308,6 +310,7 @@ router.post(
     res.json({
       ok: true,
       delivered: mail.via !== "error",
+      mailError: mail.error,
       message:
         mail.via === "error"
           ? "We couldn't send the code right now. Please try again shortly."
