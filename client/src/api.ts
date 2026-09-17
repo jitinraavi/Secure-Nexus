@@ -143,6 +143,7 @@ export interface OtpLoginRequestResult {
   ok?: boolean;
   message?: string;
   delivered?: boolean;
+  mailError?: string;
   devOtp?: string;
 }
 

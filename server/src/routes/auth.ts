@@ -435,7 +435,7 @@ router.post(
       res.status(401).json({
         error: user && user.locked_until && user.locked_until > now()
           ? "Account temporarily locked. Try again later."
-          : "Invalid email or password",
+          : "Invalid email, username, or password",
       });
       return;
     }
