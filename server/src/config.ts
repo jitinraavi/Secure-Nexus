@@ -53,3 +53,21 @@ export const PENDING_2FA_TTL_SECONDS = 5 * 60; // 5 minutes
 export const MAX_FAILED_ATTEMPTS = 5;
 export const LOCK_SECONDS = 15 * 60;
 export const BODY_LIMIT = "256kb";
+
+/* Email verification OTP */
+export const OTP_TTL_SECONDS = 10 * 60;
+export const OTP_MAX_ATTEMPTS = 5;
+export const OTP_RESEND_COOLDOWN_SECONDS = 30;
+
+/* Pluggable mailer: set MAIL_PROVIDER=smtp or resend (auto-detected from creds if unset) */
+export const MAIL = {
+  provider: (process.env.MAIL_PROVIDER || "").toLowerCase(),
+  host: process.env.MAIL_HOST || "",
+  port: Number(process.env.MAIL_PORT || 587),
+  secure: process.env.MAIL_SECURE === "true",
+  user: process.env.MAIL_USER || "",
+  pass: process.env.MAIL_PASS || "",
+  from: process.env.MAIL_FROM || "SecureNexus <no-reply@secure-nexus.app>",
+  resendKey: process.env.RESEND_API_KEY || "",
+  devOtp: process.env.SECURE_NEXUS_DEV_OTP !== "0",
+};

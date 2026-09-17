@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
-import { getCountries, signup, type CountryOption } from "../api";
+import { getCountries, signup, verifyEmail, resendOtp, type CountryOption } from "../api";
 import { Button, Card, Input, Select } from "../components/ui";
 import { Logo } from "../components/Logo";
 import { useToast } from "../components/Toast";
@@ -18,6 +18,7 @@ export function Signup() {
   const { refresh } = useAuth();
   const toast = useToast();
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [country, setCountry] = useState("IN");
@@ -28,11 +29,42 @@ export function Signup() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  /* OTP stage */
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [devHint, setDevHint] = useState<string | null>(null);
+  const [verifyError, setVerifyError] = useState("");
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const emailRef = useRef("");
+  const timerRef = useRef<number | null>(null);
+
   useEffect(() => {
     getCountries()
       .then(setCountries)
       .catch(() => setCountries([]));
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) window.clearInterval(timerRef.current);
+    };
+  }, []);
+
+  const startCountdown = () => {
+    setCountdown(30);
+    if (timerRef.current) window.clearInterval(timerRef.current);
+    timerRef.current = window.setInterval(() => {
+      setCountdown((c) => {
+        if (c <= 1) {
+          if (timerRef.current) window.clearInterval(timerRef.current);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+  };
 
   const rules = PASSWORD_RULES.map((r, i) => ({
     ...r,
@@ -47,6 +79,10 @@ export function Signup() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+      setError("Username must be 3–20 letters, numbers or underscores");
+      return;
+    }
     if (password !== confirm) {
       setError("Passwords do not match");
       return;
@@ -59,21 +95,120 @@ export function Signup() {
     }
     setLoading(true);
     try {
-      await signup(email.trim(), password, confirm, {
+      const res = await signup(email.trim(), password, confirm, {
+        username: username.trim(),
         country,
         phone: phone.trim() || undefined,
         accountType,
         gstin: accountType === "business" ? gstin.trim().toUpperCase() : undefined,
       });
+      if (res.needsEmailVerification) {
+        emailRef.current = email.trim();
+        setDevHint(res.devOtp ?? null);
+        setVerifyOpen(true);
+        setCode("");
+        setVerifyError("");
+        startCountdown();
+        toast.push({
+          title: "Check your email",
+          description: res.message ?? "A 6-digit verification code was sent.",
+          tone: "info",
+        });
+        return;
+      }
       await refresh();
       navigate("/dashboard", { replace: true });
-      toast.push({ title: "Account created", description: "Welcome to SecureNexus Interior Studio.", tone: "success" });
+      toast.push({ title: "Account created", description: "Welcome to SecureNexus.", tone: "success" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed");
     } finally {
       setLoading(false);
     }
   };
+
+  const verify = async () => {
+    setVerifyBusy(true);
+    setVerifyError("");
+    try {
+      const res = await verifyEmail(emailRef.current, code.trim());
+      await refresh();
+      navigate("/dashboard", { replace: true });
+      toast.push({
+        title: "Email verified",
+        description: res.alreadyVerified ? "Account already verified." : "Welcome to SecureNexus.",
+        tone: "success",
+      });
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setVerifyBusy(false);
+    }
+  };
+
+  const resend = async () => {
+    if (countdown > 0) return;
+    setResendBusy(true);
+    setVerifyError("");
+    try {
+      const res = await resendOtp(emailRef.current);
+      setDevHint(res.devOtp ?? null);
+      startCountdown();
+      toast.push({ title: "Code sent", description: res.message, tone: "info" });
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : "Could not resend");
+    } finally {
+      setResendBusy(false);
+    }
+  };
+
+  if (verifyOpen) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4 py-8">
+        <div className="w-full max-w-md">
+          <div className="mb-8 flex justify-center">
+            <Link to="/"><Logo /></Link>
+          </div>
+          <Card className="p-8">
+            <h1 className="text-2xl font-bold text-slate-100">Verify your email</h1>
+            <p className="mt-1 text-sm text-slate-400">
+              We sent a 6-digit code to <span className="text-emerald-300">{emailRef.current}</span>.
+            </p>
+            <div className="mt-6 space-y-4">
+              <Input
+                label="6-digit code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="000000"
+                value={code}
+                maxLength={6}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                autoFocus
+              />
+              {devHint && (
+                <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                  No mail provider configured — dev code: <span className="font-mono font-bold">{devHint}</span>
+                </p>
+              )}
+              {verifyError && <p className="text-sm text-rose-400">{verifyError}</p>}
+              <Button onClick={verify} loading={verifyBusy} className="w-full" size="lg" disabled={code.length < 6}>
+                Verify & continue
+              </Button>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-500">Didn't get it?</span>
+                <button
+                  onClick={resend}
+                  disabled={resendBusy || countdown > 0}
+                  className="font-semibold text-emerald-400 hover:text-emerald-300 disabled:text-slate-600"
+                >
+                  {countdown > 0 ? `Resend in ${countdown}s` : resendBusy ? "Sending…" : "Resend code"}
+                </button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-8">
@@ -83,17 +218,27 @@ export function Signup() {
         </div>
         <Card className="p-8">
           <h1 className="text-2xl font-bold text-slate-100">Create your studio</h1>
-          <p className="mt-1 text-sm text-slate-400">Start turning room photos into CAD-ready designs.</p>
+          <p className="mt-1 text-sm text-slate-400">Pick a handle, then verify your email to get started.</p>
           <form onSubmit={submit} className="mt-6 space-y-4">
-            <Input
-              label="Email"
-              type="email"
-              autoComplete="email"
-              placeholder="you@studio.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Input
+                label="Username"
+                placeholder="e.g. architect_jane"
+                value={username}
+                maxLength={20}
+                onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))}
+                required
+              />
+              <Input
+                label="Email"
+                type="email"
+                autoComplete="email"
+                placeholder="you@studio.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
             <div className="space-y-3">
               <Input
                 label="Password"

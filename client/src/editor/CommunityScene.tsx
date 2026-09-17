@@ -1,0 +1,731 @@
+import { useEffect, useRef } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import type { AmenityData, CommunityDesign, ExteriorPanel, TowerData } from "../types";
+import { material, prism, prismAt } from "../lib/modelcore";
+import { amenityKind, facadeOption, landMeters, towerMeters, undergroundDepth } from "../lib/community";
+import { pitFootprint } from "../lib/takeoff";
+
+/* ---------------------------------- Builder ---------------------------------- */
+
+function buildCustomObject(shape: string, w: number, h: number, d: number, color: string): THREE.Group {
+  const g = new THREE.Group();
+  switch (shape) {
+    case "cylinder": {
+      const cyl = new THREE.Mesh(
+        new THREE.CylinderGeometry(w / 2, w / 2, h, 20),
+        material(color, { rough: 0.7 }),
+      );
+      cyl.position.y = h / 2;
+      cyl.castShadow = true;
+      cyl.receiveShadow = true;
+      g.add(cyl);
+      break;
+    }
+    case "sphere": {
+      const trunk = prism(Math.max(w * 0.12, 0.2), Math.max(h * 0.4, 0.6), Math.max(d * 0.12, 0.2), material("#6d4c41"));
+      trunk.position.y = Math.max(h * 0.2, 0.3);
+      const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.5, 18, 14), material(color, { rough: 0.9 }));
+      canopy.scale.set(w, h * 0.7, d);
+      canopy.position.y = Math.max(h * 0.4, 0.6) + h * 0.35;
+      canopy.castShadow = true;
+      g.add(trunk, canopy);
+      break;
+    }
+    case "pyramid": {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(w / 2, h, 4), material(color, { rough: 0.8 }));
+      cone.position.y = h / 2;
+      cone.rotation.y = Math.PI / 4;
+      cone.castShadow = true;
+      g.add(cone);
+      break;
+    }
+    case "lshape": {
+      const base = prism(w, h, d, material(color, { rough: 0.85 }));
+      base.position.y = h / 2;
+      const wing = prism(w * 0.35, h * 0.7, d, material(color, { rough: 0.85 }));
+      wing.position.set(-w * 0.325, h * 0.35, 0);
+      g.add(base, wing);
+      break;
+    }
+    case "frame": {
+      const post = Math.max(w, d) * 0.05 + 0.08;
+      const corners: [number, number][] = [
+        [-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2],
+      ];
+      for (const [cx, cz] of corners) {
+        const p = prism(post, h, post, material(color));
+        p.position.set(cx, h / 2, cz);
+        g.add(p);
+      }
+      const top = prism(w + post, post * 0.8, d + post, material(color));
+      top.position.y = h;
+      g.add(top);
+      break;
+    }
+    case "box":
+    default: {
+      const body = prism(w, h, d, material(color, { rough: 0.75 }));
+      body.position.y = h / 2;
+      g.add(body);
+      break;
+    }
+  }
+  return g;
+}
+
+function buildAmenityMesh(a: AmenityData): THREE.Group {
+  const g = new THREE.Group();
+  const k = amenityKind(a.kind);
+
+  /* Generated objects (offline intent → object) render from their stored shape. */
+  if (a.shape) {
+    g.add(buildCustomObject(a.shape, a.w, a.h, a.d, a.color ?? k?.color ?? "#90a4ae"));
+    g.position.set(a.x, 0, a.z);
+    g.rotation.y = (a.rotY * Math.PI) / 180;
+    g.userData.selectId = a.id;
+    g.userData.selectKind = "amenity";
+    g.userData.selW = a.w;
+    g.userData.selD = a.d;
+    return g;
+  }
+
+  const kk = k ?? amenityKind("lawn")!;
+  const w = a.w;
+  const d = a.d;
+  const mat = material(kk.color);
+  switch (kk.shape) {
+    case "court": {
+      const slab = prism(w, Math.max(a.h, 0.08), d, mat);
+      slab.position.y = Math.max(a.h, 0.08) / 2;
+      g.add(slab);
+      const line = prism(0.15, 0.09, d, material("#ffffff"));
+      line.position.y = Math.max(a.h, 0.08) + 0.02;
+      g.add(line);
+      break;
+    }
+    case "pool": {
+      const rim = prism(w + 0.6, 0.5, d + 0.6, material("#e0e0e0", { rough: 0.6 }));
+      rim.position.y = 0.25;
+      g.add(rim);
+      const water = prism(w, Math.max(a.h, 0.8), d, material("#42a5f5", { trans: 0.75, rough: 0.2 }));
+      water.position.y = 0.5;
+      g.add(water);
+      break;
+    }
+    case "green": {
+      const slab = prism(w, 0.12, d, mat);
+      slab.position.y = 0.06;
+      g.add(slab);
+      const trees = Math.max(2, Math.floor((w * d) / 60));
+      for (let i = 0; i < trees; i++) {
+        const tx = (i % 4) * 3 - w / 2 + (i % 3);
+        const tz = Math.floor(i / 4) * 3 - d / 2 + (i % 2);
+        const trunk = prism(0.35, 1, 0.35, material("#8d6e63"));
+        trunk.position.set(tx, 0.5, tz);
+        const canopy = new THREE.Mesh(
+          new THREE.ConeGeometry(1.4, 1.6, 8),
+          material("#388e3c", { rough: 0.9 }),
+        );
+        canopy.position.set(tx, 1.8, tz);
+        canopy.castShadow = true;
+        g.add(trunk, canopy);
+      }
+      break;
+    }
+    case "track": {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.72, 0.95, 48), mat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.07;
+      ring.scale.set(w / 2, d / 2, 1);
+      ring.receiveShadow = true;
+      g.add(ring);
+      const inner = new THREE.Mesh(new THREE.RingGeometry(0, 0.7, 48), material("#c8e6c9", { rough: 0.95 }));
+      inner.rotation.x = -Math.PI / 2;
+      inner.position.y = 0.05;
+      inner.scale.set(w / 2, d / 2, 1);
+      inner.receiveShadow = true;
+      g.add(inner);
+      break;
+    }
+    case "steps": {
+      const tiers = 3;
+      for (let i = 0; i < tiers; i++) {
+        const s = 1 - i * 0.25;
+        const tier = prism(w * s, 0.6, d * s, material(i === tiers - 1 ? "#cfd8dc" : kk.color));
+        tier.position.set(0, 0.3 + i * 0.5, (i * d * 0.12) / tiers);
+        g.add(tier);
+      }
+      break;
+    }
+    case "box": {
+      const body = prism(w, a.h, d, mat);
+      body.position.y = a.h / 2;
+      g.add(body);
+      const roof = prism(w + 0.4, 0.25, d + 0.4, material("#b0bec5"));
+      roof.position.y = a.h + 0.12;
+      g.add(roof);
+      break;
+    }
+    case "sand": {
+      const slab = prism(w, Math.max(a.h, 0.3), d, material(kk.color));
+      slab.position.y = Math.max(a.h, 0.3) / 2;
+      g.add(slab);
+      break;
+    }
+    case "kids": {
+      const slab = prism(w, 0.15, d, mat);
+      slab.position.y = 0.075;
+      g.add(slab);
+      for (let i = 0; i < 4; i++) {
+        const px = ((i % 2) * 2 - 1) * w * 0.22;
+        const pz = (Math.floor(i / 2) * 2 - 1) * d * 0.22;
+        const toy = prism(1.6, 1.3, 1.6, material(i % 2 ? "#ff7043" : "#ffca28", { rough: 0.6 }));
+        toy.position.set(px, 0.65, pz);
+        g.add(toy);
+      }
+      break;
+    }
+  }
+  g.position.set(a.x, 0, a.z);
+  g.rotation.y = (a.rotY * Math.PI) / 180;
+  g.userData.selectId = a.id;
+  g.userData.selectKind = "amenity";
+  g.userData.selW = a.w;
+  g.userData.selD = a.d;
+  return g;
+}
+
+function windowGrid(w: number, h: number, rows: number, cols: number, color: string): THREE.Group {
+  const g = new THREE.Group();
+  const cw = w / cols;
+  const ch = h / rows;
+  const m = material(color, { rough: 0.2 });
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = new THREE.Mesh(new THREE.PlaneGeometry(cw * 0.7, ch * 0.6), m);
+      cell.position.set((c - (cols - 1) / 2) * cw, (r - (rows - 1) / 2) * ch, 0.01);
+      cell.userData.noSelect = true;
+      g.add(cell);
+    }
+  }
+  return g;
+}
+
+function buildExteriorPanel(p: ExteriorPanel, tower: TowerData): THREE.Group {
+  const g = new THREE.Group();
+  const { w: tw, d: td } = towerMeters(tower);
+  const facade = facadeOption(p.material);
+  const panel = prism(p.w, p.h, 0.18, material(p.color || facade.color, { rough: facade.rough, metal: facade.metal }));
+  panel.position.y = 0;
+  g.add(panel);
+  const orient: Record<ExteriorPanel["face"], { x: number; z: number; ry: number }> = {
+    front: { x: p.x, z: td / 2 + 0.12, ry: 0 },
+    back: { x: p.x, z: -td / 2 - 0.12, ry: Math.PI },
+    right: { x: tw / 2 + 0.12, z: p.x, ry: Math.PI / 2 },
+    left: { x: -tw / 2 - 0.12, z: p.x, ry: -Math.PI / 2 },
+  };
+  const o = orient[p.face];
+  g.position.set(o.x, p.y + p.h / 2, o.z);
+  g.rotation.y = o.ry;
+  g.userData.noSelect = true;
+  return g;
+}
+
+function buildTowerMesh(t: TowerData, panels: ExteriorPanel[]): THREE.Group {
+  const g = new THREE.Group();
+  const { w, d, h } = towerMeters(t);
+  const facade = facadeOption(t.facadeMaterial ?? "glass");
+  const bodyMat = material(facade.color, {
+    rough: facade.rough,
+    metal: facade.metal,
+    trans: facade.trans ? 0.85 : 1,
+  });
+  const body = prism(w, h, d, bodyMat);
+  body.position.y = h / 2;
+  g.add(body);
+
+  /* Floor separators */
+  for (let i = 1; i < t.floors; i++) {
+    const band = prism(w + 0.06, 0.18, d + 0.06, material("#37474f"));
+    band.position.y = i * t.floorHeight;
+    g.add(band);
+  }
+
+  /* Window strips on the door-facing facade */
+  const windows = windowGrid(w * 0.92, h * 0.9, Math.max(t.floors, 2), Math.max(3, Math.ceil(w / t.unitWidth)), "#253238");
+  windows.position.set(0, h / 2, d / 2 + 0.02);
+  g.add(windows);
+
+  /* Door-facing indicator (red pad on the entrance side) */
+  const dirs: Record<string, { x: number; z: number; ry: number }> = {
+    north: { x: 0, z: -d / 2, ry: 0 },
+    south: { x: 0, z: d / 2, ry: 0 },
+    east: { x: w / 2, z: 0, ry: Math.PI / 2 },
+    west: { x: -w / 2, z: 0, ry: -Math.PI / 2 },
+  };
+  const ent = dirs[t.doorFacing] ?? dirs.south;
+  const pad = prism(3.5, 0.3, 2.5, material("#e53935", { rough: 0.6 }));
+  pad.position.set(ent.x * 0.98, 0.15, ent.z * 0.98);
+  pad.rotation.y = ent.ry;
+  g.add(pad);
+
+  /* Per-tower exterior material panels */
+  for (const p of panels) {
+    if (p.towerId === t.id) g.add(buildExteriorPanel(p, t));
+  }
+
+  g.position.set(t.x, 0, t.z);
+  g.userData.selectId = t.id;
+  g.userData.selectKind = "tower";
+  g.userData.selW = w;
+  g.userData.selD = d;
+  return g;
+}
+
+function buildSite(design: CommunityDesign): THREE.Group {
+  const g = new THREE.Group();
+  const { w: W, d: D } = landMeters(design.land);
+  const halfW = W / 2;
+  const halfD = D / 2;
+
+  /* Natural ground slab */
+  const ground = prism(W, 0.6, D, material("#7a6a4f", { rough: 1 }));
+  ground.position.y = -0.3;
+  g.add(ground);
+
+  /* Plot boundary frame */
+  const frameMat = material("#5d4037", { rough: 0.8 });
+  g.add(prismAt(0, 0.12, halfD, W, 0.24, 0.24, frameMat));
+  g.add(prismAt(0, 0.12, -halfD, W, 0.24, 0.24, frameMat));
+  g.add(prismAt(halfW, 0.12, 0, 0.24, 0.24, D, frameMat));
+  g.add(prismAt(-halfW, 0.12, 0, 0.24, 0.24, D, frameMat));
+
+  /* Parking */
+  const park = design.parking;
+  if (park.mode === "underground" && park.underground) {
+    g.add(buildUnderground(design));
+  } else if (park.mode === "surface" && park.surfaceBays > 0) {
+    const bays = Math.min(park.surfaceBays, 40);
+    const bayW = 2.5;
+    const bayD = 5;
+    const perRow = 8;
+    for (let i = 0; i < bays; i++) {
+      const row = Math.floor(i / perRow);
+      const col = i % perRow;
+      const bay = prism(bayW * 0.8, 0.08, bayD * 0.9, material(i % 2 ? "#b0bec5" : "#90a4ae"));
+      bay.position.set(-halfW + 3 + col * (bayW + 0.6), 0.04, halfD - 3 - row * (bayD + 0.8));
+      bay.rotation.y = Math.PI / 2;
+      g.add(bay);
+    }
+  }
+
+  /* Amenities on the ground floor */
+  for (const a of design.amenities) {
+    try {
+      g.add(buildAmenityMesh(a));
+    } catch {
+      /* skip */
+    }
+  }
+
+  /* Towers */
+  for (const t of design.towers) {
+    g.add(buildTowerMesh(t, design.exteriors));
+  }
+
+  /* Tower labels */
+  for (const t of design.towers) {
+    const lbl = labelSprite(t.label);
+    const { d: td } = towerMeters(t);
+    lbl.position.set(t.x, towerMeters(t).h + 2.2, t.z + td / 2 + 1.5);
+    g.add(lbl);
+  }
+
+  g.userData.noSelect = true;
+  return g;
+}
+
+function buildUnderground(design: CommunityDesign): THREE.Group {
+  const g = new THREE.Group();
+  const ug = design.parking.underground!;
+
+  const pit = pitFootprint(design);
+  const depth = undergroundDepth(ug);
+  const soilMat = material("#8d6e63", { rough: 1 });
+
+  /* Pit side walls (the excavated earth) */
+  g.add(prismAt(pit.x, -depth / 2, pit.z - pit.d / 2, pit.w + 1.2, depth, 1.2, soilMat));
+  g.add(prismAt(pit.x, -depth / 2, pit.z + pit.d / 2, pit.w + 1.2, depth, 1.2, soilMat));
+  g.add(prismAt(pit.x - pit.w / 2, -depth / 2, pit.z, 1.2, depth, pit.d, soilMat));
+  g.add(prismAt(pit.x + pit.w / 2, -depth / 2, pit.z, 1.2, depth, pit.d, soilMat));
+
+  /* Basement floor slabs, one per level */
+  for (let i = 0; i < ug.levels; i++) {
+    const topY = -(0.25 + i * ug.floorHeight);
+    const slab = prism(pit.w, 0.3, pit.d, material("#9e9e9e", { rough: 0.8 }));
+    slab.position.set(pit.x, topY, pit.z);
+    g.add(slab);
+
+    /* Pillars */
+    const pxStart = pit.x - pit.w / 2 + ug.pillarSpacingX * 0.5;
+    const pzStart = pit.z - pit.d / 2 + ug.pillarSpacingZ * 0.5;
+    const pw = 0.5;
+    for (let px = pxStart; px <= pit.x + pit.w / 2 - ug.pillarSpacingX * 0.5; px += ug.pillarSpacingX) {
+      for (let pz = pzStart; pz <= pit.z + pit.d / 2 - ug.pillarSpacingZ * 0.5; pz += ug.pillarSpacingZ) {
+        const col = prism(pw, ug.floorHeight - 0.3, pw, material("#cfd8dc", { rough: 0.7 }));
+        col.position.set(px, topY - 0.15 + (ug.floorHeight - 0.3) / 2, pz);
+        g.add(col);
+      }
+    }
+
+    /* Car parking bays */
+    const bayDrawW = ug.bayWidth;
+    const bayDrawD = ug.bayLength;
+    const carMat = material("#4fc3f7", { trans: 0.55, rough: 0.4 });
+    const usedCols = Math.min(ug.bayCols, Math.max(1, Math.floor(pit.w / (bayDrawW + 0.6))));
+    const usedRows = Math.min(ug.bayRows, Math.max(1, Math.floor(pit.d / (bayDrawD + 1))));
+    const bxStart = pit.x - ((usedCols - 1) * (bayDrawW + 0.6)) / 2;
+    const bzStart = pit.z - ((usedRows - 1) * (bayDrawD + 1)) / 2;
+    for (let r = 0; r < usedRows; r++) {
+      for (let c = 0; c < usedCols; c++) {
+        const bay = prism(bayDrawW * 0.9, 0.1, bayDrawD * 0.95, carMat);
+        bay.position.set(bxStart + c * (bayDrawW + 0.6), topY + 0.16, bzStart + r * (bayDrawD + 1));
+        g.add(bay);
+      }
+    }
+
+    /* Lift lobby (centred on one side) */
+    if (ug.liftLobby) {
+      const lobby = prism(4, ug.floorHeight - 0.3, 3, material("#eceff1", { rough: 0.6 }));
+      lobby.position.set(pit.x, topY - 0.15 + (ug.floorHeight - 0.3) / 2, pit.z + pit.d / 2 - 2);
+      g.add(lobby);
+      const lift = prism(2.4, ug.floorHeight - 0.5, 2, material("#455a64", { metal: 0.5, rough: 0.4 }));
+      lift.position.set(pit.x, topY - 0.1 + (ug.floorHeight - 0.4) / 2, pit.z + pit.d / 2 - 2.2);
+      g.add(lift);
+    }
+
+    /* Stair lobby (opposite side) */
+    if (ug.stairLobby) {
+      const lobby = prism(3.4, ug.floorHeight - 0.3, 3.4, material("#f5f5f5", { rough: 0.6 }));
+      lobby.position.set(pit.x, topY - 0.15 + (ug.floorHeight - 0.3) / 2, pit.z - pit.d / 2 + 2.4);
+      g.add(lobby);
+    }
+  }
+
+  /* Entry/exit ramp from grade down to the top basement slab */
+  const topSlabY = -(0.25 + 0 * ug.floorHeight) - 0.15;
+  const rampAngle = Math.atan2(Math.abs(topSlabY) + 0.6, ug.rampLength > 0 ? ug.rampLength : 24);
+  const rampStarts = { x: pit.x + pit.w / 2, z: pit.z };
+  const ramp = new THREE.Mesh(
+    new THREE.BoxGeometry(ug.rampWidth, 0.4, ug.rampLength),
+    material("#bdbdbd", { rough: 0.7 }),
+  );
+  ramp.position.set(rampStarts.x + ug.rampLength / 2, -Math.abs(topSlabY) / 2 - 0.2, rampStarts.z);
+  ramp.rotation.z = rampAngle;
+  ramp.userData.noSelect = true;
+  g.add(ramp);
+
+  /* Ramp retaining edges */
+  const edgeA = prism(0.3, 0.7, ug.rampLength, material("#8d6e63"));
+  edgeA.position.set(rampStarts.x + ug.rampLength / 2, -Math.abs(topSlabY) / 2 - 0.4, rampStarts.z - ug.rampWidth / 2 - 0.15);
+  edgeA.rotation.z = rampAngle;
+  const edgeB = prism(0.3, 0.7, ug.rampLength, material("#8d6e63"));
+  edgeB.position.set(rampStarts.x + ug.rampLength / 2, -Math.abs(topSlabY) / 2 - 0.4, rampStarts.z + ug.rampWidth / 2 + 0.15);
+  edgeB.rotation.z = rampAngle;
+  g.add(edgeA, edgeB);
+
+  return g;
+}
+
+let labelCanvas: HTMLCanvasElement | null = null;
+function labelSprite(text: string): THREE.Sprite {
+  if (!labelCanvas) labelCanvas = document.createElement("canvas");
+  const cv = labelCanvas;
+  cv.width = 512;
+  cv.height = 128;
+  const ctx = cv.getContext("2d")!;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = "rgba(15,23,42,0.82)";
+  ctx.beginPath();
+  ctx.roundRect(8, 8, 496, 112, 16);
+  ctx.fill();
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = "bold 64px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, cv.width / 2, cv.height / 2);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  sprite.scale.set(14, 3.5, 1);
+  sprite.userData.noSelect = true;
+  return sprite;
+}
+
+function selectionRing(w: number, d: number): THREE.Mesh {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.62, 0.78, 4),
+    new THREE.MeshBasicMaterial({ color: "#34d399", transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  const r = Math.max(w, d) * 0.62;
+  ring.scale.set(r, r, 1);
+  ring.position.y = 0.3;
+  ring.userData.noSelect = true;
+  return ring;
+}
+
+export function buildCommunityScene(design: CommunityDesign, selectedId?: string | null): THREE.Group {
+  const g = buildSite(design);
+  if (selectedId) {
+    const target = g.children.find((c) => c.userData?.selectId === selectedId);
+    if (target) {
+      const w = (target.userData.selW as number) ?? 10;
+      const d = (target.userData.selD as number) ?? 10;
+      target.add(selectionRing(w, d));
+    }
+  }
+  return g;
+}
+
+/* --------------------------------- Component --------------------------------- */
+
+export interface SceneContextTarget {
+  kind: "tower" | "amenity" | "ground";
+  id?: string;
+  x: number;
+  z: number;
+  clientX: number;
+  clientY: number;
+}
+
+interface CommunitySceneProps {
+  design: CommunityDesign;
+  selectedId?: string | null;
+  onSelect?: (id: string | null) => void;
+  onChange?: (next: CommunityDesign) => void;
+  onContextTarget?: (target: SceneContextTarget) => void;
+}
+
+export function CommunityScene({ design, selectedId, onSelect, onChange, onContextTarget }: CommunitySceneProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const groupRef = useRef<THREE.Group | null>(null);
+  const rebuildRef = useRef<(() => void) | null>(null);
+
+  const designRef = useRef(design);
+  const selectedRef = useRef<string | null>(selectedId ?? null);
+  const handlersRef = useRef({ onSelect, onChange, onContextTarget });
+  designRef.current = design;
+  selectedRef.current = selectedId ?? null;
+  handlersRef.current = { onSelect, onChange, onContextTarget };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    container.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#0b1220");
+    scene.fog = new THREE.Fog("#0b1220", 900, 2200);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 5000);
+    camera.position.set(180, 150, 220);
+    scene.add(camera);
+    cameraRef.current = camera;
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0, 0, 0);
+    controls.minDistance = 10;
+    controls.maxDistance = 900;
+    controlsRef.current = controls;
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 0.85));
+    const sun = new THREE.DirectionalLight(0xfff4e0, 1.7);
+    sun.position.set(150, 260, 100);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 10;
+    sun.shadow.camera.far = 800;
+    scene.add(sun);
+
+    const grid = new THREE.GridHelper(600, 60, 0x1e293b, 0x1e293b);
+    grid.position.y = -0.3;
+    grid.material = new THREE.LineBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.35 });
+    scene.add(grid);
+
+    const group = new THREE.Group();
+    const rebuild = () => {
+      group.clear();
+      group.add(buildCommunityScene(designRef.current, selectedRef.current));
+      scene.add(group);
+      groupRef.current = group;
+    };
+    rebuildRef.current = rebuild;
+    rebuild();
+
+    const animate = () => {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    /* --------------------------- Picking & dragging -------------------------- */
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const hitPoint = new THREE.Vector3();
+
+    const pick = (clientX: number, clientY: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycaster.intersectObject(group, true);
+      for (const hit of hits) {
+        let node: THREE.Object3D | null = hit.object;
+        while (node) {
+          if (node.userData?.selectId) return { id: node.userData.selectId as string, kind: node.userData.selectKind as string };
+          node = node.parent;
+        }
+      }
+      return null;
+    };
+
+    const groundAt = (clientX: number, clientY: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(ndc, camera);
+      return raycaster.ray.intersectPlane(groundPlane, hitPoint) ? hitPoint.clone() : null;
+    };
+
+    let drag: { id: string; kind: string; node: THREE.Object3D; startX: number; startZ: number; grabX: number; grabZ: number; moved: boolean } | null = null;
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const target = pick(e.clientX, e.clientY);
+      if (!target) {
+        handlersRef.current.onSelect?.(null);
+        return;
+      }
+      handlersRef.current.onSelect?.(target.id);
+      const node = group.children.find((c) => c.userData?.selectId === target.id) ?? null;
+      const ground = groundAt(e.clientX, e.clientY);
+      if (!node || !ground || !handlersRef.current.onChange) return;
+      drag = {
+        id: target.id,
+        kind: target.kind,
+        node,
+        startX: node.position.x,
+        startZ: node.position.z,
+        grabX: ground.x,
+        grabZ: ground.z,
+        moved: false,
+      };
+      controls.enabled = false;
+      renderer.domElement.setPointerCapture?.(e.pointerId);
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!drag) return;
+      const ground = groundAt(e.clientX, e.clientY);
+      if (!ground) return;
+      const nx = drag.startX + (ground.x - drag.grabX);
+      const nz = drag.startZ + (ground.z - drag.grabZ);
+      drag.node.position.x = nx;
+      drag.node.position.z = nz;
+      if (Math.abs(nx - drag.startX) > 0.01 || Math.abs(nz - drag.startZ) > 0.01) drag.moved = true;
+    };
+
+    const commitDrag = () => {
+      if (!drag) return;
+      const { id, kind, node, moved } = drag;
+      drag = null;
+      controls.enabled = true;
+      if (!moved || !handlersRef.current.onChange) return;
+      const x = Math.round(node.position.x * 10) / 10;
+      const z = Math.round(node.position.z * 10) / 10;
+      const current = designRef.current;
+      if (kind === "tower") {
+        handlersRef.current.onChange({ ...current, towers: current.towers.map((t) => (t.id === id ? { ...t, x, z } : t)) });
+      } else if (kind === "amenity") {
+        handlersRef.current.onChange({ ...current, amenities: current.amenities.map((a) => (a.id === id ? { ...a, x, z } : a)) });
+      }
+    };
+
+    const onPointerUp = () => {
+      commitDrag();
+    };
+
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      const target = pick(e.clientX, e.clientY);
+      const ground = groundAt(e.clientX, e.clientY);
+      const x = ground ? Math.round(ground.x * 10) / 10 : 0;
+      const z = ground ? Math.round(ground.z * 10) / 10 : 0;
+      handlersRef.current.onContextTarget?.({
+        kind: (target?.kind as SceneContextTarget["kind"]) ?? "ground",
+        id: target?.id,
+        x,
+        z,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+    };
+
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointercancel", onPointerUp);
+    renderer.domElement.addEventListener("contextmenu", onContextMenu);
+
+    const onResize = () => {
+      const w = container.clientWidth || 1;
+      const h = container.clientHeight || 1;
+      renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    };
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointercancel", onPointerUp);
+      renderer.domElement.removeEventListener("contextmenu", onContextMenu);
+      controls.dispose();
+      renderer.dispose();
+      group.clear();
+      if (renderer.domElement.parentElement === container) {
+        container.removeChild(renderer.domElement);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Rebuild the model when design or selection changes */
+  useEffect(() => {
+    rebuildRef.current?.();
+  }, [design, selectedId]);
+
+  return (
+    <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: "none" }} data-scene="community" />
+  );
+}

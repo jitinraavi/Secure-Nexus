@@ -57,7 +57,9 @@ export function Layout() {
         </nav>
         <div className="border-t border-slate-800/80 p-3">
           <div className="rounded-xl bg-slate-900/70 px-3 py-3">
-            <p className="truncate text-sm font-semibold text-slate-200">{user?.email}</p>
+            <p className="truncate text-sm font-semibold text-slate-200">
+              {user?.username ? `@${user.username}` : user?.email}
+            </p>
             <p className="mt-0.5 text-xs capitalize text-emerald-400">
               {user?.plan === "studio" ? "Studio" : user?.plan === "pro" ? "Pro" : "Free"} plan
             </p>

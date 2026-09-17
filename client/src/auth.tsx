@@ -22,6 +22,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (me) {
         setUser({
           ...me.user,
+          username: me.user.username ?? null,
+          emailVerified: me.user.emailVerified ?? true,
           plan: me.user.plan ?? "free",
           planExpiresAt: me.user.plan_expires_at ?? null,
           country: me.user.country ?? "IN",

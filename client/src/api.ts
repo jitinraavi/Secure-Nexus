@@ -82,19 +82,50 @@ export async function getMe(): Promise<MeResponse | null> {
 }
 
 export interface SignupExtras {
+  username?: string;
   country?: string;
   phone?: string;
   accountType?: "individual" | "business";
   gstin?: string;
 }
 
-export function signup(email: string, password: string, confirmPassword: string, extras: SignupExtras = {}) {
-  return request<{ user: User; csrfToken: string }>("/api/auth/signup", {
+export interface SignupResult {
+  needsEmailVerification?: boolean;
+  message?: string;
+  devOtp?: string;
+  user?: User;
+  csrfToken?: string;
+}
+
+export async function signup(email: string, password: string, confirmPassword: string, extras: SignupExtras = {}) {
+  const res = await request<SignupResult>("/api/auth/signup", {
     method: "POST",
     body: JSON.stringify({ email, password, confirmPassword, ...extras }),
-  }).then((r) => {
-    setCsrfToken(r.csrfToken);
-    return r;
+  });
+  if (res.csrfToken) setCsrfToken(res.csrfToken);
+  return res;
+}
+
+export interface VerifyEmailResult {
+  user?: User;
+  csrfToken?: string;
+  alreadyVerified?: boolean;
+  error?: string;
+}
+
+export async function verifyEmail(email: string, code: string): Promise<VerifyEmailResult> {
+  const res = await request<VerifyEmailResult>("/api/auth/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
+  });
+  if (res.csrfToken) setCsrfToken(res.csrfToken);
+  return res;
+}
+
+export function resendOtp(email: string) {
+  return request<{ ok: boolean; message?: string; devOtp?: string }>("/api/auth/resend-otp", {
+    method: "POST",
+    body: JSON.stringify({ email }),
   });
 }
 
@@ -142,6 +173,7 @@ export function changePassword(currentPassword: string, newPassword: string, con
 }
 
 export interface ProfilePatch {
+  username?: string;
   country?: string;
   phone?: string;
   accountType?: "individual" | "business";

@@ -11,6 +11,11 @@ raw.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id            TEXT PRIMARY KEY,
   email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  username      TEXT,
+  email_verified INTEGER NOT NULL DEFAULT 0,
+  otp_code_hash TEXT,
+  otp_expires_at INTEGER,
+  otp_attempts  INTEGER NOT NULL DEFAULT 0,
   password_salt TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   totp_secret   TEXT,
@@ -129,6 +134,25 @@ if (!userCols.includes("account_type")) {
 if (!userCols.includes("gstin")) {
   raw.exec("ALTER TABLE users ADD COLUMN gstin TEXT;");
 }
+/* OTP email verification (new column; default 1 grandfathers pre-existing accounts) */
+if (!userCols.includes("username")) {
+  raw.exec("ALTER TABLE users ADD COLUMN username TEXT;");
+}
+if (!userCols.includes("email_verified")) {
+  raw.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1;");
+}
+if (!userCols.includes("otp_code_hash")) {
+  raw.exec("ALTER TABLE users ADD COLUMN otp_code_hash TEXT;");
+}
+if (!userCols.includes("otp_expires_at")) {
+  raw.exec("ALTER TABLE users ADD COLUMN otp_expires_at INTEGER;");
+}
+if (!userCols.includes("otp_attempts")) {
+  raw.exec("ALTER TABLE users ADD COLUMN otp_attempts INTEGER NOT NULL DEFAULT 0;");
+}
+raw.exec(
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username) WHERE username IS NOT NULL AND username != '';",
+);
 
 const projectCols = (raw.prepare("PRAGMA table_info(projects)").all() as { name: string }[]).map((c) => c.name);
 if (!projectCols.includes("project_type")) {

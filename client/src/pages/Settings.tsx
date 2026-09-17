@@ -26,7 +26,7 @@ export function Settings() {
   const [sessionLoading, setSessionLoading] = useState(true);
 
   const [countries, setCountries] = useState<CountryOption[]>([]);
-  const [profile, setProfile] = useState({ country: "IN", phone: "", accountType: "individual" as "individual" | "business", gstin: "" });
+  const [profile, setProfile] = useState({ username: "", country: "IN", phone: "", accountType: "individual" as "individual" | "business", gstin: "" });
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileError, setProfileError] = useState("");
 
@@ -61,6 +61,7 @@ export function Settings() {
   useEffect(() => {
     if (!user) return;
     setProfile({
+      username: user.username || "",
       country: user.country || "IN",
       phone: user.phone || "",
       accountType: user.accountType || "individual",
@@ -77,16 +78,21 @@ export function Settings() {
         return;
       }
     }
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(profile.username.trim())) {
+      setProfileError("Username must be 3–20 letters, numbers or underscores");
+      return;
+    }
     setProfileBusy(true);
     try {
       await updateProfile({
+        username: profile.username.trim(),
         country: profile.country,
         phone: profile.phone.trim() || undefined,
         accountType: profile.accountType,
         gstin: profile.accountType === "business" ? profile.gstin.trim().toUpperCase() : undefined,
       });
       await refresh();
-      toast.push({ title: "Profile updated", description: "Your billing and contact details were saved.", tone: "success" });
+      toast.push({ title: "Profile updated", description: "Your profile and contact details were saved.", tone: "success" });
     } catch (err) {
       setProfileError(err instanceof Error ? err.message : "Could not update profile");
     } finally {
@@ -163,13 +169,20 @@ export function Settings() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="font-semibold text-slate-100">Profile &amp; billing details</h2>
-            <p className="mt-1 text-sm text-slate-400">Country, phone and account type — used for localised pricing and invoices.</p>
+            <p className="mt-1 text-sm text-slate-400">Username, country, phone and account type — used for identity and invoices.</p>
           </div>
           <Badge tone={user?.accountType === "business" ? "cyan" : "slate"}>
             {user?.accountType === "business" ? "Business" : "Individual"}
           </Badge>
         </div>
         <form onSubmit={submitProfile} className="mt-5 grid gap-4 sm:grid-cols-2">
+          <Input
+            label="Username"
+            placeholder="e.g. architect_jane"
+            value={profile.username}
+            maxLength={20}
+            onChange={(e) => setProfile({ ...profile, username: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })}
+          />
           <Select label="Country" value={profile.country} onChange={(e) => setProfile({ ...profile, country: e.target.value })}>
             {countries.length === 0 && <option value="IN">India</option>}
             {countries.map((c) => (

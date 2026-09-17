@@ -1,12 +1,17 @@
 import { Router } from "express";
+import { randomInt } from "node:crypto";
 import qrcode from "qrcode";
 import { logAudit } from "../audit.js";
 import {
   LOCK_SECONDS,
   MAX_FAILED_ATTEMPTS,
+  OTP_MAX_ATTEMPTS,
+  OTP_RESEND_COOLDOWN_SECONDS,
+  OTP_TTL_SECONDS,
 } from "../config.js";
-import { hashPassword, randomId, randomToken, verifyPassword } from "../crypto.js";
+import { hashPassword, randomId, randomToken, sha256Hex, verifyPassword } from "../crypto.js";
 import { db, now } from "../db.js";
+import { sendOtpEmail } from "../mailer.js";
 import {
   asyncHandler,
   AuthedRequest,
@@ -21,15 +26,29 @@ import {
   changePasswordSchema,
   loginSchema,
   profileSchema,
+  resendOtpSchema,
   signupSchema,
+  verifyEmailSchema,
   verifyTwoFactorSchema,
 } from "../validate.js";
 
 const router = Router();
 
+function generateOtp(): string {
+  return String(randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+function issueOtp(userId: string, code: string, email: string): void {
+  db.prepare(
+    "UPDATE users SET otp_code_hash = ?, otp_expires_at = ?, otp_attempts = 0, updated_at = ? WHERE id = ?",
+  ).run(sha256Hex(`${userId}:${code}`), now() + OTP_TTL_SECONDS, now(), userId);
+}
+
 function publicUser(user: {
   id: string;
   email: string;
+  username?: string | null;
+  email_verified?: number;
   totp_enabled: number;
   created_at: number;
   last_login_at: number | null;
@@ -46,6 +65,8 @@ function publicUser(user: {
   return {
     id: user.id,
     email: user.email,
+    username: user.username ?? null,
+    emailVerified: Boolean(user.email_verified ?? 1),
     totpEnabled: Boolean(user.totp_enabled),
     createdAt: user.created_at,
     lastLoginAt: user.last_login_at,
@@ -64,7 +85,8 @@ router.get("/bootstrap", (_req, res) => {
   res.json(bootstrap(_req, res));
 });
 
-/* POST /api/auth/signup */
+/* POST /api/auth/signup — creates the account and emails a verification code.
+   The session is only created after POST /api/auth/verify-email succeeds. */
 router.post(
   "/signup",
   asyncHandler(async (req, res) => {
@@ -73,7 +95,7 @@ router.post(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const { email, password, country, phone, accountType, gstin } = parsed.data;
+    const { email, username, password, country, phone, accountType, gstin } = parsed.data;
 
     const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email) as
       | { id: string }
@@ -82,32 +104,162 @@ router.post(
       res.status(409).json({ error: "An account with this email already exists" });
       return;
     }
+    if (username) {
+      const taken = db
+        .prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE")
+        .get(username) as { id: string } | undefined;
+      if (taken) {
+        res.status(409).json({ error: "That username is already taken" });
+        return;
+      }
+    }
 
     const { salt, hash } = hashPassword(password);
     const id = randomId();
     const t = now();
     db.prepare(
-      `INSERT INTO users (id, email, password_salt, password_hash, country, phone, account_type, gstin, password_changed_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, email, salt, hash, country || "IN", phone || null, accountType || "individual", gstin || null, t, t, t);
+      `INSERT INTO users (id, email, username, email_verified, password_salt, password_hash, country, phone, account_type, gstin, password_changed_at, created_at, updated_at)
+       VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      email,
+      username || null,
+      salt,
+      hash,
+      country || "IN",
+      phone || null,
+      accountType || "individual",
+      gstin || null,
+      t,
+      t,
+      t,
+    );
 
-    logAudit(id, "auth.signup", "Account created", req);
+    const code = generateOtp();
+    issueOtp(id, code, email);
+    const mail = await sendOtpEmail(email, code);
+    logAudit(id, "auth.signup", "Account created, awaiting email verification", req);
 
-    const { csrfToken } = createSession(res, id);
     res.status(201).json({
-      user: publicUser({
-        id,
-        email,
-        totp_enabled: 0,
-        created_at: t,
-        last_login_at: null,
-        password_changed_at: t,
-        country: country || "IN",
-        phone: phone || null,
-        account_type: accountType || "individual",
-        gstin: gstin || null,
-      }),
-      csrfToken,
+      needsEmailVerification: true,
+      message: "Account created. A 6-digit verification code was sent to your email.",
+      devOtp: mail.via === "console" ? mail.devCode : undefined,
+      ...(mail.via !== "console" ? {} : { devOtpNote: "No mail provider configured — code printed to server log." }),
+    });
+  }),
+);
+
+/* POST /api/auth/verify-email — checks the emailed code, verifies the account, opens a session */
+router.post(
+  "/verify-email",
+  asyncHandler(async (req, res) => {
+    const parsed = verifyEmailSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
+      return;
+    }
+    const { email, code } = parsed.data;
+
+    const user = db
+      .prepare("SELECT * FROM users WHERE email = ?")
+      .get(email) as
+      | {
+          id: string;
+          email: string;
+          email_verified: number;
+          otp_code_hash: string | null;
+          otp_expires_at: number | null;
+          otp_attempts: number;
+          totp_enabled: number;
+          created_at: number;
+          last_login_at: number | null;
+          password_changed_at: number;
+        }
+      | undefined;
+
+    if (!user) {
+      res.status(401).json({ error: "No account found for that email" });
+      return;
+    }
+
+    /* Already verified (e.g. double click): just sign in */
+    if (user.email_verified) {
+      const { csrfToken } = createSession(res, user.id);
+      res.json({ user: publicUser(user), csrfToken, alreadyVerified: true });
+      return;
+    }
+
+    if (!user.otp_code_hash || !user.otp_expires_at) {
+      res.status(400).json({ error: "No verification code is active. Request a new one." });
+      return;
+    }
+    if (user.otp_expires_at < now()) {
+      res.status(400).json({ error: "That code has expired. Request a new one." });
+      return;
+    }
+    if (user.otp_attempts >= OTP_MAX_ATTEMPTS) {
+      res.status(429).json({ error: "Too many attempts. Request a new code." });
+      return;
+    }
+
+    const expected = Buffer.from(user.otp_code_hash, "hex");
+    const actual = Buffer.from(sha256Hex(`${user.id}:${code}`), "hex");
+    const valid = expected.length > 0 && actual.length === expected.length && actual.equals(expected);
+    if (!valid) {
+      db.prepare("UPDATE users SET otp_attempts = otp_attempts + 1 WHERE id = ?").run(user.id);
+      logAudit(user.id, "auth.otp_failed", "Invalid email verification code", req);
+      res.status(401).json({ error: "That code is not correct. Try again." });
+      return;
+    }
+
+    db.prepare(
+      "UPDATE users SET email_verified = 1, otp_code_hash = NULL, otp_expires_at = NULL, otp_attempts = 0, created_at = ?, updated_at = ? WHERE id = ?",
+    ).run(now(), now(), user.id);
+    logAudit(user.id, "auth.email_verified", "Email address verified via OTP", req);
+
+    const { csrfToken } = createSession(res, user.id);
+    const fresh = { ...user, email_verified: 1, otp_code_hash: null, otp_expires_at: null, otp_attempts: 0 };
+    res.json({ user: publicUser(fresh), csrfToken });
+    return;
+  }),
+);
+
+/* POST /api/auth/resend-otp — re-issues a verification code (cooldown-limited)
+   and, once verified, opens a session for convenience on re-login flows. */
+router.post(
+  "/resend-otp",
+  asyncHandler(async (req, res) => {
+    const parsed = resendOtpSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
+      return;
+    }
+    const { email } = parsed.data;
+    const user = db
+      .prepare("SELECT id, email, email_verified, otp_expires_at FROM users WHERE email = ?")
+      .get(email) as
+      | { id: string; email: string; email_verified: number; otp_expires_at: number | null }
+      | undefined;
+    if (!user) {
+      res.status(404).json({ error: "No account found for that email" });
+      return;
+    }
+    if (user.email_verified) {
+      res.status(400).json({ error: "This email is already verified" });
+      return;
+    }
+    if (user.otp_expires_at && now() - (user.otp_expires_at - OTP_TTL_SECONDS) < OTP_RESEND_COOLDOWN_SECONDS) {
+      res.status(429).json({ error: "A code was just sent. Please wait 30 seconds before requesting another." });
+      return;
+    }
+    const code = generateOtp();
+    issueOtp(user.id, code, user.email);
+    const mail = await sendOtpEmail(user.email, code);
+    logAudit(user.id, "auth.otp_resent", "Verification code re-sent", req);
+    res.json({
+      ok: true,
+      message: "A new 6-digit code was sent to your email.",
+      devOtp: mail.via === "console" ? mail.devCode : undefined,
     });
   }),
 );
@@ -129,6 +281,8 @@ router.post(
       | {
           id: string;
           email: string;
+          username?: string | null;
+          email_verified?: number;
           password_salt: string;
           password_hash: string;
           totp_secret: string | null;
@@ -140,6 +294,14 @@ router.post(
           created_at: number;
         }
       | undefined;
+
+    if (user && user.email_verified === 0) {
+      res.status(403).json({
+        error: "Verify your email address before signing in.",
+        needsEmailVerification: true,
+      });
+      return;
+    }
 
     if (!user || !verifyPassword(password, user.password_salt, user.password_hash)) {
       let detail = `Failed login for ${email}`;
@@ -275,6 +437,8 @@ router.get("/me", (req, res) => {
     | {
         id: string;
         email: string;
+        username?: string | null;
+        email_verified?: number;
         totp_enabled: number;
         created_at: number;
         last_login_at: number | null;
@@ -302,11 +466,12 @@ router.patch(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const { country, phone, accountType, gstin } = parsed.data;
+    const { country, phone, accountType, gstin, username } = parsed.data;
     const current = db.prepare("SELECT * FROM users WHERE id = ?").get(session.user_id) as
       | {
           id: string;
           email: string;
+          username?: string | null;
           totp_enabled: number;
           created_at: number;
           last_login_at: number | null;
@@ -318,6 +483,15 @@ router.patch(
       res.status(401).json({ error: "Not authenticated" });
       return;
     }
+    if (username) {
+      const taken = db
+        .prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE AND id != ?")
+        .get(username, session.user_id) as { id: string } | undefined;
+      if (taken) {
+        res.status(409).json({ error: "That username is already taken" });
+        return;
+      }
+    }
     const nextType = accountType || current.account_type || "individual";
     if (nextType === "business" && !(gstin && gstin.length === 15)) {
       res.status(400).json({ error: "GSTIN is required for business accounts" });
@@ -325,9 +499,10 @@ router.patch(
     }
     db.prepare(
       `UPDATE users
-         SET country = ?, phone = ?, account_type = ?, gstin = ?, updated_at = ?
+         SET username = ?, country = ?, phone = ?, account_type = ?, gstin = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
+      username ?? current.username ?? null,
       country || current_country(session.user_id),
       phone ?? null,
       nextType,
@@ -340,6 +515,8 @@ router.patch(
       | {
           id: string;
           email: string;
+          username?: string | null;
+          email_verified?: number;
           totp_enabled: number;
           created_at: number;
           last_login_at: number | null;

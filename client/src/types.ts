@@ -1,38 +1,30 @@
 export const PROJECT_TYPES = [
   "house",
+  "residential",
   "commercial",
   "highway",
-  "roadways",
   "airport",
   "ports",
   "dams",
-  "spillways",
-  "bim",
-  "steel",
-  "civil",
-  "coordination",
 ] as const;
 
 export type ProjectType = (typeof PROJECT_TYPES)[number];
 
 export const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
-  house: "House / Residential",
+  house: "House & Interiors",
+  residential: "Residential Building",
   commercial: "Commercial Building",
-  highway: "Highway",
-  roadways: "Roadways",
+  highway: "Highway & Roadways",
   airport: "Airport",
-  ports: "Ports",
-  dams: "Dams",
-  spillways: "Spillways",
-  bim: "BIM Studio",
-  steel: "Steel Detailing",
-  civil: "Civil Suite",
-  coordination: "Model Coordination",
+  ports: "Ports & Harbours",
+  dams: "Dams & Spillways",
 };
 
 export interface User {
   id: string;
   email: string;
+  username?: string | null;
+  emailVerified?: boolean;
   totpEnabled: boolean;
   createdAt: number;
   lastLoginAt: number | null;
@@ -150,20 +142,205 @@ export interface CurtainConfig {
   widthPercentPerPanel: number;
 }
 
-export interface BimElementData {
-  id: string;
-  kind: string;
-  code: string;
-  params: Record<string, number>;
+/* ------------------------- Community / building wizard ------------------------- */
+
+export type UnitSystem = "m" | "yd" | "ft";
+export type BuildingBranch = "residential" | "commercial";
+export type ParkingMode = "none" | "surface" | "underground";
+export type DoorFacing = "north" | "east" | "south" | "west";
+
+export interface LandSite {
+  unit: UnitSystem;
+  width: number;
+  depth: number;
 }
 
-export interface MergeProject {
-  projectId: string;
+export interface UndergroundParking {
+  levels: number;
+  floorHeight: number;
+  foundationDepth: number;
+  rampWidth: number;
+  rampLength: number;
+  rampSlope: number;
+  pillarSpacingX: number;
+  pillarSpacingZ: number;
+  bayWidth: number;
+  bayLength: number;
+  bayCols: number;
+  bayRows: number;
+  liftLobby: boolean;
+  stairLobby: boolean;
+}
+
+export interface Parking {
+  mode: ParkingMode;
+  surfaceBays: number;
+  underground?: UndergroundParking;
+}
+
+export interface AmenityData {
+  id: string;
+  kind: string;
+  x: number;
+  z: number;
+  rotY: number;
+  w: number;
+  d: number;
+  h: number;
+  /** Optional overrides for generated objects (offline intent → object). */
+  label?: string;
+  color?: string;
+  shape?: string;
+}
+
+export interface TowerData {
+  id: string;
   label: string;
+  x: number;
+  z: number;
+  floors: number;
+  unitsPerFloor: number;
+  unitWidth: number;
+  unitDepth: number;
+  floorHeight: number;
+  commonAreaPerFloor: number;
+  openAreaPerFloor: number;
+  doorFacing: DoorFacing;
+  facadeMaterial: string;
+  facadeColor: string;
+}
+
+export interface ExteriorPanel {
+  id: string;
+  towerId: string;
+  face: "front" | "back" | "left" | "right";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  material: string;
   color: string;
-  opacity: number;
-  startDay: number;
-  durationDays: number;
+}
+
+export interface InteriorRoom {
+  id: string;
+  towerId: string;
+  floor: number;
+  name: string;
+  type: string;
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  doorFacing: DoorFacing;
+  furniture?: FurnitureItem[];
+}
+
+export interface SiteLocation {
+  lat: number;
+  lng: number;
+  address?: string;
+  zoom?: number;
+  /** Plot boundary vertices in declaration order (WGS84). */
+  boundary?: { lat: number; lng: number }[];
+  /** Best-fit boundary width, metres. */
+  boundaryWidthM?: number;
+  /** Best-fit boundary depth, metres. */
+  boundaryDepthM?: number;
+  /** Best-fit boundary rotation from north, degrees. */
+  boundaryRotationDeg?: number;
+  /** Traced route centreline (WGS84), used by linear works such as highways. */
+  route?: { lat: number; lng: number }[];
+  /** Measured route length, metres. */
+  routeLengthM?: number;
+  /** Compass bearing of the route's first segment, degrees from north. */
+  routeBearingDeg?: number;
+}
+
+/* ------------------------- Infrastructure designs ------------------------- */
+
+export type InfraKind = "highway" | "airport" | "ports" | "dams";
+
+export interface HighwayDesign {
+  lanes: number;
+  laneWidthM: number;
+  medianM: number;
+  shoulderM: number;
+  designSpeedKph: number;
+  surface: "bituminous" | "concrete";
+  pavementThicknessMm: number;
+  crossSlopePct: number;
+  embankmentHeightM: number;
+  culverts: number;
+  interchanges: number;
+  terrainRoughnessM: number;
+}
+
+export interface AirportDesign {
+  runways: number;
+  runwayLengthM: number;
+  runwayWidthM: number;
+  runwayHeadingDeg: number;
+  taxiways: number;
+  apronDepthM: number;
+  terminalAreaM2: number;
+  stands: number;
+  aerodromeCode: "4F" | "4E" | "4C" | "3C";
+  elevationM: number;
+  fuelFarm: boolean;
+}
+
+export interface PortDesign {
+  berths: number;
+  berthLengthM: number;
+  draftM: number;
+  quayWidthM: number;
+  breakwaterLengthM: number;
+  containerYardM2: number;
+  cranes: number;
+  warehouses: number;
+  channelDepthM: number;
+  quayType: "solid" | "open-piled";
+}
+
+export interface DamDesign {
+  damType: "gravity" | "earthen" | "rockfill" | "arch";
+  heightM: number;
+  crestLengthM: number;
+  crestWidthM: number;
+  upstreamSlope: number;
+  downstreamSlope: number;
+  freeboardM: number;
+  reservoirAreaM2: number;
+  spillwayType: "ogee" | "chute" | "siphon" | "morning-glory";
+  spillwayCapacityCumec: number;
+  spillwayGates: number;
+  gateWidthM: number;
+  gateHeightM: number;
+  stillingBasin: boolean;
+  groutCurtainDepthM: number;
+}
+
+export interface InfraDesign {
+  version: 1;
+  kind: InfraKind;
+  location?: SiteLocation;
+  highway?: HighwayDesign;
+  airport?: AirportDesign;
+  ports?: PortDesign;
+  dams?: DamDesign;
+}
+
+export interface CommunityDesign {
+  version: 1;
+  branch: BuildingBranch;
+  land: LandSite;
+  location?: SiteLocation;
+  parking: Parking;
+  amenities: AmenityData[];
+  towers: TowerData[];
+  exteriors: ExteriorPanel[];
+  interiors: InteriorRoom[];
 }
 
 export interface Design {
@@ -171,10 +348,8 @@ export interface Design {
   room: RoomConfig;
   furniture: FurnitureItem[];
   curtains: CurtainConfig | null;
-  elements?: BimElementData[];
-  merge?: MergeProject[];
-  timelineDay?: number;
-  settings?: Record<string, number>;
+  community?: CommunityDesign;
+  infra?: InfraDesign;
 }
 
 export function defaultDesign(): Design {

@@ -31,6 +31,13 @@ export const phoneSchema = z
 
 export const accountTypeSchema = z.enum(["individual", "business"]);
 
+export const usernameSchema = z
+  .string()
+  .trim()
+  .min(3, "Username must be at least 3 characters")
+  .max(20, "Username must be at most 20 characters")
+  .regex(/^[a-zA-Z0-9_]+$/, "Usernames can only contain letters, numbers and underscores");
+
 export const gstinSchema = z
   .string()
   .trim()
@@ -39,6 +46,7 @@ export const gstinSchema = z
   .max(15);
 
 export const profileSchema = z.object({
+  username: usernameSchema.optional(),
   country: countryCodeSchema.optional(),
   phone: phoneSchema.optional(),
   accountType: accountTypeSchema.optional(),
@@ -48,6 +56,7 @@ export const profileSchema = z.object({
 export const signupSchema = z
   .object({
     email: emailSchema,
+    username: usernameSchema.optional(),
     password: passwordSchema,
     confirmPassword: z.string().min(1),
     country: countryCodeSchema.optional(),
@@ -77,6 +86,18 @@ export const verifyTwoFactorSchema = z.object({
     .string()
     .trim()
     .regex(/^\d{6}$/, "Enter the 6-digit code"),
+});
+
+export const verifyEmailSchema = z.object({
+  email: emailSchema,
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Enter the 6-digit code"),
+});
+
+export const resendOtpSchema = z.object({
+  email: emailSchema,
 });
 
 export const changePasswordSchema = z

@@ -4,9 +4,6 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import type { Design, FurnitureItem } from "../types";
 import { buildFurniture } from "../lib/catalog";
-import { isStudioType, studioModule } from "../lib/modules";
-import { buildCoordinationScene, type MergedModel } from "../lib/coordination";
-import { buildCtx } from "../lib/modelcore";
 
 const MM = 0.001;
 const WALL_THICKNESS = 120;
@@ -27,8 +24,6 @@ interface Canvas3DProps {
   onChange: (design: Design) => void;
   onSelect: (id: string | null) => void;
   onApiReady: (api: EditorApi | null) => void;
-  projectType?: string;
-  mergedModels?: MergedModel[];
 }
 
 export function buildRoomParts(design: Design): THREE.Group {
@@ -132,8 +127,6 @@ export function Canvas3D({
   onChange,
   onSelect,
   onApiReady,
-  projectType,
-  mergedModels,
 }: Canvas3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -144,7 +137,6 @@ export function Canvas3D({
   const curtainGroupRef = useRef<THREE.Group | null>(null);
   const photoGroupRef = useRef<THREE.Group | null>(null);
   const itemGroups = useRef(new Map<string, { group: THREE.Group; sig: string }>());
-  const studioGroupRef = useRef<THREE.Group | null>(null);
   const selectionRingRef = useRef<THREE.Mesh | null>(null);
   const dragState = useRef<{
     id: string;
@@ -406,11 +398,6 @@ export function Canvas3D({
     if (!scene) return;
     if (roomGroupRef.current) scene.remove(roomGroupRef.current);
     if (curtainGroupRef.current) scene.remove(curtainGroupRef.current);
-    if (isStudioType(projectType)) {
-      roomGroupRef.current = null;
-      curtainGroupRef.current = null;
-      return;
-    }
 
     const room = buildRoomParts(design);
     scene.add(room);
@@ -419,7 +406,7 @@ export function Canvas3D({
     const curtain = buildCurtainParts(design);
     if (curtain) scene.add(curtain);
     curtainGroupRef.current = curtain;
-  }, [design.room, design.curtains, projectType]);
+  }, [design.room, design.curtains]);
 
   /* Photo overlay */
   useEffect(() => {
@@ -451,14 +438,6 @@ export function Canvas3D({
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    if (isStudioType(projectType)) {
-      for (const [, rec] of itemGroups.current) {
-        scene.remove(rec.group);
-        disposeGroup(rec.group);
-      }
-      itemGroups.current.clear();
-      return;
-    }
 
     const desired = new Map(design.furniture.map((f) => [f.id, f]));
 
@@ -496,28 +475,6 @@ export function Canvas3D({
       }
     }
   }, [design.furniture]);
-
-  /* Studio modules (BIM / Steel / Civil / Coordination) */
-  useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-    if (studioGroupRef.current) {
-      scene.remove(studioGroupRef.current);
-      disposeGroup(studioGroupRef.current);
-      studioGroupRef.current = null;
-    }
-    if (!isStudioType(projectType)) return;
-    const ctx = buildCtx(design);
-    let mesh: THREE.Group;
-    if (projectType === "coordination") {
-      mesh = buildCoordinationScene(mergedModels ?? [], design.timelineDay ?? 0, ctx);
-    } else {
-      const mod = studioModule(projectType);
-      mesh = mod ? mod.buildScene(design, ctx) : new THREE.Group();
-    }
-    scene.add(mesh);
-    studioGroupRef.current = mesh;
-  }, [projectType, design, mergedModels, design.timelineDay]);
 
   /* Selection ring follow */
   useEffect(() => {

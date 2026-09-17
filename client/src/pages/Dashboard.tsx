@@ -17,9 +17,9 @@ import { formatMoney, timeAgo } from "../lib/format";
 import { cn } from "../lib/cn";
 
 const TYPE_GROUPS: { label: string; types: ProjectType[] }[] = [
-  { label: "Buildings", types: ["house", "commercial"] },
-  { label: "Transport", types: ["highway", "roadways", "airport", "ports"] },
-  { label: "Water", types: ["dams", "spillways"] },
+  { label: "Interiors", types: ["house"] },
+  { label: "Buildings", types: ["residential", "commercial"] },
+  { label: "Infrastructure", types: ["highway", "airport", "ports", "dams"] },
 ];
 
 function StatCard({ label, value, icon, accent }: { label: string; value: string | number; icon: string; accent: string }) {
@@ -48,7 +48,7 @@ export function Dashboard() {
   const [plans, setPlans] = useState<PlansResponse | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [newName, setNewName] = useState("");
-  const [newType, setNewType] = useState<ProjectType>("house");
+  const [newType, setNewType] = useState<ProjectType>("residential");
   const [creating, setCreating] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Project | null>(null);
@@ -77,7 +77,7 @@ export function Dashboard() {
       await load();
       setShowNew(false);
       setNewName("");
-      setNewType("house");
+      setNewType("residential");
       navigate(`/editor/${project.id}`);
     } catch (err) {
       toast.push({ title: "Could not create project", description: err instanceof Error ? err.message : undefined, tone: "error" });
@@ -115,7 +115,7 @@ export function Dashboard() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-50">
-            Welcome back{user ? `, ${user.email.split("@")[0]}` : ""}
+            Welcome back{user ? `, ${user.username ?? user.email.split("@")[0]}` : ""}
           </h1>
           <p className="mt-1 text-sm text-slate-400">
             Your design workspace · {planBadge}
