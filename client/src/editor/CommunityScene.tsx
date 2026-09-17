@@ -659,7 +659,13 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
       for (const hit of hits) {
         let node: THREE.Object3D | null = hit.object;
         while (node) {
-          if (node.userData?.selectId) return { id: node.userData.selectId as string, kind: node.userData.selectKind as string };
+           if (node.userData?.selectId) {
+             return {
+               id: node.userData.selectId as string,
+               kind: node.userData.selectKind as string,
+               node,
+             };
+           }
           node = node.parent;
         }
       }
@@ -684,7 +690,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
         return;
       }
       handlersRef.current.onSelect?.(target.id);
-      const node = group.getObjectByProperty("selectId", target.id);
+      const node = target.node;
       const ground = groundAt(e.clientX, e.clientY);
       if (!node || !ground || !handlersRef.current.onChange) return;
       drag = {
