@@ -4,6 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { Design, FurnitureItem } from "../types";
+import { addTechnicalEdges } from "../lib/modelcore";
 import { buildFurniture } from "../lib/catalog";
 
 const MM = 0.001;
@@ -172,6 +173,7 @@ export function Canvas3D({
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -409,6 +411,7 @@ export function Canvas3D({
     if (curtainGroupRef.current) scene.remove(curtainGroupRef.current);
 
     const room = buildRoomParts(design);
+    addTechnicalEdges(room, "#334155", 0.7);
     scene.add(room);
     roomGroupRef.current = room;
 
@@ -467,6 +470,7 @@ export function Canvas3D({
           disposeGroup(rec.group);
         }
         const group = buildFurniture({ type: item.type, color: item.color, scale: item.scale });
+        addTechnicalEdges(group, "#334155", 0.7);
         group.traverse((o) => {
           if ((o as THREE.Mesh).isMesh) {
             o.userData.itemId = item.id;

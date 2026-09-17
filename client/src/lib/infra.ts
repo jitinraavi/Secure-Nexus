@@ -8,7 +8,7 @@ import type {
   InfraKind,
   PortDesign,
 } from "../types";
-import { material, prismAt } from "./modelcore";
+import { addTechnicalEdges, material, prismAt } from "./modelcore";
 
 /**
  * Guided infrastructure models.
@@ -573,6 +573,7 @@ export function buildInfraScene(infra: InfraDesign): THREE.Group {
         ? buildPort(infra.ports!, ext)
         : buildDam(infra.dams!, ext);
   addFacilities(scene, infra, ext);
+  addTechnicalEdges(scene, "#253746", 0.5);
   return scene;
 }
 

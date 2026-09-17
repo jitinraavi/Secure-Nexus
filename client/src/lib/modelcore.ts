@@ -50,3 +50,26 @@ export function prismAt(
   mesh.position.set(x, y, z);
   return mesh;
 }
+
+/** Adds lightweight CAD-style silhouette edges without affecting picking. */
+export function addTechnicalEdges(root: THREE.Object3D, color = "#263746", opacity = 0.62): void {
+  const additions: { parent: THREE.Object3D; edges: THREE.LineSegments }[] = [];
+  root.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || mesh.userData.noTechnicalEdges || !mesh.geometry) return;
+    const type = mesh.geometry.type;
+    if (type !== "BoxGeometry" && type !== "CylinderGeometry" && type !== "ConeGeometry") return;
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(mesh.geometry, 18),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthTest: true }),
+    );
+    edges.userData.noSelect = true;
+    edges.userData.noTechnicalEdges = true;
+    edges.renderOrder = 2;
+    edges.position.copy(mesh.position);
+    edges.rotation.copy(mesh.rotation);
+    edges.scale.copy(mesh.scale);
+    if (mesh.parent) additions.push({ parent: mesh.parent, edges });
+  });
+  for (const addition of additions) addition.parent.add(addition.edges);
+}

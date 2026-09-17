@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { AmenityData, CommunityDesign, ExteriorPanel, TowerData, TowerOpening } from "../types";
-import { material, prism, prismAt } from "../lib/modelcore";
+import { addTechnicalEdges, material, prism, prismAt } from "../lib/modelcore";
 import { amenityKind, facadeOption, landMeters, towerMeters, undergroundDepth } from "../lib/community";
 import { pitFootprint } from "../lib/takeoff";
 import { buildMapGround } from "../lib/mapGround";
@@ -535,6 +535,7 @@ function selectionRing(w: number, d: number): THREE.Mesh {
 
 export function buildCommunityScene(design: CommunityDesign, selectedId?: string | null): THREE.Group {
   const g = buildSite(design);
+  addTechnicalEdges(g, "#263746", 0.58);
   if (selectedId) {
     const target = g.children.find((c) => c.userData?.selectId === selectedId);
     if (target) {
@@ -588,6 +589,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
