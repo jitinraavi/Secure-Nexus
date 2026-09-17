@@ -147,6 +147,7 @@ export interface CurtainConfig {
 export type UnitSystem = "m" | "yd" | "ft";
 export type BuildingBranch = "residential" | "commercial";
 export type ResidentialStyle = "high-rise" | "individual-house" | "villa-community" | "townhouse";
+export type CommercialStyle = "office" | "hotel" | "resort";
 export type ParkingMode = "none" | "surface" | "underground";
 export type DoorFacing = "north" | "east" | "south" | "west";
 
@@ -352,6 +353,7 @@ export interface CommunityDesign {
   version: 1;
   branch: BuildingBranch;
   residentialStyle?: ResidentialStyle;
+  commercialStyle?: CommercialStyle;
   land: LandSite;
   location?: SiteLocation;
   parking: Parking;

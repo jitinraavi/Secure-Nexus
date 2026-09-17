@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AmenityData,
   BuildingBranch,
+  CommercialStyle,
   CommunityDesign,
   DoorFacing,
   ExteriorPanel,
@@ -138,6 +139,11 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const [gen, setGen] = useState<{ mode: "site" | "room"; roomId?: string; x: number; z: number; text: string } | null>(null);
   const [furnishRoomId, setFurnishRoomId] = useState<string | null>(null);
   const c = community;
+
+  useEffect(() => {
+    const available = amenitiesFor(branch, c.commercialStyle);
+    if (!available.some((a) => a.kind === pickKind)) setPickKind(available[0]?.kind ?? AMENITIES[0].kind);
+  }, [branch, c.commercialStyle, pickKind]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -372,10 +378,16 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
 
   const amenitiesPanel = (
     <Section title="Site features & amenities">
+      {branch === "commercial" && (
+        <p className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs leading-relaxed text-slate-400">
+          Office blocks use commercial amenities only. Hotels and resorts also unlock the full residential amenity catalog.
+          Parking and basement structure are configured separately in their own steps.
+        </p>
+      )}
       <div className="flex gap-2">
         <div className="flex-1">
           <Select value={pickKind} onChange={(e) => setPickKind(e.target.value)}>
-            {amenitiesFor(branch).map((a) => (
+            {amenitiesFor(branch, c.commercialStyle).map((a) => (
               <option key={a.kind} value={a.kind}>{a.label}</option>
             ))}
           </Select>
@@ -417,7 +429,9 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const addTower = () => {
     const next = c.towers.length;
     const spot = towerSpot(next);
-    const style = c.residentialStyle ?? "high-rise";
+    const style: ResidentialStyle | CommercialStyle = branch === "residential"
+      ? c.residentialStyle ?? "high-rise"
+      : c.commercialStyle ?? "office";
     const names = branch === "residential"
       ? style === "individual-house"
         ? ["House 1", "House 2", "House 3", "House 4"]
@@ -426,7 +440,11 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
           : style === "townhouse"
             ? ["Townhouse 1", "Townhouse 2", "Townhouse 3", "Townhouse 4"]
             : ["Tower A", "Tower B", "Tower C", "Tower D"]
-      : ["Block A", "Block B", "Block C", "Block D", "Block E", "Block F", "Block G", "Block H"];
+      : style === "hotel"
+        ? ["Hotel A", "Hotel B", "Hotel C", "Hotel D"]
+        : style === "resort"
+          ? ["Resort A", "Resort B", "Resort C", "Resort D"]
+          : ["Block A", "Block B", "Block C", "Block D", "Block E", "Block F", "Block G", "Block H"];
     update({ towers: [...c.towers, { ...defaultTowerFor(branch, names[next % names.length], spot, style), id: uid("tw") }] });
   };
 
@@ -454,7 +472,7 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   };
 
   const towersPanel = (
-    <Section title={branch === "residential" ? "Residential buildings" : "Office blocks"}>
+    <Section title={branch === "residential" ? "Residential buildings" : "Commercial buildings"}>
       {branch === "residential" && (
         <Select
           label="Residential building type"
@@ -465,6 +483,17 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
           <option value="individual-house">Individual houses</option>
           <option value="villa-community">Villa community</option>
           <option value="townhouse">Townhouse community</option>
+        </Select>
+      )}
+      {branch === "commercial" && (
+        <Select
+          label="Commercial building type"
+          value={c.commercialStyle ?? "office"}
+          onChange={(e) => update({ commercialStyle: e.target.value as CommercialStyle })}
+        >
+          <option value="office">Office / commercial block</option>
+          <option value="hotel">Hotel</option>
+          <option value="resort">Resort</option>
         </Select>
       )}
       <Button size="sm" onClick={addTower} className="mb-2">+ {branch === "residential" ? "Add building" : "Add block"}</Button>
@@ -989,24 +1018,26 @@ function defaultTowerFor(
   branch: BuildingBranch,
   label: string,
   spot: { x: number; z: number },
-  style: ResidentialStyle = "high-rise",
+  style: ResidentialStyle | CommercialStyle = "high-rise",
 ): TowerData {
   const residential = branch === "residential";
   const individual = style === "individual-house";
   const villa = style === "villa-community";
   const townhouse = style === "townhouse";
+  const hotel = style === "hotel";
+  const resort = style === "resort";
   return {
     id: uid("tw"),
     label,
     x: spot.x,
     z: spot.z,
-    floors: !residential ? 8 : individual ? 1 : villa || townhouse ? 2 : 12,
-    unitsPerFloor: !residential ? 8 : 1,
-    unitWidth: !residential ? 6 : individual ? 10 : villa ? 12 : townhouse ? 6 : 7,
-    unitDepth: !residential ? 8 : individual ? 12 : villa ? 15 : townhouse ? 12 : 9,
+    floors: !residential ? hotel ? 10 : resort ? 3 : 8 : individual ? 1 : villa || townhouse ? 2 : 12,
+    unitsPerFloor: !residential ? hotel || resort ? 12 : 8 : 1,
+    unitWidth: !residential ? hotel ? 5 : resort ? 8 : 6 : individual ? 10 : villa ? 12 : townhouse ? 6 : 7,
+    unitDepth: !residential ? hotel ? 7 : resort ? 10 : 8 : individual ? 12 : villa ? 15 : townhouse ? 12 : 9,
     floorHeight: 3.2,
-    commonAreaPerFloor: residential && (individual || villa || townhouse) ? 0 : 60,
-    openAreaPerFloor: residential && (individual || villa || townhouse) ? 0 : 30,
+    commonAreaPerFloor: residential && (individual || villa || townhouse) ? 0 : resort ? 120 : 60,
+    openAreaPerFloor: residential && (individual || villa || townhouse) ? 0 : resort ? 240 : 30,
     doorFacing: "south",
     facadeMaterial: "glass",
     facadeColor: FACADES[0].color,

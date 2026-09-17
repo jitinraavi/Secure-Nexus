@@ -1,6 +1,7 @@
 import type {
   AmenityData,
   BuildingBranch,
+  CommercialStyle,
   CommunityDesign,
   InteriorRoom,
   LandSite,
@@ -56,6 +57,8 @@ export const AMENITIES: AmenityKind[] = [
   { kind: "boundary-wall", label: "Boundary wall", defW: 12, defD: 0.3, defH: 2.4, color: "#90a4ae", shape: "box" },
   { kind: "rectangle-platform", label: "Rectangle platform", defW: 12, defD: 8, defH: 0.2, color: "#78909c", shape: "box" },
   { kind: "circle-platform", label: "Circle platform", defW: 8, defD: 8, defH: 0.2, color: "#78909c", shape: "circle" },
+  { kind: "spa", label: "Spa", defW: 18, defD: 12, defH: 3.5, color: "#8d6e63", shape: "box", branch: "residential" },
+  { kind: "massage-parlor", label: "Massage parlor", defW: 12, defD: 8, defH: 3.2, color: "#a1887f", shape: "box", branch: "residential" },
   { kind: "open-air-theatre", label: "Open-air theatre", defW: 22, defD: 18, defH: 4, color: "#8b7d6b", shape: "steps" },
   { kind: "amphitheatre", label: "Amphitheatre", defW: 26, defD: 20, defH: 5, color: "#a3907a", shape: "steps" },
   /* Residential communities */
@@ -90,7 +93,10 @@ export const AMENITIES: AmenityKind[] = [
 ];
 
 /** Amenity presets available for a project branch (residential or commercial). */
-export function amenitiesFor(branch: BuildingBranch): AmenityKind[] {
+export function amenitiesFor(branch: BuildingBranch, style?: CommercialStyle): AmenityKind[] {
+  if (branch === "commercial" && (style === "hotel" || style === "resort")) {
+    return AMENITIES.filter((a) => !a.branch || a.branch === "residential" || a.branch === "commercial");
+  }
   return AMENITIES.filter((a) => !a.branch || a.branch === branch);
 }
 
@@ -204,6 +210,7 @@ export function defaultCommunity(branch: BuildingBranch): CommunityDesign {
     version: 1,
     branch,
     residentialStyle: branch === "residential" ? "high-rise" : undefined,
+    commercialStyle: branch === "commercial" ? "office" : undefined,
     land: { unit: "m", width: 1, depth: 1 },
     parking: { mode: "none", surfaceBays: 0 },
     amenities: [],
