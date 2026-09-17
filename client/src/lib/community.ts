@@ -35,7 +35,7 @@ export const UNIT_LABELS: Record<UnitSystem, string> = { m: "meters", yd: "yards
 
 /* ------------------------------- Amenity catalog ------------------------------- */
 
-export type AmenityShape = "court" | "pool" | "green" | "track" | "steps" | "box" | "sand" | "kids";
+export type AmenityShape = "court" | "pool" | "green" | "track" | "steps" | "box" | "sand" | "kids" | "circle";
 
 export interface AmenityKind {
   kind: string;
@@ -51,6 +51,11 @@ export interface AmenityKind {
 
 export const AMENITIES: AmenityKind[] = [
   /* Shared */
+  { kind: "gate", label: "Gate", defW: 5, defD: 1, defH: 3.2, color: "#455a64", shape: "box" },
+  { kind: "pillar", label: "Pillar", defW: 0.6, defD: 0.6, defH: 3, color: "#78909c", shape: "box" },
+  { kind: "boundary-wall", label: "Boundary wall", defW: 12, defD: 0.3, defH: 2.4, color: "#90a4ae", shape: "box" },
+  { kind: "rectangle-platform", label: "Rectangle platform", defW: 12, defD: 8, defH: 0.2, color: "#78909c", shape: "box" },
+  { kind: "circle-platform", label: "Circle platform", defW: 8, defD: 8, defH: 0.2, color: "#78909c", shape: "circle" },
   { kind: "open-air-theatre", label: "Open-air theatre", defW: 22, defD: 18, defH: 4, color: "#8b7d6b", shape: "steps" },
   { kind: "amphitheatre", label: "Amphitheatre", defW: 26, defD: 20, defH: 5, color: "#a3907a", shape: "steps" },
   /* Residential communities */
@@ -194,30 +199,15 @@ export function defaultTower(branch: BuildingBranch, label: string, x: number, z
 }
 
 export function defaultCommunity(branch: BuildingBranch): CommunityDesign {
-  const presets: Record<BuildingBranch, [string, number, number][]> = {
-    residential: [
-      ["lawn", -40, -6],
-      ["swimming-pool", 24, -20],
-      ["kids-play", 40, 2],
-      ["clubhouse", 6, -18],
-    ],
-    commercial: [
-      ["urban-plaza", -32, -8],
-      ["fountain", 26, -10],
-      ["food-court", 10, -18],
-      ["alfresco-dining", 34, 12],
-    ],
-  };
+  /* New projects begin as a measured, empty plot. Users add every structure. */
   return {
     version: 1,
     branch,
-    land: { unit: "m", width: 140, depth: 90 },
-    parking: { mode: "underground", surfaceBays: 16, underground: defaultUnderground() },
-    amenities: presets[branch].map(([k, x, z]) => makeAmenity(k, x, z)),
-    towers: [
-      defaultTower(branch, branch === "residential" ? "Tower A" : "Block A", -12, 16),
-      defaultTower(branch, branch === "residential" ? "Tower B" : "Block B", 14, 18),
-    ],
+    residentialStyle: branch === "residential" ? "high-rise" : undefined,
+    land: { unit: "m", width: 1, depth: 1 },
+    parking: { mode: "none", surfaceBays: 0 },
+    amenities: [],
+    towers: [],
     exteriors: [],
     interiors: [],
   };

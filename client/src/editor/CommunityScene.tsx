@@ -188,6 +188,17 @@ function buildAmenityMesh(a: AmenityData): THREE.Group {
       }
       break;
     }
+    case "circle": {
+      const disc = new THREE.Mesh(
+        new THREE.CylinderGeometry(Math.min(w, d) / 2, Math.min(w, d) / 2, Math.max(a.h, 0.12), 48),
+        mat,
+      );
+      disc.position.y = Math.max(a.h, 0.12) / 2;
+      disc.castShadow = true;
+      disc.receiveShadow = true;
+      g.add(disc);
+      break;
+    }
   }
   g.position.set(a.x, 0, a.z);
   g.rotation.y = (a.rotY * Math.PI) / 180;

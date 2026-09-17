@@ -7,6 +7,7 @@ import type {
   ExteriorPanel,
   TowerData,
   TowerOpening,
+  ResidentialStyle,
   UnitSystem,
 } from "../types";
 import { Button, Input, Modal, Select, Toggle } from "../components/ui";
@@ -415,10 +416,17 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const addTower = () => {
     const next = c.towers.length;
     const spot = towerSpot(next);
+    const style = c.residentialStyle ?? "high-rise";
     const names = branch === "residential"
-      ? ["Tower A", "Tower B", "Tower C", "Tower D", "Tower E", "Tower F", "Tower G", "Tower H"]
+      ? style === "individual-house"
+        ? ["House 1", "House 2", "House 3", "House 4"]
+        : style === "villa-community"
+          ? ["Villa 1", "Villa 2", "Villa 3", "Villa 4"]
+          : style === "townhouse"
+            ? ["Townhouse 1", "Townhouse 2", "Townhouse 3", "Townhouse 4"]
+            : ["Tower A", "Tower B", "Tower C", "Tower D"]
       : ["Block A", "Block B", "Block C", "Block D", "Block E", "Block F", "Block G", "Block H"];
-    update({ towers: [...c.towers, { ...defaultTowerFor(branch, names[next % names.length], spot), id: uid("tw") }] });
+    update({ towers: [...c.towers, { ...defaultTowerFor(branch, names[next % names.length], spot, style), id: uid("tw") }] });
   };
 
   const patchTower = (id: string, patch: Partial<TowerData>) =>
@@ -445,8 +453,20 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   };
 
   const towersPanel = (
-    <Section title={branch === "residential" ? "Apartment towers" : "Office blocks"}>
-      <Button size="sm" onClick={addTower} className="mb-2">+ {branch === "residential" ? "Add tower" : "Add block"}</Button>
+    <Section title={branch === "residential" ? "Residential buildings" : "Office blocks"}>
+      {branch === "residential" && (
+        <Select
+          label="Residential building type"
+          value={c.residentialStyle ?? "high-rise"}
+          onChange={(e) => update({ residentialStyle: e.target.value as ResidentialStyle })}
+        >
+          <option value="high-rise">High-rise apartments</option>
+          <option value="individual-house">Individual houses</option>
+          <option value="villa-community">Villa community</option>
+          <option value="townhouse">Townhouse community</option>
+        </Select>
+      )}
+      <Button size="sm" onClick={addTower} className="mb-2">+ {branch === "residential" ? "Add building" : "Add block"}</Button>
       <div className="space-y-2">
         {c.towers.length === 0 && <p className="text-xs text-slate-600">No towers yet.</p>}
         {c.towers.map((t, i) => (
@@ -964,19 +984,28 @@ function ContextItem({ children, onClick, danger }: { children: React.ReactNode;
   );
 }
 
-function defaultTowerFor(branch: BuildingBranch, label: string, spot: { x: number; z: number }): TowerData {
+function defaultTowerFor(
+  branch: BuildingBranch,
+  label: string,
+  spot: { x: number; z: number },
+  style: ResidentialStyle = "high-rise",
+): TowerData {
+  const residential = branch === "residential";
+  const individual = style === "individual-house";
+  const villa = style === "villa-community";
+  const townhouse = style === "townhouse";
   return {
     id: uid("tw"),
     label,
     x: spot.x,
     z: spot.z,
-    floors: branch === "residential" ? 12 : 8,
-    unitsPerFloor: branch === "residential" ? 4 : 8,
-    unitWidth: branch === "residential" ? 7 : 6,
-    unitDepth: branch === "residential" ? 9 : 8,
+    floors: !residential ? 8 : individual ? 1 : villa || townhouse ? 2 : 12,
+    unitsPerFloor: !residential ? 8 : 1,
+    unitWidth: !residential ? 6 : individual ? 10 : villa ? 12 : townhouse ? 6 : 7,
+    unitDepth: !residential ? 8 : individual ? 12 : villa ? 15 : townhouse ? 12 : 9,
     floorHeight: 3.2,
-    commonAreaPerFloor: 60,
-    openAreaPerFloor: 30,
+    commonAreaPerFloor: residential && (individual || villa || townhouse) ? 0 : 60,
+    openAreaPerFloor: residential && (individual || villa || townhouse) ? 0 : 30,
     doorFacing: "south",
     facadeMaterial: "glass",
     facadeColor: FACADES[0].color,
