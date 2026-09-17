@@ -371,7 +371,7 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
     update({ amenities: c.amenities.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
 
   const amenitiesPanel = (
-    <Section title="Ground-floor community amenities">
+    <Section title="Site features & amenities">
       <div className="flex gap-2">
         <div className="flex-1">
           <Select value={pickKind} onChange={(e) => setPickKind(e.target.value)}>
