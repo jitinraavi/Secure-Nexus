@@ -116,8 +116,9 @@ function buildAmenityMesh(a: AmenityData): THREE.Group {
       break;
     }
     case "green": {
-      const slab = prism(w, 0.12, d, mat);
-      slab.position.y = 0.06;
+      const slabH = Math.max(a.h, 0.05);
+      const slab = prism(w, slabH, d, mat);
+      slab.position.y = slabH / 2;
       g.add(slab);
       const trees = Math.max(2, Math.floor((w * d) / 60));
       for (let i = 0; i < trees; i++) {
@@ -136,6 +137,10 @@ function buildAmenityMesh(a: AmenityData): THREE.Group {
       break;
     }
     case "track": {
+      const trackH = Math.max(a.h, 0.05);
+      const base = prism(w, trackH, d, mat);
+      base.position.y = trackH / 2;
+      g.add(base);
       const ring = new THREE.Mesh(new THREE.RingGeometry(0.72, 0.95, 48), mat);
       ring.rotation.x = -Math.PI / 2;
       ring.position.y = 0.07;
@@ -152,10 +157,11 @@ function buildAmenityMesh(a: AmenityData): THREE.Group {
     }
     case "steps": {
       const tiers = 3;
+      const tierH = Math.max(a.h / tiers, 0.1);
       for (let i = 0; i < tiers; i++) {
         const s = 1 - i * 0.25;
-        const tier = prism(w * s, 0.6, d * s, material(i === tiers - 1 ? "#cfd8dc" : kk.color));
-        tier.position.set(0, 0.3 + i * 0.5, (i * d * 0.12) / tiers);
+        const tier = prism(w * s, tierH, d * s, material(i === tiers - 1 ? "#cfd8dc" : kk.color));
+        tier.position.set(0, tierH / 2 + i * tierH, (i * d * 0.12) / tiers);
         g.add(tier);
       }
       break;
@@ -176,8 +182,9 @@ function buildAmenityMesh(a: AmenityData): THREE.Group {
       break;
     }
     case "kids": {
-      const slab = prism(w, 0.15, d, mat);
-      slab.position.y = 0.075;
+      const slabH = Math.max(a.h, 0.05);
+      const slab = prism(w, slabH, d, mat);
+      slab.position.y = slabH / 2;
       g.add(slab);
       for (let i = 0; i < 4; i++) {
         const px = ((i % 2) * 2 - 1) * w * 0.22;

@@ -392,11 +392,12 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
                 Remove
               </button>
             </div>
-            <div className="mt-2 grid grid-cols-4 gap-2">
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
               <Num label="X" value={a.x} onChange={(v) => patchAmenity(a.id, { x: v })} step={1} unit=" m" />
               <Num label="Z" value={a.z} onChange={(v) => patchAmenity(a.id, { z: v })} step={1} unit=" m" />
               <Num label="W" value={a.w} onChange={(v) => patchAmenity(a.id, { w: Math.max(v || 1, 1) })} step={0.5} unit=" m" />
               <Num label="D" value={a.d} onChange={(v) => patchAmenity(a.id, { d: Math.max(v || 1, 1) })} step={0.5} unit=" m" />
+              <Num label="H" value={a.h} onChange={(v) => patchAmenity(a.id, { h: Math.max(v || 0.1, 0.1) })} min={0.1} step={0.1} unit=" m" />
             </div>
           </div>
         ))}
