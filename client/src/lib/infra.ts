@@ -101,7 +101,7 @@ export function defaultDam(): DamDesign {
 }
 
 export function defaultInfra(kind: InfraKind): InfraDesign {
-  const base: InfraDesign = { version: 1, kind };
+  const base: InfraDesign = { version: 1, kind, facilities: [] };
   if (kind === "highway") base.highway = defaultHighway();
   if (kind === "airport") base.airport = defaultAirport();
   if (kind === "ports") base.ports = defaultPort();
@@ -117,11 +117,44 @@ export function normalizeInfra(infra: InfraDesign | undefined, kind: InfraKind):
     ...base,
     ...infra,
     kind,
+    facilities: infra.facilities ?? [],
     highway: kind === "highway" ? { ...base.highway!, ...infra.highway } : undefined,
     airport: kind === "airport" ? { ...base.airport!, ...infra.airport } : undefined,
     ports: kind === "ports" ? { ...base.ports!, ...infra.ports } : undefined,
     dams: kind === "dams" ? { ...base.dams!, ...infra.dams } : undefined,
   };
+}
+
+function addFacilities(g: THREE.Group, infra: InfraDesign, ext: InfraExtent): void {
+  const facilities = infra.facilities ?? [];
+  const colors: Record<string, string> = {
+    lounge: "#8e9cc4",
+    terminal: "#b0bec5",
+    runway: "#263238",
+    berth: "#607d8b",
+    warehouse: "#8d6e63",
+    yard: "#78909c",
+    highway: "#9e9d24",
+    dam: "#78909c",
+  };
+  let serial = 0;
+  for (const facility of facilities) {
+    const count = Math.min(Math.max(Math.round(facility.count), 0), 100);
+    for (let i = 0; i < count; i++) {
+      const length = Math.max(facility.lengthM, 0.5);
+      const width = Math.max(facility.widthM, 0.5);
+      const height = Math.max(facility.heightM, 0.2);
+      const across = Math.max(1, Math.floor(ext.w / (length + 8)));
+      const col = serial % across;
+      const row = Math.floor(serial / across);
+      const x = -ext.w / 2 + 20 + col * (length + 8);
+      const z = -ext.d / 2 + 20 + row * (width + 8);
+      const mesh = prismAt(x, height / 2 + 0.05, z, length, height, width, material(colors[facility.kind] ?? "#78909c", { rough: 0.75 }));
+      mesh.userData.noSelect = true;
+      g.add(mesh);
+      serial++;
+    }
+  }
 }
 
 /* ------------------------------- Site extents ------------------------------- */
@@ -532,16 +565,15 @@ function buildDam(d: DamDesign, ext: InfraExtent): THREE.Group {
 
 export function buildInfraScene(infra: InfraDesign): THREE.Group {
   const ext = infraExtent(infra);
-  switch (infra.kind) {
-    case "highway":
-      return buildHighway(infra.highway!, ext, infra.location);
-    case "airport":
-      return buildAirport(infra.airport!, ext);
-    case "ports":
-      return buildPort(infra.ports!, ext);
-    case "dams":
-      return buildDam(infra.dams!, ext);
-  }
+  const scene = infra.kind === "highway"
+    ? buildHighway(infra.highway!, ext, infra.location)
+    : infra.kind === "airport"
+      ? buildAirport(infra.airport!, ext)
+      : infra.kind === "ports"
+        ? buildPort(infra.ports!, ext)
+        : buildDam(infra.dams!, ext);
+  addFacilities(scene, infra, ext);
+  return scene;
 }
 
 export function infraSummary(infra: InfraDesign): string {

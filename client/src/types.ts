@@ -283,6 +283,15 @@ export interface SiteLocation {
 
 export type InfraKind = "highway" | "airport" | "ports" | "dams";
 
+export interface InfraFacility {
+  id: string;
+  kind: string;
+  count: number;
+  lengthM: number;
+  widthM: number;
+  heightM: number;
+}
+
 export interface HighwayDesign {
   lanes: number;
   laneWidthM: number;
@@ -346,6 +355,7 @@ export interface DamDesign {
 export interface InfraDesign {
   version: 1;
   kind: InfraKind;
+  facilities?: InfraFacility[];
   location?: SiteLocation;
   highway?: HighwayDesign;
   airport?: AirportDesign;

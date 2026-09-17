@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import type { AirportDesign, DamDesign, HighwayDesign, InfraDesign, InfraKind, PortDesign } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import type { AirportDesign, DamDesign, HighwayDesign, InfraDesign, InfraFacility, InfraKind, PortDesign } from "../types";
 import { Button, Select, Toggle } from "../components/ui";
 import { InfraScene } from "../editor/InfraScene";
 import { SiteLocator, type LocatorMode } from "../editor/SiteLocator";
@@ -21,6 +21,42 @@ const STEPS: { id: StepId; label: string }[] = [
   { id: "design", label: "Design" },
   { id: "takeoff", label: "Takeoff & notes" },
 ];
+
+const FACILITY_OPTIONS: Record<InfraKind, { kind: string; label: string }[]> = {
+  highway: [
+    { kind: "rest-area", label: "Rest area" },
+    { kind: "toll-plaza", label: "Toll plaza" },
+    { kind: "service-station", label: "Service station" },
+    { kind: "pedestrian-overpass", label: "Pedestrian overpass" },
+    { kind: "bus-bay", label: "Bus bay" },
+  ],
+  airport: [
+    { kind: "passenger-lounge", label: "Passenger lounge" },
+    { kind: "terminal", label: "Terminal" },
+    { kind: "runway", label: "Runway" },
+    { kind: "taxiway", label: "Taxiway" },
+    { kind: "aircraft-stand", label: "Aircraft stand" },
+    { kind: "cargo-terminal", label: "Cargo terminal" },
+    { kind: "fuel-farm", label: "Fuel farm" },
+  ],
+  ports: [
+    { kind: "berth", label: "Berth" },
+    { kind: "warehouse", label: "Storage warehouse" },
+    { kind: "container-yard", label: "Container yard" },
+    { kind: "crane", label: "Quay crane" },
+    { kind: "customs-terminal", label: "Customs terminal" },
+    { kind: "cold-storage", label: "Cold storage" },
+    { kind: "breakwater", label: "Breakwater" },
+  ],
+  dams: [
+    { kind: "spillway", label: "Spillway" },
+    { kind: "radial-gate", label: "Radial gate" },
+    { kind: "powerhouse", label: "Powerhouse" },
+    { kind: "fish-ladder", label: "Fish ladder" },
+    { kind: "visitor-center", label: "Visitor center" },
+    { kind: "stilling-basin", label: "Stilling basin" },
+  ],
+};
 
 const LOCATOR_MODE: Record<InfraKind, LocatorMode> = {
   highway: "route",
@@ -75,6 +111,11 @@ function Num({
 export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorProps) {
   const toast = useToast();
   const [step, setStep] = useState<StepId>("location");
+  const [facilityKind, setFacilityKind] = useState(FACILITY_OPTIONS[kind][0].kind);
+
+  useEffect(() => {
+    setFacilityKind(FACILITY_OPTIONS[kind][0].kind);
+  }, [kind]);
 
   const update = (patch: Partial<InfraDesign>) => onChange({ ...infra, ...patch });
 
@@ -88,6 +129,54 @@ export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorP
     update({ ports: { ...infra.ports!, ...patch } });
   const patchDam = (patch: Partial<DamDesign>) =>
     update({ dams: { ...infra.dams!, ...patch } });
+
+  const addFacility = () => {
+    const facility: InfraFacility = {
+      id: `facility-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      kind: facilityKind,
+      count: 1,
+      lengthM: kind === "airport" && facilityKind === "runway" ? 1200 : 30,
+      widthM: kind === "airport" && facilityKind === "runway" ? 45 : 15,
+      heightM: kind === "dams" ? 8 : 4,
+    };
+    update({ facilities: [...(infra.facilities ?? []), facility] });
+  };
+
+  const patchFacility = (id: string, patch: Partial<InfraFacility>) =>
+    update({ facilities: (infra.facilities ?? []).map((f) => (f.id === id ? { ...f, ...patch } : f)) });
+
+  const facilitiesPanel = (
+    <Section title={`${INFRA_LABELS[kind]} facilities`}>
+      <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
+        Add only the facilities required by this design. Nothing is placed automatically.
+      </p>
+      <div className="flex gap-2">
+        <Select label="Facility" value={facilityKind} onChange={(e) => setFacilityKind(e.target.value)}>
+          {FACILITY_OPTIONS[kind].map((option) => <option key={option.kind} value={option.kind}>{option.label}</option>)}
+        </Select>
+        <Button size="sm" onClick={addFacility} className="mt-6 shrink-0">Add</Button>
+      </div>
+      <div className="space-y-2">
+        {(infra.facilities ?? []).length === 0 && <p className="text-xs text-slate-600">No facilities added yet.</p>}
+        {(infra.facilities ?? []).map((facility) => (
+          <div key={facility.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <Select label="Type" value={facility.kind} onChange={(e) => patchFacility(facility.id, { kind: e.target.value })}>
+                {FACILITY_OPTIONS[kind].map((option) => <option key={option.kind} value={option.kind}>{option.label}</option>)}
+              </Select>
+              <button onClick={() => update({ facilities: (infra.facilities ?? []).filter((f) => f.id !== facility.id) })} className="mt-5 text-xs font-semibold text-rose-400 hover:text-rose-300">Remove</button>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Num label="Count" value={facility.count} onChange={(v) => patchFacility(facility.id, { count: Math.max(Math.round(v) || 0, 0) })} min={0} step={1} unit=" nos" />
+              <Num label="Length" value={facility.lengthM} onChange={(v) => patchFacility(facility.id, { lengthM: Math.max(v || 0.5, 0.5) })} min={0.5} step={1} unit=" m" />
+              <Num label="Width" value={facility.widthM} onChange={(v) => patchFacility(facility.id, { widthM: Math.max(v || 0.5, 0.5) })} min={0.5} step={1} unit=" m" />
+              <Num label="Height" value={facility.heightM} onChange={(v) => patchFacility(facility.id, { heightM: Math.max(v || 0.2, 0.2) })} min={0.2} step={0.5} unit=" m" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
 
   /* ------------------------------ Location step ----------------------------- */
   const applyFromLocation = () => {
@@ -350,7 +439,7 @@ export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorP
 
   const panels: Record<StepId, React.ReactNode> = {
     location: locationPanel,
-    design: designPanel,
+    design: <>{designPanel}{facilitiesPanel}</>,
     takeoff: takeoffPanel,
   };
 
