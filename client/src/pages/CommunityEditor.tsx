@@ -127,6 +127,7 @@ function UndergroundForm({
 export function CommunityEditor({ branch, community, onChange, projectName }: CommunityEditorProps) {
   const toast = useToast();
   const [step, setStep] = useState<StepId>("land");
+  const [focusMode, setFocusMode] = useState(false);
   const [pickKind, setPickKind] = useState(() => amenitiesFor(branch)[0]?.kind ?? AMENITIES[0].kind);
   const [newRoomType, setNewRoomType] = useState("living");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -673,10 +674,51 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const activeIndex = STEPS.findIndex((s) => s.id === step);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className={cn(
+      "flex min-h-0 flex-1 flex-col",
+      focusMode && "fixed inset-0 z-50 bg-slate-950 p-3",
+    )}>
+      <div className="mb-2 flex min-h-10 items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/80 px-2 py-1.5 backdrop-blur">
+        <span className="hidden px-2 text-xs font-semibold uppercase tracking-wide text-slate-500 sm:inline">
+          Workspace
+        </span>
+        {focusMode && (
+          <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto" aria-label="Workspace tools">
+            {STEPS.map((s, i) => (
+              <button
+                key={s.id}
+                onClick={() => setStep(s.id)}
+                className={cn(
+                  "flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition",
+                  step === s.id ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
+                )}
+                title={s.label}
+              >
+                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-800 text-[10px]">{i + 1}</span>
+                <span className="hidden md:inline">{s.label}</span>
+              </button>
+            ))}
+          </nav>
+        )}
+        {!focusMode && <div className="flex-1" />}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setFocusMode((value) => !value)}
+          title={focusMode ? "Show feature panels" : "Expand the 3D workspace"}
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            {focusMode ? <path d="M9 3H3v6M3 3l7 7M15 21h6v-6M21 21l-7-7" strokeLinecap="round" strokeLinejoin="round" /> : <path d="M3 9V3h6M3 3l7 7M21 15v6h-6M21 21l-7-7" strokeLinecap="round" strokeLinejoin="round" />}
+          </svg>
+          <span className="hidden sm:inline">{focusMode ? "Show tools" : "Expand canvas"}</span>
+        </Button>
+      </div>
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Left: stepper + params */}
-        <div className="flex w-full shrink-0 flex-col border-r border-slate-800 bg-slate-900/40 lg:w-96">
+        <div className={cn(
+          "flex w-full shrink-0 flex-col border-r border-slate-800 bg-slate-900/40 lg:w-96",
+          focusMode && "hidden",
+        )}>
           <div className="flex gap-1 overflow-x-auto border-b border-slate-800 px-3 py-2">
             {STEPS.map((s, i) => (
               <button
