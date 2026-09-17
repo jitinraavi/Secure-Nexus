@@ -25,6 +25,8 @@ import { generateTotpSecret, totpIssuerUri, verifyTotp } from "../totp.js";
 import {
   changePasswordSchema,
   loginSchema,
+  otpLoginRequestSchema,
+  otpLoginVerifySchema,
   profileSchema,
   resendOtpSchema,
   signupSchema,
@@ -260,6 +262,115 @@ router.post(
       ok: true,
       message: "A new 6-digit code was sent to your email.",
       devOtp: mail.via === "console" ? mail.devCode : undefined,
+    });
+  }),
+);
+
+/* POST /api/auth/otp/request — emails a passwordless login code to the account */
+router.post(
+  "/otp/request",
+  asyncHandler(async (req, res) => {
+    const parsed = otpLoginRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
+      return;
+    }
+    const { email } = parsed.data;
+    const user = db
+      .prepare("SELECT id, email, otp_expires_at FROM users WHERE email = ?")
+      .get(email) as { id: string; email: string; otp_expires_at: number | null } | undefined;
+
+    const blanket = {
+      ok: true,
+      message: "If that email has an account, a 6-digit login code is on its way.",
+    };
+    if (!user) {
+      /* Respond identically whether or not the account exists (no probing) */
+      res.json(blanket);
+      return;
+    }
+    if (user.otp_expires_at && now() - (user.otp_expires_at - OTP_TTL_SECONDS) < OTP_RESEND_COOLDOWN_SECONDS) {
+      res.status(429).json({ error: "A code was just sent. Please wait 30 seconds before requesting another." });
+      return;
+    }
+    const code = generateOtp();
+    issueOtp(user.id, code, user.email);
+    const mail = await sendOtpEmail(user.email, code);
+    logAudit(user.id, "auth.otp_login_requested", "Passwordless login code emailed", req);
+    res.json({ ...blanket, devOtp: mail.via === "console" ? mail.devCode : undefined });
+  }),
+);
+
+/* POST /api/auth/otp/verify — exchanges a login code for a session */
+router.post(
+  "/otp/verify",
+  asyncHandler(async (req, res) => {
+    const parsed = otpLoginVerifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
+      return;
+    }
+    const { email, code } = parsed.data;
+
+    const user = db
+      .prepare("SELECT * FROM users WHERE email = ?")
+      .get(email) as
+      | {
+          id: string;
+          email: string;
+          email_verified: number;
+          otp_code_hash: string | null;
+          otp_expires_at: number | null;
+          otp_attempts: number;
+          totp_enabled: number;
+          created_at: number;
+          last_login_at: number | null;
+          password_changed_at: number;
+        }
+      | undefined;
+
+    if (!user) {
+      res.status(401).json({ error: "No account found for that email" });
+      return;
+    }
+    if (!user.otp_code_hash || !user.otp_expires_at) {
+      res.status(400).json({ error: "No login code is active. Request a new one." });
+      return;
+    }
+    if (user.otp_expires_at < now()) {
+      res.status(400).json({ error: "That code has expired. Request a new one." });
+      return;
+    }
+    if (user.otp_attempts >= OTP_MAX_ATTEMPTS) {
+      res.status(429).json({ error: "Too many attempts. Request a new code." });
+      return;
+    }
+
+    const expected = Buffer.from(user.otp_code_hash, "hex");
+    const actual = Buffer.from(sha256Hex(`${user.id}:${code}`), "hex");
+    const valid = expected.length > 0 && actual.length === expected.length && actual.equals(expected);
+    if (!valid) {
+      db.prepare("UPDATE users SET otp_attempts = otp_attempts + 1 WHERE id = ?").run(user.id);
+      logAudit(user.id, "auth.otp_login_failed", "Invalid passwordless login code", req);
+      res.status(401).json({ error: "That code is not correct. Try again." });
+      return;
+    }
+
+    db.prepare(
+      "UPDATE users SET failed_attempts = 0, locked_until = NULL, email_verified = 1, otp_code_hash = NULL, otp_expires_at = NULL, otp_attempts = 0, last_login_at = ?, updated_at = ? WHERE id = ?",
+    ).run(now(), now(), user.id);
+    logAudit(user.id, "auth.login", "Passwordless OTP login succeeded", req);
+
+    if (user.totp_enabled) {
+      createSession(res, user.id, { isPending: true });
+      res.json({ needsTwoFactor: true });
+      return;
+    }
+
+    const { csrfToken } = createSession(res, user.id);
+    res.json({
+      user: publicUser({ ...user, email_verified: 1 } as never),
+      csrfToken,
     });
   }),
 );

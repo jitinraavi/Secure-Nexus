@@ -100,6 +100,18 @@ export const resendOtpSchema = z.object({
   email: emailSchema,
 });
 
+export const otpLoginRequestSchema = z.object({
+  email: emailSchema,
+});
+
+export const otpLoginVerifySchema = z.object({
+  email: emailSchema,
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Enter the 6-digit code"),
+});
+
 export const changePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, "Current password is required").max(128),

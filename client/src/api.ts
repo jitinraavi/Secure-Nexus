@@ -138,6 +138,34 @@ export async function login(email: string, password: string) {
   return res;
 }
 
+export interface OtpLoginRequestResult {
+  ok?: boolean;
+  message?: string;
+  devOtp?: string;
+}
+
+export function requestOtpLogin(email: string): Promise<OtpLoginRequestResult> {
+  return request<OtpLoginRequestResult>("/api/auth/otp/request", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export interface OtpLoginResult {
+  user?: User;
+  csrfToken?: string;
+  needsTwoFactor?: boolean;
+}
+
+export async function loginWithOtp(email: string, code: string): Promise<OtpLoginResult> {
+  const res = await request<OtpLoginResult>("/api/auth/otp/verify", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
+  });
+  if (res.csrfToken) setCsrfToken(res.csrfToken);
+  return res;
+}
+
 export function verifyTwoFactor(code: string) {
   return request<{ user: User; csrfToken: string }>("/api/auth/verify-2fa", {
     method: "POST",
