@@ -1,6 +1,8 @@
 export const PROJECT_TYPES = [
   "house",
   "residential",
+  "villa-community",
+  "townhouse",
   "commercial",
   "highway",
   "airport",
@@ -13,6 +15,8 @@ export type ProjectType = (typeof PROJECT_TYPES)[number];
 export const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
   house: "House & Interiors",
   residential: "Residential Building",
+  "villa-community": "Villa Community",
+  townhouse: "Townhouse Community",
   commercial: "Commercial Building",
   highway: "Highway & Roadways",
   airport: "Airport",

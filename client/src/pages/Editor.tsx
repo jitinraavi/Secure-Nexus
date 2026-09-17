@@ -87,8 +87,14 @@ export function Editor() {
           };
       const type = resolveModelType(pt);
       let seeded = base;
-      if (pt === "residential" && !seeded.community) {
-        seeded = { ...seeded, community: defaultCommunity("residential") };
+      if ((pt === "residential" || pt === "villa-community" || pt === "townhouse") && !seeded.community) {
+        seeded = {
+          ...seeded,
+          community: {
+            ...defaultCommunity("residential"),
+            residentialStyle: pt === "villa-community" ? "villa-community" : pt === "townhouse" ? "townhouse" : "high-rise",
+          },
+        };
       } else if (pt === "commercial" && !seeded.community) {
         seeded = { ...seeded, community: defaultCommunity("commercial") };
       }
@@ -373,7 +379,8 @@ export function Editor() {
   );
 
   const community = design.community;
-  const communityActive = loaded && (projectType === "residential" || projectType === "commercial") && community != null;
+  const residentialProject = projectType === "residential" || projectType === "villa-community" || projectType === "townhouse";
+  const communityActive = loaded && (residentialProject || projectType === "commercial") && community != null;
 
   const infraKind = isInfraType(model) ? (model as InfraKind) : null;
   const infraActive = loaded && infraKind && design.infra?.kind === infraKind;
@@ -394,12 +401,12 @@ export function Editor() {
             {saving ? " · saving…" : lastSaved ? " · saved" : ""}
           </p>
           <div className="flex-1" />
-          <Badge tone={projectType === "residential" ? "emerald" : "cyan"}>
+           <Badge tone={residentialProject ? "emerald" : "cyan"}>
             {PROJECT_TYPE_LABELS[projectType] ?? projectType}
           </Badge>
         </div>
         <CommunityEditor
-          branch={projectType === "residential" ? "residential" : "commercial"}
+           branch={residentialProject ? "residential" : "commercial"}
           community={community}
           projectName={name}
           onChange={(c) => {

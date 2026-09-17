@@ -66,6 +66,8 @@ function sniffMime(buf: Buffer): string | null {
 export const PROJECT_TYPES = [
   "house",
   "residential",
+  "villa-community",
+  "townhouse",
   "commercial",
   "highway",
   "airport",

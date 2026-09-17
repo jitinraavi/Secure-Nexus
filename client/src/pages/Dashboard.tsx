@@ -18,7 +18,7 @@ import { cn } from "../lib/cn";
 
 const TYPE_GROUPS: { label: string; types: ProjectType[] }[] = [
   { label: "Interiors", types: ["house"] },
-  { label: "Buildings", types: ["residential", "commercial"] },
+  { label: "Buildings", types: ["residential", "villa-community", "townhouse", "commercial"] },
   { label: "Infrastructure", types: ["highway", "airport", "ports", "dams"] },
 ];
 

@@ -23,7 +23,7 @@ const LEGACY_MODEL_MAP: Record<string, ProjectType> = {
 };
 
 /** Types the UI still understands (everything else falls back to the house editor). */
-const KEPT_TYPES: ProjectType[] = ["house", "residential", "commercial", ...INFRA_TYPES];
+const KEPT_TYPES: ProjectType[] = ["house", "residential", "villa-community", "townhouse", "commercial", ...INFRA_TYPES];
 
 export function resolveModelType(t: ProjectType | string | undefined | null): ProjectType {
   if (!t) return "house";
