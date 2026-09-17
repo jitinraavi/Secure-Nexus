@@ -36,6 +36,7 @@ export function Signup() {
   const [verifyError, setVerifyError] = useState("");
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
+  const [deliveryFailed, setDeliveryFailed] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const emailRef = useRef("");
   const timerRef = useRef<number | null>(null);
@@ -105,6 +106,7 @@ export function Signup() {
       if (res.needsEmailVerification) {
         emailRef.current = email.trim();
         setDevHint(res.devOtp ?? null);
+        setDeliveryFailed(res.emailDelivered === false);
         setVerifyOpen(true);
         setCode("");
         setVerifyError("");
@@ -152,6 +154,7 @@ export function Signup() {
     try {
       const res = await resendOtp(emailRef.current);
       setDevHint(res.devOtp ?? null);
+      setDeliveryFailed(res.delivered === false);
       startCountdown();
       toast.push({ title: "Code sent", description: res.message, tone: "info" });
     } catch (err) {
@@ -187,6 +190,12 @@ export function Signup() {
               {devHint && (
                 <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
                   No mail provider configured — dev code: <span className="font-mono font-bold">{devHint}</span>
+                </p>
+              )}
+              {deliveryFailed && (
+                <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                  The email server is unreachable right now, so the code was not delivered. Use the login page's "Email
+                  code" option or contact support.
                 </p>
               )}
               {verifyError && <p className="text-sm text-rose-400">{verifyError}</p>}

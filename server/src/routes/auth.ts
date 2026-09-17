@@ -144,7 +144,11 @@ router.post(
 
     res.status(201).json({
       needsEmailVerification: true,
-      message: "Account created. A 6-digit verification code was sent to your email.",
+      message:
+        mail.via === "error"
+          ? "Account created, but we couldn't send the verification email. Please try the login page's Email code option or contact support."
+          : "Account created. A 6-digit verification code was sent to your email.",
+      emailDelivered: mail.via !== "error",
       devOtp: mail.via === "console" ? mail.devCode : undefined,
       ...(mail.via !== "console" ? {} : { devOtpNote: "No mail provider configured — code printed to server log." }),
     });
@@ -260,7 +264,11 @@ router.post(
     logAudit(user.id, "auth.otp_resent", "Verification code re-sent", req);
     res.json({
       ok: true,
-      message: "A new 6-digit code was sent to your email.",
+      delivered: mail.via !== "error",
+      message:
+        mail.via === "error"
+          ? "We couldn't send the email. Please try again shortly or contact support."
+          : "A new 6-digit code was sent to your email.",
       devOtp: mail.via === "console" ? mail.devCode : undefined,
     });
   }),
@@ -280,13 +288,13 @@ router.post(
       .prepare("SELECT id, email, otp_expires_at FROM users WHERE email = ?")
       .get(email) as { id: string; email: string; otp_expires_at: number | null } | undefined;
 
-    const blanket = {
-      ok: true,
-      message: "If that email has an account, a 6-digit login code is on its way.",
-    };
     if (!user) {
       /* Respond identically whether or not the account exists (no probing) */
-      res.json(blanket);
+      res.json({
+        ok: true,
+        delivered: true,
+        message: "If that email has an account, a 6-digit login code is on its way.",
+      });
       return;
     }
     if (user.otp_expires_at && now() - (user.otp_expires_at - OTP_TTL_SECONDS) < OTP_RESEND_COOLDOWN_SECONDS) {
@@ -297,7 +305,17 @@ router.post(
     issueOtp(user.id, code, user.email);
     const mail = await sendOtpEmail(user.email, code);
     logAudit(user.id, "auth.otp_login_requested", "Passwordless login code emailed", req);
-    res.json({ ...blanket, devOtp: mail.via === "console" ? mail.devCode : undefined });
+    res.json({
+      ok: true,
+      delivered: mail.via !== "error",
+      message:
+        mail.via === "error"
+          ? "We couldn't send the code right now. Please try again shortly."
+          : mail.via === "console"
+            ? "If that email has an account, a 6-digit login code is on its way (dev mode)."
+            : "If that email has an account, a 6-digit login code is on its way.",
+      devOtp: mail.via === "console" ? mail.devCode : undefined,
+    });
   }),
 );
 

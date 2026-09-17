@@ -56,12 +56,13 @@ export function Login() {
       const res = await requestOtpLogin(email.trim());
       setOtpRequested(true);
       setCode("");
+      const failed = res.delivered === false && !res.devOtp;
       toast.push({
-        title: "Code sent",
+        title: failed ? "Couldn't send the code" : "Code sent",
         description: res.devOtp
           ? `Development code: ${res.devOtp} (also written to the server log)`
           : res.message || "Check your inbox for a 6-digit login code.",
-        tone: res.devOtp ? "info" : "success",
+        tone: res.devOtp ? "info" : failed ? "error" : "success",
       });
       if (!res.devOtp) {
         setTimeout(() => toast.push({ title: "Still haven't got it?", description: "Check your spam folder — or use your password to sign in.", tone: "info" }), 1200);

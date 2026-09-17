@@ -8,6 +8,8 @@ export interface MailResult {
   via: string;
   /** Present only when dev OTP leak is allowed, so local flows remain testable. */
   devCode?: string;
+  /** Present when the provider failed to send (SMTP timeout, auth error, etc.). */
+  error?: string;
 }
 
 function pickTransport():
@@ -28,6 +30,9 @@ function pickTransport():
           port: MAIL.port,
           secure: MAIL.secure,
           auth: { user: MAIL.user, pass: MAIL.pass },
+          connectionTimeout: 10_000,
+          greetingTimeout: 10_000,
+          socketTimeout: 20_000,
         }),
       };
     }
@@ -58,15 +63,25 @@ export async function sendMail(to: string, subject: string, text: string): Promi
   const t = pickTransport();
   switch (t.type) {
     case "resend":
-      await sendResend(to, subject, html);
-      return { delivered: true, via: "resend" };
+      try {
+        await sendResend(to, subject, html);
+        return { delivered: true, via: "resend" };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[groundwork] Resend API failed: ${message}`);
+        return { delivered: false, via: "error", error: message };
+      }
     case "smtp":
-      await t.transport.sendMail({ from: MAIL.from, to, subject, html });
-      return { delivered: true, via: "smtp" };
+      try {
+        await t.transport.sendMail({ from: MAIL.from, to, subject, html });
+        return { delivered: true, via: "smtp" };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[groundwork] SMTP send failed (${MAIL.host}:${MAIL.port}): ${message}`);
+        return { delivered: false, via: "error", error: message };
+      }
     case "console":
     default:
-      /* No provider configured: print to server log so the flow is usable while
-         developing. Never surfaces in production unless GROUNDWORK_DEV_OTP=1. */
       console.log(`[groundwork] Email (${to}): ${subject}\n${text}`);
       return { delivered: false, via: "console", devCode: !IS_PROD && MAIL.devOtp ? text.match(/\d{6}/)?.[0] : undefined };
   }

@@ -92,6 +92,7 @@ export interface SignupExtras {
 export interface SignupResult {
   needsEmailVerification?: boolean;
   message?: string;
+  emailDelivered?: boolean;
   devOtp?: string;
   user?: User;
   csrfToken?: string;
@@ -123,7 +124,7 @@ export async function verifyEmail(email: string, code: string): Promise<VerifyEm
 }
 
 export function resendOtp(email: string) {
-  return request<{ ok: boolean; message?: string; devOtp?: string }>("/api/auth/resend-otp", {
+  return request<{ ok: boolean; message?: string; delivered?: boolean; devOtp?: string }>("/api/auth/resend-otp", {
     method: "POST",
     body: JSON.stringify({ email }),
   });
@@ -141,6 +142,7 @@ export async function login(email: string, password: string) {
 export interface OtpLoginRequestResult {
   ok?: boolean;
   message?: string;
+  delivered?: boolean;
   devOtp?: string;
 }
 
