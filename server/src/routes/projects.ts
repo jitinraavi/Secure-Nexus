@@ -72,6 +72,10 @@ export const PROJECT_TYPES = [
   "ports",
   "dams",
   "spillways",
+  "bim",
+  "steel",
+  "civil",
+  "coordination",
 ] as const;
 
 export type ProjectType = (typeof PROJECT_TYPES)[number];

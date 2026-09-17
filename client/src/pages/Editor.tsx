@@ -5,6 +5,7 @@ import {
   patchProject,
   recordExport,
   uploadProjectPhoto,
+  listProjects,
 } from "../api";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Modal, Select, Spinner, Toggle } from "../components/ui";
@@ -13,10 +14,13 @@ import { CATALOG, catalogEntry } from "../lib/catalog";
 import { buildDxf } from "../lib/dxf";
 import { buildBillOfMaterials, buildObjMtl } from "../lib/obj";
 import { download, downloadBlob, zipFiles } from "../lib/download";
-import type { Design, FurnitureItem, ProjectType } from "../types";
+import type { BimElementData, Design, FurnitureItem, MergeProject, Project, ProjectType } from "../types";
 import { defaultDesign, PROJECT_TYPE_LABELS } from "../types";
 import { cn } from "../lib/cn";
-import { isInfraType, infraParamDefs, defaultInfraParams, infraSummary, buildInfraDxf, buildInfraCsv } from "../lib/infra";
+import { isStudioType, studioModule, starterElements, makeDefaultElement, HELPER_LABELS, resolveModelType } from "../lib/modules";
+import { coordinationDxf, coordinationSummary, clashReport, toMergedModel, type MergedModel } from "../lib/coordination";
+
+const MERGE_COLORS = ["#4f8ef7", "#e0a63f", "#3fbf8f", "#e05f7f", "#9a6cf0", "#33bfd4", "#d4783f", "#7fbf3f"];
 
 const SWATCHES = [
   "#7c8a99", "#a4714f", "#8a6a45", "#5d7b8a", "#6b5542", "#4c7a9c",
@@ -27,6 +31,21 @@ const CATEGORIES = [...new Set(CATALOG.map((c) => c.category))];
 
 const wallKey = (w: "north" | "south" | "east" | "west") =>
   ({ north: "North wall", south: "South wall", east: "East wall", west: "West wall" })[w];
+
+function seedStudioDesign(design: Design, type: ProjectType): Design {
+  if (!isStudioType(type)) return design;
+  const mod = studioModule(type);
+  if (!mod) return design;
+  const settings = { ...(design.settings ?? {}) };
+  for (const g of mod.globals) {
+    if (settings[g.id] === undefined) settings[g.id] = g.default;
+  }
+  const base: Design = { ...design, settings, timelineDay: design.timelineDay ?? settings.timelineDay ?? 90 };
+  if ((type === "bim" || type === "steel") && !(base.elements?.length)) {
+    return { ...base, elements: starterElements(type, settings) };
+  }
+  return base;
+}
 
 export function Editor() {
   const { id } = useParams<{ id: string }>();
@@ -48,12 +67,18 @@ export function Editor() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [projectType, setProjectType] = useState<ProjectType>("house");
-  const infra = isInfraType(projectType);
+  const model = resolveModelType(projectType);
+  const studio = isStudioType(model);
+  const mod = studio ? studioModule(model) : undefined;
 
-  const [panelTab, setPanelTab] = useState<"items" | "infra" | "room" | "curtains">("items");
+  const [panelTab, setPanelTab] = useState<"items" | "room" | "curtains" | "model" | "globals">("items");
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
-  const [mobilePanel, setMobilePanel] = useState<"catalog" | "items" | "room" | "curtains" | null>(null);
+  const [mobilePanel, setMobilePanel] = useState<"catalog" | "items" | "room" | "curtains" | "model" | "globals" | null>(null);
+
+  const [otherProjects, setOtherProjects] = useState<Project[] | null>(null);
+  const [mergedModels, setMergedModels] = useState<MergedModel[]>([]);
+  const [mergePick, setMergePick] = useState("");
 
   const saveTimer = useRef<number | null>(null);
 
@@ -72,9 +97,9 @@ export function Editor() {
               depthMm: project.depthMm,
             },
           };
-      const type = (project as { projectType?: ProjectType }).projectType ?? "house";
-      if (isInfraType(type) && !base.infra) base.infra = defaultInfraParams(type);
-      setDesign(base);
+      const type = resolveModelType((project as { projectType?: ProjectType }).projectType ?? "house");
+      setDesign(seedStudioDesign(base, type));
+      if (isStudioType(type)) setPanelTab("model");
       if (project.hasPhoto) setPhotoUrl(`/api/projects/${id}/photo?v=${project.updatedAt}`);
       setLoaded(true);
     } catch (err) {
@@ -160,6 +185,86 @@ export function Editor() {
     setSelectedId(null);
   };
 
+  /* --------------------- Studio modules (BIM / Steel / Civil / Coordination) -------------------- */
+  const elements = design.elements ?? [];
+  const selectedEl = studio ? elements.find((e) => e.id === selectedId) ?? null : null;
+  const selectedElDef = selectedEl ? mod?.defs.get(selectedEl.kind) : undefined;
+
+  const mutateElements = (fn: (els: BimElementData[]) => BimElementData[]) =>
+    changeDesign({ ...design, elements: fn(design.elements ?? []) });
+
+  const addElement = (kind: string) => {
+    const def = mod?.defs.get(kind);
+    if (!def) return;
+    const el = makeDefaultElement(def, elements.length);
+    mutateElements((els) => [...els, el]);
+    setSelectedId(el.id);
+  };
+
+  const updateElement = (id: string, params: Record<string, number>) =>
+    mutateElements((els) => els.map((e) => (e.id === id ? { ...e, params: { ...e.params, ...params } } : e)));
+
+  const removeElement = (id: string) => {
+    mutateElements((els) => els.filter((e) => e.id !== id));
+    if (selectedId === id) setSelectedId(null);
+  };
+
+  const changeGlobal = (key: string, value: number) =>
+    changeDesign({ ...design, settings: { ...(design.settings ?? {}), [key]: value } });
+
+  const mergeList = design.merge ?? [];
+  const addMerge = (projectId: string) => {
+    const p = otherProjects?.find((x) => x.id === projectId);
+    if (!p) return;
+    const entry = {
+      projectId,
+      label: p.name,
+      color: MERGE_COLORS[mergeList.length % MERGE_COLORS.length],
+      opacity: 0.85,
+      startDay: 0,
+      durationDays: 60,
+    };
+    changeDesign({ ...design, merge: [...mergeList, entry] });
+    setMergePick("");
+  };
+  const updateMerge = (projectId: string, patch: Partial<MergeProject>) =>
+    changeDesign({ ...design, merge: mergeList.map((m) => (m.projectId === projectId ? { ...m, ...patch } : m)) });
+  const removeMerge = (projectId: string) =>
+    changeDesign({ ...design, merge: mergeList.filter((m) => m.projectId !== projectId) });
+
+  useEffect(() => {
+    if (!studio) return;
+    let cancelled = false;
+    void listProjects()
+      .then((ps) => { if (!cancelled) setOtherProjects(ps.filter((p) => p.id !== id)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [studio, id]);
+
+  useEffect(() => {
+    if (projectType !== "coordination") {
+      setMergedModels([]);
+      return;
+    }
+    const items = design.merge ?? [];
+    if (!items.length) {
+      setMergedModels([]);
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      items.map(async (m) => {
+        try {
+          const p = await getProject(m.projectId);
+          return toMergedModel(m.label || p.name, resolveModelType(p.projectType ?? "house"), p.design ?? defaultDesign(), m.color, m.opacity, m.startDay, m.durationDays);
+        } catch {
+          return null;
+        }
+      }),
+    ).then((list) => { if (!cancelled) setMergedModels(list.filter((x): x is MergedModel => Boolean(x))); });
+    return () => { cancelled = true; };
+  }, [projectType, design.merge]);
+
   const uploadFile = async (file: File) => {
     setUploading(true);
     try {
@@ -192,10 +297,6 @@ export function Editor() {
     return () => window.removeEventListener("paste", onPaste);
   }, [uploadFile]);
 
-  const changeInfra = (key: string, value: number) => {
-    changeDesign({ ...design, infra: { ...(design.infra ?? {}), ...defaultInfraParams(projectType), [key]: value } });
-  };
-
   const onCanvasDrop = (e: DragEvent) => {
     e.preventDefault();
     const file = [...e.dataTransfer.files].find((f) => f.type.startsWith("image/"));
@@ -208,7 +309,11 @@ export function Editor() {
     try {
       const stem = name.trim().replace(/[^\w-]+/g, "-").toLowerCase() || "design";
       if (format === "dxf") {
-        const content = infra ? buildInfraDxf(projectType, design.infra || {}) : buildDxf(design);
+        const content = model === "coordination"
+          ? coordinationDxf(mergedModels)
+          : studio && mod
+            ? mod.dxf(design)
+            : buildDxf(design);
         download(`${stem}.dxf`, content, "application/dxf");
       } else if (format === "obj") {
         const { obj, mtl } = buildObjMtl(design);
@@ -218,8 +323,13 @@ export function Editor() {
         const blob = await api.exportGlb();
         downloadBlob(`${stem}.glb`, blob);
       } else if (format === "csv") {
-        const content = infra ? buildInfraCsv(projectType, design.infra || {}) : buildBillOfMaterials(design);
-        download(`${stem}-${infra ? "spec" : "bom"}.csv`, content, "text/csv");
+        const content = model === "coordination"
+          ? clashReport(mergedModels, design.settings?.clashTol ?? 10)
+          : studio && mod
+            ? mod.csv(design)
+            : buildBillOfMaterials(design);
+        const label = studio ? (mod?.csvLabel ?? "report") : "bom";
+        download(`${stem}-${label.toLowerCase().replace(/\s+/g, "-")}.csv`, content, "text/csv");
       } else if (format === "png") {
         /* handled separately */
       }
@@ -234,18 +344,7 @@ export function Editor() {
 
   const canUseCamera = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
-  const catalogContent = infra ? (
-    <>
-      <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{PROJECT_TYPE_LABELS[projectType]}</p>
-      <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-4 text-sm text-slate-400">
-        <p className="font-semibold text-slate-200">Parametric design mode</p>
-        <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          Infrastructure projects use engineering parameters instead of a furniture catalogue.
-          Open the <span className="text-emerald-300">Spec tab</span> in the right panel to size the {PROJECT_TYPE_LABELS[projectType].toLowerCase()}.
-        </p>
-      </div>
-    </>
-  ) : (
+  const catalogContent = (
     <>
       <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Furniture library</p>
       {CATEGORIES.map((cat) => (
@@ -270,8 +369,8 @@ export function Editor() {
     <>
       <div className="mb-3 flex gap-1 rounded-xl bg-slate-950 p-1">
         {(
-          infra
-            ? [["infra", "Spec"], ["room", "Site"]] as const
+          studio
+            ? [["model", "Model"], ["globals", "Globals"]] as const
             : [["items", "Place"], ["room", "Room"], ["curtains", "Curtains"]] as const
         ).map(([key, label]) => (
           <button
@@ -283,29 +382,6 @@ export function Editor() {
           </button>
         ))}
       </div>
-
-      {panelTab === "infra" && (
-        <div className="flex-1 space-y-4 overflow-y-auto">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{PROJECT_TYPE_LABELS[projectType]}</p>
-            <p className="mt-1 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
-              {infraSummary(projectType, design.infra || {})}
-            </p>
-          </div>
-          {infraParamDefs(projectType).map((def) => (
-            <SliderField
-              key={def.id}
-              label={def.label}
-              value={design.infra?.[def.id] ?? def.default}
-              display={`${design.infra?.[def.id] ?? def.default}${def.unit}`}
-              min={def.min}
-              max={def.max}
-              step={def.step}
-              onChange={(v) => changeInfra(def.id, v)}
-            />
-          ))}
-        </div>
-      )}
 
       {panelTab === "items" && (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -394,6 +470,138 @@ export function Editor() {
           )}
         </div>
       )}
+
+      {panelTab === "model" && (
+        <div className="flex min-h-0 flex-1 flex-col gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{PROJECT_TYPE_LABELS[projectType]}</p>
+            <p className="mt-1 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
+              {mod?.summary(design) || HELPER_LABELS[projectType]}
+            </p>
+          </div>
+          {mod && mod.palette.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Add element</p>
+              <div className="flex flex-wrap gap-1.5">
+                {mod.palette.map((def) => (
+                  <button
+                    key={def.kind}
+                    onClick={() => addElement(def.kind)}
+                    className="rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-emerald-500 hover:text-emerald-300"
+                  >
+                    + {def.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {selectedEl && selectedElDef ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-slate-100">{selectedElDef.label}</p>
+                    <p className="text-xs text-slate-500">Tag {selectedEl.code}</p>
+                  </div>
+                  <Badge tone="cyan">{selectedElDef.cat}</Badge>
+                </div>
+                {selectedElDef.params.map((def) => (
+                  <SliderField
+                    key={def.id}
+                    label={def.label}
+                    value={selectedEl.params[def.id] ?? def.default}
+                    display={`${selectedEl.params[def.id] ?? def.default}${def.unit}`}
+                    min={def.min}
+                    max={def.max}
+                    step={def.step}
+                    onChange={(v) => updateElement(selectedEl.id, { [def.id]: v })}
+                  />
+                ))}
+                <Button variant="danger" size="sm" className="w-full" onClick={() => removeElement(selectedEl.id)}>Delete element</Button>
+              </div>
+            ) : elements.length === 0 ? (
+              <div className="py-8 text-center text-sm text-slate-500">
+                <p>{mod && mod.palette.length > 0 ? "Add an element from above to begin." : "This module is driven by parameters below."}</p>
+                <p className="mt-1 text-xs text-slate-600">{HELPER_LABELS[projectType]}</p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {elements.map((el) => {
+                  const def = mod?.defs.get(el.kind);
+                  return (
+                    <button
+                      key={el.id}
+                      onClick={() => setSelectedId(el.id)}
+                      className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition", selectedId === el.id ? "bg-emerald-500/10 text-emerald-300" : "text-slate-300 hover:bg-slate-800")}
+                    >
+                      <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">{el.code}</span>
+                      <span className="truncate">{def?.label ?? el.kind}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {panelTab === "globals" && mod && (
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+          {mod.globals.map((def) => (
+            <SliderField
+              key={def.id}
+              label={def.label}
+              value={def.id === "timelineDay" ? design.timelineDay ?? def.default : design.settings?.[def.id] ?? def.default}
+              display={`${def.id === "timelineDay" ? design.timelineDay ?? def.default : design.settings?.[def.id] ?? def.default}${def.unit}`}
+              min={def.min}
+              max={def.max}
+              step={def.step}
+              onChange={(v) =>
+                def.id === "timelineDay"
+                  ? changeDesign({ ...design, timelineDay: v, settings: { ...(design.settings ?? {}), timelineDay: v } })
+                  : changeGlobal(def.id, v)
+              }
+            />
+          ))}
+          {projectType === "coordination" && (
+            <div className="space-y-3 border-t border-slate-800 pt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Merged models</p>
+              <div className="flex gap-2">
+                <Select label="" value={mergePick} onChange={(e) => setMergePick(e.target.value)}>
+                  <option value="">Select a project…</option>
+                  {(otherProjects ?? []).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} ({PROJECT_TYPE_LABELS[p.projectType]})</option>
+                  ))}
+                </Select>
+                <Button size="sm" disabled={!mergePick} onClick={() => addMerge(mergePick)}>Add</Button>
+              </div>
+              {mergeList.length === 0 ? (
+                <p className="text-xs text-slate-500">Add other projects to federate them into this model for clash detection and 4D sequencing.</p>
+              ) : (
+                <div className="space-y-3">
+                  {mergeList.map((m) => (
+                    <div key={m.projectId} className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <input type="color" value={m.color} onChange={(e) => updateMerge(m.projectId, { color: e.target.value })} className="h-7 w-9 cursor-pointer rounded border border-slate-700 bg-transparent" />
+                          <span className="truncate text-sm text-slate-200">{m.label}</span>
+                        </div>
+                        <button onClick={() => removeMerge(m.projectId)} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-rose-300" aria-label="Remove model">
+                          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M6 18L18 6" strokeLinecap="round" /></svg>
+                        </button>
+                      </div>
+                      <SliderField label="Opacity" value={Math.round(m.opacity * 100)} display={`${Math.round(m.opacity * 100)}%`} min={20} max={100} step={5} onChange={(v) => updateMerge(m.projectId, { opacity: v / 100 })} />
+                      <SliderField label="Start day" value={m.startDay} display={`${m.startDay} d`} min={0} max={360} step={5} onChange={(v) => updateMerge(m.projectId, { startDay: v })} />
+                      <SliderField label="Duration" value={m.durationDays} display={`${m.durationDays} d`} min={5} max={360} step={5} onChange={(v) => updateMerge(m.projectId, { durationDays: v })} />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">{coordinationSummary(mergedModels)}</p>
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 
@@ -410,7 +618,7 @@ export function Editor() {
             aria-label="Project name"
           />
           <p className="mt-0.5 text-xs text-slate-500">
-            {design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} item(s)
+            {design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {studio ? `${elements.length} element(s)` : `${design.furniture.length} item(s)`}
             {saving ? " · saving…" : lastSaved ? " · saved" : ""}
           </p>
         </div>
@@ -449,9 +657,11 @@ export function Editor() {
 
       <div className="flex min-h-0 flex-1 gap-3">
         {/* Catalog sidebar */}
-        <aside className="hidden w-60 shrink-0 flex-col overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900/60 p-3 lg:flex">
-          {catalogContent}
-        </aside>
+        {!studio && (
+          <aside className="hidden w-60 shrink-0 flex-col overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900/60 p-3 lg:flex">
+            {catalogContent}
+          </aside>
+        )}
 
         {/* 3D canvas */}
         <div
@@ -469,7 +679,8 @@ export function Editor() {
               onChange={changeDesign}
               onSelect={setSelectedId}
               onApiReady={setApi}
-              projectType={projectType}
+              projectType={model}
+              mergedModels={mergedModels}
             />
           )}
           {!photoUrl && !uploading && (
@@ -508,20 +719,20 @@ export function Editor() {
       {/* Mobile bottom bar (visible on small screens) */}
       <div className="flex lg:hidden shrink-0 border-t border-slate-800 bg-slate-950">
         {(
-          infra
-            ? [["infra", "Spec"], ["room", "Site"]] as const
+          studio
+            ? ([["model", "Model"], ["globals", "Globals"]] as const)
             : ([["catalog", "Library"], ["items", "Place"], ["room", "Room"], ["curtains", "Curtains"]] as const)
         ).map(([p, label]) => (
           <button
             key={p}
             onClick={() => {
-              if (p !== "catalog") setPanelTab(p as "items" | "infra" | "room" | "curtains");
-              const m: "catalog" | "items" | "room" | "curtains" | null = infra && p === "infra" ? "items" : (p as "catalog" | "items" | "room" | "curtains");
+              if (p !== "catalog") setPanelTab(p as "items" | "room" | "curtains" | "model" | "globals");
+              const m = p as "catalog" | "items" | "room" | "curtains" | "model" | "globals";
               setMobilePanel(mobilePanel === m ? null : m);
             }}
             className={cn(
               "flex-1 py-3 text-[11px] font-semibold capitalize border-t border-transparent transition",
-              (infra && p === "infra" ? mobilePanel === "items" : mobilePanel === p)
+              mobilePanel === p
                 ? "text-emerald-400 border-t-emerald-500/60 bg-slate-900/80"
                 : "text-slate-500",
             )}
@@ -536,9 +747,11 @@ export function Editor() {
         <div className="absolute inset-0 z-40 flex flex-col bg-slate-950/98 backdrop-blur-sm lg:hidden">
           <div className="flex shrink-0 items-center justify-between border-b border-slate-800 px-4 py-3">
             <p className="text-sm font-semibold text-slate-100">
-              {mobilePanel === "catalog" ? (infra ? "Infrastructure" : "Furniture library")
-                : mobilePanel === "items" ? (infra ? "Specification" : "Place & edit items")
-                : mobilePanel === "room" ? (infra ? "Site settings" : "Room settings")
+              {mobilePanel === "catalog" ? (studio ? "Element library" : "Furniture library")
+                : mobilePanel === "items" ? "Place & edit items"
+                : mobilePanel === "room" ? "Room settings"
+                : mobilePanel === "model" ? "Elements"
+                : mobilePanel === "globals" ? "Globals & coordination"
                 : "Curtains"}
             </p>
             <button onClick={() => setMobilePanel(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100">

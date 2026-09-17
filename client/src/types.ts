@@ -7,6 +7,10 @@ export const PROJECT_TYPES = [
   "ports",
   "dams",
   "spillways",
+  "bim",
+  "steel",
+  "civil",
+  "coordination",
 ] as const;
 
 export type ProjectType = (typeof PROJECT_TYPES)[number];
@@ -20,6 +24,10 @@ export const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
   ports: "Ports",
   dams: "Dams",
   spillways: "Spillways",
+  bim: "BIM Studio",
+  steel: "Steel Detailing",
+  civil: "Civil Suite",
+  coordination: "Model Coordination",
 };
 
 export interface User {
@@ -142,12 +150,31 @@ export interface CurtainConfig {
   widthPercentPerPanel: number;
 }
 
+export interface BimElementData {
+  id: string;
+  kind: string;
+  code: string;
+  params: Record<string, number>;
+}
+
+export interface MergeProject {
+  projectId: string;
+  label: string;
+  color: string;
+  opacity: number;
+  startDay: number;
+  durationDays: number;
+}
+
 export interface Design {
   version: 1;
   room: RoomConfig;
   furniture: FurnitureItem[];
   curtains: CurtainConfig | null;
-  infra?: Record<string, number>;
+  elements?: BimElementData[];
+  merge?: MergeProject[];
+  timelineDay?: number;
+  settings?: Record<string, number>;
 }
 
 export function defaultDesign(): Design {
