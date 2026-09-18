@@ -689,18 +689,28 @@ function RoomNum({
   min: number;
   onChange: (v: number) => void;
 }) {
+  const [draft, setDraft] = useState(() => (Number.isFinite(value) ? String(value) : ""));
+
+  useEffect(() => {
+    if (Number.isFinite(value) && draft !== "") setDraft(String(value));
+  }, [value]);
+
   return (
     <div className="space-y-1.5">
       <div className="flex justify-between">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-        <p className="text-xs text-slate-400">{value.toLocaleString()}{unit}</p>
+        <p className="text-xs text-slate-400">{draft ? `${Number(draft).toLocaleString()}${unit}` : "Enter a value"}</p>
       </div>
       <input
         type="number"
         min={min}
         step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        value={draft}
+        onChange={(e) => {
+          const raw = e.target.value;
+          setDraft(raw);
+          if (raw !== "") onChange(Number(raw));
+        }}
         className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500"
       />
     </div>

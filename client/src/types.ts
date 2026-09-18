@@ -137,6 +137,7 @@ export interface FurnitureItem {
   color: string;
   mount?: FurnitureMount;
   mountWall?: RoomWall;
+  mountHeightM?: number;
 }
 
 export type FurnitureMount = "unassigned" | "floor" | "wall" | "ceiling";

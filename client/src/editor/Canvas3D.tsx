@@ -145,6 +145,7 @@ export function Canvas3D({
     plane: THREE.Plane;
     offset: THREE.Vector3;
     moved: boolean;
+    mounted: boolean;
   } | null>(null);
 
   const designRef = useRef(design);
@@ -270,13 +271,24 @@ export function Canvas3D({
         onSelectRef.current(null);
         return;
       }
+      const item = designRef.current.furniture.find((f) => f.id === itemId);
+      const mount = item?.mount ?? furnitureMount(item?.type ?? "");
+      const wall = item?.mountWall ?? "north";
+      const halfW = designRef.current.room.widthMm * MM / 2;
+      const halfD = designRef.current.room.depthMm * MM / 2;
+      const plane = mount === "wall"
+        ? wall === "north" || wall === "south"
+          ? new THREE.Plane(new THREE.Vector3(0, 0, 1), -(wall === "north" ? halfD - 0.16 : -halfD + 0.16))
+          : new THREE.Plane(new THREE.Vector3(1, 0, 0), -(wall === "east" ? halfW - 0.16 : -halfW + 0.16))
+        : dragPlane;
       controls.enabled = false;
       const nearest = hits.find((h) => h.object.userData.itemId === itemId) ?? hits[0];
       dragState.current = {
         id: itemId,
-        plane: dragPlane,
+        plane,
         offset: new THREE.Vector3(0, 0, 0),
         moved: false,
+        mounted: mount === "wall",
       };
       if (nearest.point) {
         const planeHit = new THREE.Vector3().copy(nearest.point);
@@ -306,10 +318,11 @@ export function Canvas3D({
       const halfD = room.depthMm / 2 - 250;
       const itemX = Math.max(-halfW, Math.min(halfW, Math.round(pos.x / MM)));
       const itemZ = Math.max(-halfD, Math.min(halfD, Math.round(pos.z / MM)));
-      group.group.position.x = itemX * MM;
-      group.group.position.z = itemZ * MM;
-      state.moved = true;
-      updateDesignItem(state.id, { x: itemX, z: itemZ });
+       group.group.position.x = itemX * MM;
+       group.group.position.z = itemZ * MM;
+       if (state.mounted) group.group.position.y = Math.max(0.3, Math.min(room.wallHeightMm * MM - 0.3, pos.y));
+       state.moved = true;
+       updateDesignItem(state.id, { x: itemX, z: itemZ, ...(state.mounted ? { mountHeightM: group.group.position.y } : {}) });
       if (selectionRingRef.current) {
         selectionRingRef.current.position.copy(group.group.position);
       }
@@ -485,9 +498,9 @@ export function Canvas3D({
         const halfW = room.widthMm * MM / 2;
         const halfD = room.depthMm * MM / 2;
         if (mount === "ceiling") {
-          group.position.set(item.x * MM, Math.max(room.wallHeightMm * MM - itemHeight, 0.2), item.z * MM);
+          group.position.set(item.x * MM, item.mountHeightM ?? Math.max(room.wallHeightMm * MM - itemHeight, 0.2), item.z * MM);
         } else if (mount === "wall") {
-          const y = Math.max(room.wallHeightMm * MM - itemHeight - 0.25, 0.3);
+          const y = item.mountHeightM ?? Math.max(room.wallHeightMm * MM - itemHeight - 0.25, 0.3);
           if (wall === "north") group.position.set(item.x * MM, y, halfD - 0.16);
           if (wall === "south") group.position.set(item.x * MM, y, -halfD + 0.16);
           if (wall === "east") group.position.set(halfW - 0.16, y, item.z * MM);
@@ -543,9 +556,9 @@ function groupSync(group: THREE.Group, item: FurnitureItem, sig: string, room: D
   const halfW = room.widthMm * MM / 2;
   const halfD = room.depthMm * MM / 2;
   if (mount === "ceiling") {
-    group.position.set(item.x * MM, Math.max(room.wallHeightMm * MM - itemHeight, 0.2), item.z * MM);
+    group.position.set(item.x * MM, item.mountHeightM ?? Math.max(room.wallHeightMm * MM - itemHeight, 0.2), item.z * MM);
   } else if (mount === "wall") {
-    const y = Math.max(room.wallHeightMm * MM - itemHeight - 0.25, 0.3);
+    const y = item.mountHeightM ?? Math.max(room.wallHeightMm * MM - itemHeight - 0.25, 0.3);
     if (wall === "north") group.position.set(item.x * MM, y, halfD - 0.16);
     if (wall === "south") group.position.set(item.x * MM, y, -halfD + 0.16);
     if (wall === "east") group.position.set(halfW - 0.16, y, item.z * MM);

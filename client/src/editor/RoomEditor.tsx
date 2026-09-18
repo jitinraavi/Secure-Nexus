@@ -238,9 +238,9 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
         const itemHeight = (catalogEntry(item.type)?.h ?? 0) * 0.001 * item.scale;
         const wall = item.mountWall ?? "north";
         if (mount === "ceiling") {
-          node.position.set(item.x, Math.max(WALL_H - itemHeight, 0.2), item.z);
+          node.position.set(item.x, item.mountHeightM ?? Math.max(WALL_H - itemHeight, 0.2), item.z);
         } else if (mount === "wall") {
-          node.position.y = Math.max(WALL_H - itemHeight - 0.25, 0.3);
+          node.position.y = item.mountHeightM ?? Math.max(WALL_H - itemHeight - 0.25, 0.3);
           if (wall === "north") node.position.set(item.x, node.position.y, halfD - 0.16);
           if (wall === "south") node.position.set(item.x, node.position.y, -halfD + 0.16);
           if (wall === "east") {
@@ -289,7 +289,6 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
     const raycaster = new THREE.Raycaster();
     const ndc = new THREE.Vector2();
     const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    const hitPoint = new THREE.Vector3();
 
     const setNdc = (clientX: number, clientY: number) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -311,12 +310,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
       return null;
     };
 
-    const groundAt = (clientX: number, clientY: number) => {
-      setNdc(clientX, clientY);
-      return raycaster.ray.intersectPlane(groundPlane, hitPoint) ? hitPoint.clone() : null;
-    };
-
-    let drag: { id: string; node: THREE.Object3D; startX: number; startZ: number; grabX: number; grabZ: number; moved: boolean } | null = null;
+    let drag: { id: string; node: THREE.Object3D; plane: THREE.Plane; offset: THREE.Vector3; moved: boolean; mounted: boolean } | null = null;
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
@@ -324,31 +318,54 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
       setSelectedId(id);
       if (!id) return;
       const node = group.children.find((c) => c.userData?.selectId === id) ?? null;
-      const ground = groundAt(e.clientX, e.clientY);
-      if (!node || !ground) return;
-      drag = { id, node, startX: node.position.x, startZ: node.position.z, grabX: ground.x, grabZ: ground.z, moved: false };
+      const item = (roomRef.current.furniture ?? []).find((f) => f.id === id);
+      if (!node || !item) return;
+      const mounted = (item.mount ?? furnitureMount(item.type)) === "wall";
+      const wall = item.mountWall ?? "north";
+      const r = roomRef.current;
+      const halfW = r.w / 2;
+      const halfD = r.d / 2;
+      const plane = mounted
+        ? wall === "north" || wall === "south"
+          ? new THREE.Plane(new THREE.Vector3(0, 0, 1), -(wall === "north" ? halfD - 0.16 : -halfD + 0.16))
+          : new THREE.Plane(new THREE.Vector3(1, 0, 0), -(wall === "east" ? halfW - 0.16 : -halfW + 0.16))
+        : groundPlane;
+      setNdc(e.clientX, e.clientY);
+      const hit = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+      if (!hit) return;
+      drag = { id, node, plane, offset: new THREE.Vector3().subVectors(node.position, hit), moved: false, mounted };
       controls.enabled = false;
       renderer.domElement.setPointerCapture?.(e.pointerId);
     };
 
     const onPointerMove = (e: PointerEvent) => {
       if (!drag) return;
-      const ground = groundAt(e.clientX, e.clientY);
-      if (!ground) return;
+      setNdc(e.clientX, e.clientY);
+      const hit = raycaster.ray.intersectPlane(drag.plane, new THREE.Vector3());
+      if (!hit) return;
+      const point = hit.add(drag.offset);
       const r = roomRef.current;
-      const dim = furnitureDimMm((r.furniture ?? []).find((f) => f.id === drag!.id)?.type ?? "");
+      const item = (r.furniture ?? []).find((f) => f.id === drag!.id);
+      const dim = furnitureDimMm(item?.type ?? "");
       const halfW = Math.max(r.w / 2 - dim.w / 2000, 0);
       const halfD = Math.max(r.d / 2 - dim.d / 2000, 0);
-      const nx = Math.max(-halfW, Math.min(halfW, drag.startX + (ground.x - drag.grabX)));
-      const nz = Math.max(-halfD, Math.min(halfD, drag.startZ + (ground.z - drag.grabZ)));
-      drag.node.position.x = nx;
-      drag.node.position.z = nz;
-      if (Math.abs(nx - drag.startX) > 0.005 || Math.abs(nz - drag.startZ) > 0.005) drag.moved = true;
+      if (drag.mounted) {
+        drag.node.position.x = Math.max(-halfW, Math.min(halfW, point.x));
+        drag.node.position.y = Math.max(0.3, Math.min(WALL_H - 0.3, point.y));
+        drag.node.position.z = Math.max(-halfD, Math.min(halfD, point.z));
+        drag.moved = true;
+      } else {
+        const nx = Math.max(-halfW, Math.min(halfW, point.x));
+        const nz = Math.max(-halfD, Math.min(halfD, point.z));
+        drag.node.position.x = nx;
+        drag.node.position.z = nz;
+        drag.moved = true;
+      }
     };
 
     const onPointerUp = () => {
       if (!drag) return;
-      const { id, node, moved } = drag;
+      const { id, node, moved, mounted } = drag;
       drag = null;
       controls.enabled = true;
       if (!moved) return;
@@ -356,7 +373,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
       handlersRef.current.onChange({
         ...current,
         furniture: (current.furniture ?? []).map((f) =>
-          f.id === id ? { ...f, x: Math.round(node.position.x * 100) / 100, z: Math.round(node.position.z * 100) / 100 } : f,
+          f.id === id ? { ...f, x: Math.round(node.position.x * 100) / 100, z: Math.round(node.position.z * 100) / 100, ...(mounted ? { mountHeightM: Math.round(node.position.y * 100) / 100 } : {}) } : f,
         ),
       });
     };
