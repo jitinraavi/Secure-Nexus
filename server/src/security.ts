@@ -158,9 +158,17 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
     next();
     return;
   }
-  // Anonymous auth endpoints create a session from nothing - no token can
-  // exist yet. Protected by SameSite=Lax on the session cookie instead.
-  if (req.path === "/auth/signup" || req.path === "/auth/login") {
+  // Anonymous auth endpoints create or upgrade a session from nothing. No
+  // session CSRF token can be trusted yet; same-origin/SameSite cookies and
+  // the API rate limiter protect these short-lived authentication requests.
+  if (
+    req.path === "/auth/signup" ||
+    req.path === "/auth/login" ||
+    req.path === "/auth/verify-email" ||
+    req.path === "/auth/resend-otp" ||
+    req.path === "/auth/otp/request" ||
+    req.path === "/auth/otp/verify"
+  ) {
     next();
     return;
   }
