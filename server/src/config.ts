@@ -45,6 +45,13 @@ function loadOrCreateMasterKey(): Buffer {
 
 export const MASTER_KEY = loadOrCreateMasterKey();
 
+function readOptionalMasterKey(value: string | undefined): Buffer | null {
+  return value && /^[A-Za-z0-9+/]{40,}={0,2}$/.test(value) ? Buffer.from(value, "base64") : null;
+}
+
+/* Optional one-release key rotation support for decrypting older projects. */
+export const PREVIOUS_MASTER_KEY = readOptionalMasterKey(process.env.PREVIOUS_MASTER_KEY);
+
 export const COOKIE_SESSION = "sid";
 export const COOKIE_CSRF = "csrf";
 

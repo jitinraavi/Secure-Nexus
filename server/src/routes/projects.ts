@@ -2,13 +2,14 @@ import { Router, type Request } from "express";
 import multer from "multer";
 import { logAudit } from "../audit.js";
 import { deriveVaultKey, decryptAesGcm, encryptAesGcm, randomId } from "../crypto.js";
-import { MASTER_KEY } from "../config.js";
+import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
 import { db, now } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { z } from "zod";
 
 const router = Router();
 const VAULT_KEY = deriveVaultKey(MASTER_KEY);
+const PREVIOUS_VAULT_KEY = PREVIOUS_MASTER_KEY ? deriveVaultKey(PREVIOUS_MASTER_KEY) : null;
 const PROJECT_AAD = "groundwork:project";
 const FILE_AAD = "groundwork:file";
 
@@ -42,7 +43,12 @@ function decryptForUser(payloadJson: string, userId: string): string {
   };
   /* Projects created before encrypted design storage may contain plain JSON. */
   if (!payload.iv || !payload.tag || !payload.data) return payloadJson;
-  return decryptAesGcm(payload, VAULT_KEY, `${PROJECT_AAD}:${userId}`);
+  try {
+    return decryptAesGcm(payload, VAULT_KEY, `${PROJECT_AAD}:${userId}`);
+  } catch (currentError) {
+    if (!PREVIOUS_VAULT_KEY) throw currentError;
+    return decryptAesGcm(payload, PREVIOUS_VAULT_KEY, `${PROJECT_AAD}:${userId}`);
+  }
 }
 
 function sniffMime(buf: Buffer): string | null {
