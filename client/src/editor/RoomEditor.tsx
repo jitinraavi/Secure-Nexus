@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { DoorFacing, FurnitureItem, InteriorRoom } from "../types";
+import type { DoorFacing, FurnitureItem, InteriorRoom, RoomOpening } from "../types";
 import { Button, Input, Modal } from "../components/ui";
 import { buildFurniture, catalogEntry } from "../lib/catalog";
 import { cn } from "../lib/cn";
@@ -65,6 +65,22 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
     onChange({ ...room, furniture: [...(room.furniture ?? []), copy] });
     setSelectedId(copy.id);
   };
+
+  const addOpening = (kind: RoomOpening["kind"]) => {
+    const opening: RoomOpening = {
+      id: uid("op"),
+      kind,
+      wall: room.doorFacing,
+      offsetM: 0,
+      widthM: kind === "door" ? 1 : 1.5,
+      heightM: kind === "door" ? 2.1 : 1.3,
+      sillM: kind === "door" ? 0 : 0.9,
+    };
+    onChange({ ...room, openings: [...(room.openings ?? []), opening] });
+  };
+
+  const patchOpening = (id: string, patch: Partial<RoomOpening>) =>
+    onChange({ ...room, openings: (room.openings ?? []).map((o) => (o.id === id ? { ...o, ...patch } : o)) });
 
   const addFromText = (text: string): boolean => {
     const parsed = parseObjectQuery(text);
@@ -169,23 +185,50 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
         group.add(wall);
       });
 
-      // Door opening marker on the chosen face
-      const marker = new THREE.Mesh(
-        new THREE.BoxGeometry(door, WALL_H * 0.85, 0.05),
-        new THREE.MeshStandardMaterial({ color: "#7c4a2d", roughness: 0.7 }),
-      );
-      const facing = r.doorFacing;
-      if (facing === "north") marker.position.set(0, WALL_H * 0.425, halfD - 0.08);
-      if (facing === "south") marker.position.set(0, WALL_H * 0.425, -halfD + 0.08);
-      if (facing === "east") {
-        marker.position.set(halfW - 0.08, WALL_H * 0.425, 0);
-        marker.rotation.y = Math.PI / 2;
-      }
-      if (facing === "west") {
-        marker.position.set(-halfW + 0.08, WALL_H * 0.425, 0);
-        marker.rotation.y = Math.PI / 2;
-      }
-      group.add(marker);
+       const openings = r.openings ?? [];
+       if (!openings.some((o) => o.kind === "door")) {
+         const marker = new THREE.Mesh(
+           new THREE.BoxGeometry(door, WALL_H * 0.85, 0.05),
+           new THREE.MeshStandardMaterial({ color: "#7c4a2d", roughness: 0.7 }),
+         );
+         const facing = r.doorFacing;
+         if (facing === "north") marker.position.set(0, WALL_H * 0.425, halfD - 0.08);
+         if (facing === "south") marker.position.set(0, WALL_H * 0.425, -halfD + 0.08);
+         if (facing === "east") {
+           marker.position.set(halfW - 0.08, WALL_H * 0.425, 0);
+           marker.rotation.y = Math.PI / 2;
+         }
+         if (facing === "west") {
+           marker.position.set(-halfW + 0.08, WALL_H * 0.425, 0);
+           marker.rotation.y = Math.PI / 2;
+         }
+         group.add(marker);
+       }
+       for (const opening of openings) {
+         const openingMesh = new THREE.Mesh(
+           new THREE.BoxGeometry(opening.widthM, opening.heightM, 0.06),
+           new THREE.MeshStandardMaterial({
+             color: opening.kind === "door" ? "#7c4a2d" : "#5aa7c7",
+             roughness: opening.kind === "door" ? 0.7 : 0.2,
+             metalness: opening.kind === "window" ? 0.15 : 0,
+             transparent: opening.kind === "window",
+             opacity: opening.kind === "window" ? 0.72 : 1,
+           }),
+         );
+         const y = (opening.kind === "door" ? 0 : opening.sillM) + opening.heightM / 2;
+         if (opening.wall === "north") openingMesh.position.set(opening.offsetM, y, halfD - 0.08);
+         if (opening.wall === "south") openingMesh.position.set(opening.offsetM, y, -halfD + 0.08);
+         if (opening.wall === "east") {
+           openingMesh.position.set(halfW - 0.08, y, opening.offsetM);
+           openingMesh.rotation.y = Math.PI / 2;
+         }
+         if (opening.wall === "west") {
+           openingMesh.position.set(-halfW + 0.08, y, opening.offsetM);
+           openingMesh.rotation.y = Math.PI / 2;
+         }
+         openingMesh.userData.noSelect = true;
+         group.add(openingMesh);
+       }
 
       for (const item of r.furniture ?? []) {
         const node = buildFurniture(item);
@@ -347,7 +390,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
         <div className="relative min-h-[340px] flex-1 overflow-hidden rounded-xl border border-slate-800 bg-[#0b1220]">
           <div ref={containerRef} className="h-full w-full" style={{ touchAction: "none" }} data-scene="room" />
           <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-slate-950/80 px-2.5 py-1.5 text-[11px] text-slate-300 backdrop-blur">
-            {room.w} × {room.d} m · door {DOOR_FACING_LABELS[room.doorFacing]} · drag furniture · right-click for actions
+             {room.w} × {room.d} m · door {DOOR_FACING_LABELS[room.doorFacing]} · drag furniture · right-click for actions
           </div>
         </div>
 
@@ -421,6 +464,33 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
               Click a piece to select it, or drag it across the floor.
             </p>
           )}
+
+          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Walls & openings</p>
+              <div className="flex gap-1">
+                <Button size="sm" variant="secondary" onClick={() => addOpening("window")}>+ Window</Button>
+                <Button size="sm" variant="secondary" onClick={() => addOpening("door")}>+ Door</Button>
+              </div>
+            </div>
+            {(room.openings ?? []).map((opening, index) => (
+              <div key={opening.id} className="rounded-lg border border-slate-800 p-2">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[11px] text-slate-400">Opening {index + 1}</span>
+                  <button onClick={() => onChange({ ...room, openings: room.openings?.filter((o) => o.id !== opening.id) })} className="text-[11px] font-semibold text-rose-400">Remove</button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <select value={opening.kind} onChange={(e) => patchOpening(opening.id, { kind: e.target.value as RoomOpening["kind"] })} className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-200"><option value="window">Window</option><option value="door">Door</option></select>
+                  <select value={opening.wall} onChange={(e) => patchOpening(opening.id, { wall: e.target.value as RoomOpening["wall"] })} className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-200"><option value="north">North wall</option><option value="east">East wall</option><option value="south">South wall</option><option value="west">West wall</option></select>
+                  <Input label="Offset" type="number" value={opening.offsetM} step={0.1} onChange={(e) => patchOpening(opening.id, { offsetM: Number(e.target.value) || 0 })} />
+                  <Input label="Width" type="number" min={0.3} step={0.1} value={opening.widthM} onChange={(e) => patchOpening(opening.id, { widthM: Math.max(Number(e.target.value) || 0.3, 0.3) })} />
+                  <Input label="Height" type="number" min={0.3} step={0.1} value={opening.heightM} onChange={(e) => patchOpening(opening.id, { heightM: Math.max(Number(e.target.value) || 0.3, 0.3) })} />
+                  {opening.kind === "window" && <Input label="Sill" type="number" min={0} step={0.1} value={opening.sillM} onChange={(e) => patchOpening(opening.id, { sillM: Math.max(Number(e.target.value) || 0, 0) })} />}
+                </div>
+              </div>
+            ))}
+            {(room.openings ?? []).length === 0 && <p className="text-xs text-slate-600">Add windows or doors to place them on the walls.</p>}
+          </div>
 
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
             {(room.furniture ?? []).map((f) => (

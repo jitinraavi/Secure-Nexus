@@ -137,6 +137,19 @@ export interface FurnitureItem {
   color: string;
 }
 
+export type RoomOpeningKind = "window" | "door";
+export type RoomWall = "north" | "east" | "south" | "west";
+
+export interface RoomOpening {
+  id: string;
+  kind: RoomOpeningKind;
+  wall: RoomWall;
+  offsetM: number;
+  widthM: number;
+  heightM: number;
+  sillM: number;
+}
+
 export interface CurtainConfig {
   enabled: boolean;
   style: "sheer" | "blackout" | "roman" | "panel";
@@ -256,6 +269,7 @@ export interface InteriorRoom {
   d: number;
   doorFacing: DoorFacing;
   furniture?: FurnitureItem[];
+  openings?: RoomOpening[];
 }
 
 export interface SiteLocation {

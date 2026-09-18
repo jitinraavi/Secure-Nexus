@@ -49,6 +49,13 @@ function mesh(
 
 const box = (w: number, d: number, h: number) => new THREE.BoxGeometry(w, h, d);
 
+function fixtureBox(color: string, w: number, d: number, h: number, accent = "#d7dce0"): THREE.Group {
+  return groupOf([
+    { mesh: mesh(box(w, d, h), mat(color, { roughness: 0.7 }), 0, h / 2, 0) },
+    { mesh: mesh(box(w * 0.82, 20, h * 0.55), mat(accent, { roughness: 0.3, metalness: 0.15 }), 0, h * 0.52, d / 2 + 12), noTint: true },
+  ]);
+}
+
 export const CATALOG: CatalogEntry[] = [
   {
     id: "sofa",
@@ -342,6 +349,110 @@ export const CATALOG: CatalogEntry[] = [
       ];
       return groupOf(parts);
     },
+  },
+  {
+    id: "refrigerator",
+    name: "Refrigerator",
+    category: "Kitchen appliances",
+    w: 900, d: 750, h: 2000,
+    defaultColor: "#b8c2c9",
+    build: (color) => fixtureBox(color, 900, 750, 2000, "#e9eef1"),
+  },
+  {
+    id: "oven",
+    name: "Built-in Oven",
+    category: "Kitchen appliances",
+    w: 600, d: 650, h: 900,
+    defaultColor: "#4f5b66",
+    build: (color) => fixtureBox(color, 600, 650, 900, "#111820"),
+  },
+  {
+    id: "kitchen-sink",
+    name: "Kitchen Sink",
+    category: "Kitchen appliances",
+    w: 900, d: 600, h: 900,
+    defaultColor: "#a8a29a",
+    build: (color) => fixtureBox(color, 900, 600, 900, "#dce3e7"),
+  },
+  {
+    id: "microwave",
+    name: "Microwave",
+    category: "Kitchen appliances",
+    w: 600, d: 450, h: 400,
+    defaultColor: "#37474f",
+    build: (color) => fixtureBox(color, 600, 450, 400, "#101820"),
+  },
+  {
+    id: "cooktop",
+    name: "Cooktop",
+    category: "Kitchen appliances",
+    w: 900, d: 600, h: 100,
+    defaultColor: "#252a30",
+    build: (color) => fixtureBox(color, 900, 600, 100, "#111820"),
+  },
+  {
+    id: "toilet",
+    name: "Toilet",
+    category: "Bathroom",
+    w: 700, d: 1200, h: 800,
+    defaultColor: "#f1f3f4",
+    build: (color) => fixtureBox(color, 700, 1200, 800, "#ffffff"),
+  },
+  {
+    id: "vanity-sink",
+    name: "Vanity Sink",
+    category: "Bathroom",
+    w: 900, d: 500, h: 850,
+    defaultColor: "#a1887f",
+    build: (color) => fixtureBox(color, 900, 500, 850, "#f1f3f4"),
+  },
+  {
+    id: "bathtub",
+    name: "Bathtub",
+    category: "Bathroom",
+    w: 1700, d: 750, h: 600,
+    defaultColor: "#e7edf0",
+    build: (color) => fixtureBox(color, 1700, 750, 600, "#ffffff"),
+  },
+  {
+    id: "shower",
+    name: "Shower Enclosure",
+    category: "Bathroom",
+    w: 1000, d: 1000, h: 2200,
+    defaultColor: "#7fb6c9",
+    build: (color) => fixtureBox(color, 1000, 1000, 2200, "#c8f1ff"),
+  },
+  {
+    id: "air-conditioner",
+    name: "Air Conditioner",
+    category: "HVAC & electrical",
+    w: 1000, d: 250, h: 300,
+    defaultColor: "#e5e7e9",
+    build: (color) => fixtureBox(color, 1000, 250, 300, "#f8fafc"),
+  },
+  {
+    id: "ceiling-fan",
+    name: "Ceiling Fan",
+    category: "HVAC & electrical",
+    w: 1400, d: 1400, h: 350,
+    defaultColor: "#78909c",
+    build: (color) => fixtureBox(color, 1400, 1400, 350, "#d8e0e5"),
+  },
+  {
+    id: "wall-mirror",
+    name: "Wall Mirror",
+    category: "Bathroom",
+    w: 800, d: 80, h: 1200,
+    defaultColor: "#b7d5df",
+    build: (color) => fixtureBox(color, 800, 80, 1200, "#b7e3f2"),
+  },
+  {
+    id: "mirror-stand",
+    name: "Mirror Stand",
+    category: "Bedroom & decor",
+    w: 900, d: 450, h: 1800,
+    defaultColor: "#9c7b52",
+    build: (color) => fixtureBox(color, 900, 450, 1800, "#b7d5df"),
   },
 ];
 
