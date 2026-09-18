@@ -76,20 +76,30 @@ function Num({
   label: string; value: number; onChange: (v: number) => void;
   min?: number; max?: number; step?: number; unit?: string; disabled?: boolean;
 }) {
+  const [draft, setDraft] = useState(() => (Number.isFinite(value) ? String(value) : ""));
+
+  useEffect(() => {
+    setDraft(Number.isFinite(value) ? String(value) : "");
+  }, [value]);
+
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
         <label className="text-xs font-medium text-slate-300">{label}</label>
-        <span className="text-xs text-slate-500">{value}{unit}</span>
+        <span className="text-xs text-slate-500">{draft ? `${draft}${unit ?? ""}` : "Enter a value"}</span>
       </div>
       <input
         type="number"
         min={min}
         max={max}
         step={step}
-        value={Number.isFinite(value) ? value : 0}
+        value={draft}
         disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => {
+          const raw = e.target.value;
+          setDraft(raw);
+          if (raw !== "") onChange(Number(raw));
+        }}
         className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500 disabled:opacity-50"
       />
     </div>
