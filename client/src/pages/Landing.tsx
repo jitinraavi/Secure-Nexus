@@ -45,7 +45,7 @@ export function Landing() {
           <p className="gw-kicker">A spatial design workspace</p>
           <h1 className="mt-5 max-w-3xl text-5xl font-black leading-[0.98] tracking-[-0.045em] text-slate-50 sm:text-7xl">
             From first sketch to
-            <span className="block bg-gradient-to-r from-emerald-300 via-cyan-300 to-sky-400 bg-clip-text text-transparent">buildable intent.</span>
+            <span className="block bg-gradient-to-r from-[#f0cf83] via-[#d6a84a] to-[#a9782d] bg-clip-text text-transparent">buildable intent.</span>
           </h1>
           <p className="mt-6 max-w-xl text-base leading-7 text-slate-400 sm:text-lg">
             Groundwork turns mapped sites, rooms, communities and infrastructure into a calm, visual workspace for making real design decisions.

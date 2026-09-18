@@ -16,7 +16,7 @@ export function Button({
 }) {
   const variants: Record<string, string> = {
     primary:
-      "bg-emerald-400 text-slate-950 hover:bg-emerald-300 shadow-lg shadow-emerald-500/20 focus-visible:ring-emerald-400",
+      "bg-[#d6a84a] text-[#17130b] hover:bg-[#e5bd67] shadow-lg shadow-amber-500/20 focus-visible:ring-amber-300",
     secondary: "border border-slate-700/80 bg-slate-800/80 text-slate-100 hover:border-slate-600 hover:bg-slate-700 focus-visible:ring-slate-500",
     outline: "border border-slate-700 text-slate-200 hover:border-emerald-500/50 hover:bg-emerald-500/5 focus-visible:ring-slate-500",
     ghost: "text-slate-300 hover:bg-white/[0.05] hover:text-white focus-visible:ring-slate-500",
@@ -67,7 +67,7 @@ export function Input({
         {icon && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">{icon}</span>}
         <input
           className={cn(
-            "w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20",
+            "w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20",
             icon ? "pl-10" : undefined,
             error && "border-rose-500/70 focus:border-rose-500 focus:ring-rose-500/30",
             className,
@@ -91,7 +91,7 @@ export function Select({
       {label && <span className="text-sm font-medium text-slate-300">{label}</span>}
       <select
         className={cn(
-          "w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20",
+          "w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20",
           className,
         )}
         {...props}

@@ -14,11 +14,22 @@ body {
   background-image:
     linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px),
     linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px),
-    radial-gradient(1100px 620px at 12% -15%, rgba(16, 185, 129, 0.13), transparent 62%),
-    radial-gradient(900px 520px at 92% 2%, rgba(14, 165, 233, 0.11), transparent 58%);
+    radial-gradient(1100px 620px at 12% -15%, rgba(214, 168, 74, 0.13), transparent 62%),
+    radial-gradient(900px 520px at 92% 2%, rgba(180, 145, 75, 0.09), transparent 58%);
   background-size: 48px 48px, 48px 48px, auto, auto;
   background-attachment: fixed;
 }
+
+/* Brand accents: graphite, smoked charcoal and architectural gold. */
+.text-emerald-300, .text-emerald-400 { color: #e5bd67 !important; }
+.bg-emerald-400, .bg-emerald-500 { background-color: #d6a84a !important; }
+.border-emerald-500, .border-emerald-500\/30 { border-color: rgba(214, 168, 74, 0.52) !important; }
+.ring-emerald-400 { --tw-ring-color: rgba(214, 168, 74, 0.55) !important; }
+.shadow-emerald-500\/20 { --tw-shadow-color: rgba(214, 168, 74, 0.2) !important; }
+.accent-emerald-500 { accent-color: #d6a84a !important; }
+.text-cyan-300, .text-cyan-400 { color: #d2b875 !important; }
+.bg-cyan-500\/10 { background-color: rgba(210, 184, 117, 0.1) !important; }
+.border-cyan-500\/30 { border-color: rgba(210, 184, 117, 0.3) !important; }
 
 button, a, input, select { -webkit-tap-highlight-color: transparent; }
 button:active { transform: translateY(1px); }
