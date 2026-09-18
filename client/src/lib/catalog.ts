@@ -254,6 +254,9 @@ export const CATALOG: CatalogEntry[] = [
       const parts: { mesh: THREE.Mesh; noTint?: boolean }[] = [
         { mesh: mesh(box(500, 80, 480), seat, 0, 480, 0) },
         { mesh: mesh(box(480, 420, 110), seat, 0, 680, -220) },
+        { mesh: mesh(box(55, 360, 55), metal, -250, 650, 0) },
+        { mesh: mesh(box(55, 360, 55), metal, 250, 650, 0) },
+        { mesh: mesh(box(520, 55, 55), metal, 0, 820, 0) },
         { mesh: mesh(box(60, 60, 440), metal, 0, 180, 0) },
         { mesh: mesh(cylinder(40, 800), metal, 0, 130, 0), noTint: true },
       ];
