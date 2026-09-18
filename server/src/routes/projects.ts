@@ -40,6 +40,8 @@ function decryptForUser(payloadJson: string, userId: string): string {
     tag: string;
     data: string;
   };
+  /* Projects created before encrypted design storage may contain plain JSON. */
+  if (!payload.iv || !payload.tag || !payload.data) return payloadJson;
   return decryptAesGcm(payload, VAULT_KEY, `${PROJECT_AAD}:${userId}`);
 }
 
@@ -174,7 +176,16 @@ router.get("/:id", (req: AuthedRequest, res) => {
     res.status(404).json({ error: "Project not found" });
     return;
   }
-  const design = row.design_data ? JSON.parse(decryptForUser(row.design_data, req.user!.id)) : null;
+  let design: unknown = null;
+  if (row.design_data) {
+    try {
+      design = JSON.parse(decryptForUser(row.design_data, req.user!.id));
+    } catch (error) {
+      console.error(`[groundwork] Could not open project ${row.id}:`, error);
+      res.status(422).json({ error: "This project cannot be opened because its stored design data is unreadable. Contact support." });
+      return;
+    }
+  }
   res.json({
     id: row.id,
     name: row.name,
