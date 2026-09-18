@@ -32,9 +32,6 @@ function loadOrCreateMasterKey(): Buffer {
   if (envKey && /^[A-Za-z0-9+/]{40,}={0,2}$/.test(envKey)) {
     return Buffer.from(envKey, "base64");
   }
-  if (IS_PROD) {
-    throw new Error("MASTER_KEY must be configured in production; refusing to generate a new key that would make saved projects unreadable.");
-  }
   const key = crypto.randomBytes(32);
   const b64 = key.toString("base64");
   const lines = fs.existsSync(ENV_PATH) ? fs.readFileSync(ENV_PATH, "utf8").split("\n") : [];
