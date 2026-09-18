@@ -114,11 +114,12 @@ export function Dashboard() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-50">
-            Welcome back{user ? `, ${user.username ?? user.email.split("@")[0]}` : ""}
+          <p className="gw-kicker">Studio / workspace</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-50">
+            Welcome back<span className="text-emerald-300">.</span>{user ? ` ${user.username ?? user.email.split("@")[0]}` : ""}
           </h1>
-          <p className="mt-1 text-sm text-slate-400">
-            Your design workspace · {planBadge}
+          <p className="mt-2 text-sm text-slate-400">
+            Your active design work, in one place · {planBadge}
             {plans?.isDemo ? (
               <span className="ml-2 text-xs text-amber-300/80">Demo billing mode — no real charges</span>
             ) : null}
@@ -141,9 +142,9 @@ export function Dashboard() {
         <div className="flex h-24 items-center justify-center"><Spinner className="h-6 w-6 text-emerald-400" /></div>
       )}
 
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-100">Projects</h2>
+       <div className="space-y-5">
+         <div className="flex items-center justify-between">
+           <div><p className="gw-kicker">Recent work</p><h2 className="mt-1 text-xl font-bold text-slate-100">Projects</h2></div>
           {plans && plans.plans[0] && user?.plan === "free" ? (
             <Link to="/billing" className="text-sm font-semibold text-emerald-400 hover:text-emerald-300">
               Upgrade to {plans.plans[0].name} — {formatMoney(plans.plans[0].price, plans.plans[0].currency)}

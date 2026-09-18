@@ -40,34 +40,50 @@ export function Landing() {
         </nav>
       </header>
 
-      <section className="mx-auto max-w-6xl px-6 pt-16 text-center">
-        <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1 text-xs font-semibold text-emerald-300">
-          For interior designers & freelance architects
-        </span>
-        <h1 className="mx-auto mt-6 max-w-3xl text-4xl font-extrabold tracking-tight text-slate-50 sm:text-6xl">
-          Design your client's room,
-          <span className="bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
-            {" "}
-            ship it to AutoCAD.
-          </span>
-        </h1>
-        <p className="mx-auto mt-5 max-w-2xl text-lg text-slate-400">
-          Photograph a room, drop in furniture, pick the palette and curtains, then export a CAD-ready plan in
-          one click. Professionally secured — your designs and photos are encrypted.
-        </p>
-        <div className="mt-8 flex items-center justify-center gap-4">
-          <Link to="/signup">
-            <Button size="lg">Start designing free</Button>
-          </Link>
-          <Link to="/login">
-            <Button size="lg" variant="outline">
-              Sign in
-            </Button>
-          </Link>
+      <section className="mx-auto grid max-w-6xl items-center gap-14 px-6 pb-8 pt-16 lg:grid-cols-[1.05fr_0.95fr] lg:pt-24">
+        <div>
+          <p className="gw-kicker">A spatial design workspace</p>
+          <h1 className="mt-5 max-w-3xl text-5xl font-black leading-[0.98] tracking-[-0.045em] text-slate-50 sm:text-7xl">
+            From first sketch to
+            <span className="block bg-gradient-to-r from-emerald-300 via-cyan-300 to-sky-400 bg-clip-text text-transparent">buildable intent.</span>
+          </h1>
+          <p className="mt-6 max-w-xl text-base leading-7 text-slate-400 sm:text-lg">
+            Groundwork turns mapped sites, rooms, communities and infrastructure into a calm, visual workspace for making real design decisions.
+          </p>
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <Link to="/signup"><Button size="lg">Open the studio <span aria-hidden>↗</span></Button></Link>
+            <Link to="/login"><Button size="lg" variant="outline">Sign in</Button></Link>
+          </div>
+          <div className="mt-9 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500">
+            <span><b className="text-slate-300">01</b> Map the context</span>
+            <span><b className="text-slate-300">02</b> Shape the model</span>
+            <span><b className="text-slate-300">03</b> Ship the output</span>
+          </div>
+        </div>
+        <div className="gw-panel relative overflow-hidden rounded-[2rem] p-3 shadow-2xl shadow-cyan-950/20">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_10%,rgba(34,211,238,.18),transparent_35%)]" />
+          <div className="relative aspect-[0.95] overflow-hidden rounded-[1.45rem] border border-slate-700/70 bg-[#0a1119] p-5">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div><p className="text-[10px] uppercase tracking-[.22em] text-slate-500">Live workspace</p><p className="mt-1 text-sm font-semibold text-slate-200">Community / site study</p></div>
+              <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[10px] text-emerald-300">SAVED</span>
+            </div>
+            <div className="relative mt-5 h-[68%] rounded-xl border border-cyan-400/20 bg-[linear-gradient(rgba(34,211,238,.08)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,.08)_1px,transparent_1px)] bg-[size:28px_28px]">
+              <div className="absolute left-[17%] top-[20%] h-28 w-24 rotate-[-8deg] border border-emerald-300/70 bg-emerald-300/10 shadow-[0_0_30px_rgba(52,211,153,.12)]" />
+              <div className="absolute right-[17%] top-[34%] h-36 w-28 rotate-[8deg] border border-sky-300/70 bg-sky-300/10" />
+              <div className="absolute bottom-[15%] left-[28%] h-10 w-44 rounded-full border border-amber-300/60 bg-amber-300/10" />
+              <div className="absolute left-1/2 top-1/2 h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_24px_8px_rgba(52,211,153,.5)]" />
+            </div>
+            <div className="mt-4 grid grid-cols-3 gap-2 text-[10px]">
+              <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-2"><span className="text-slate-500">Site area</span><b className="mt-1 block text-slate-200">12,480 m²</b></div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-2"><span className="text-slate-500">Objects</span><b className="mt-1 block text-slate-200">24 placed</b></div>
+              <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-2"><span className="text-slate-500">Export</span><b className="mt-1 block text-emerald-300">CAD ready</b></div>
+            </div>
+          </div>
         </div>
       </section>
 
       <section className="mx-auto max-w-6xl px-6 py-20">
+        <div className="mb-8 max-w-xl"><p className="gw-kicker">One workspace, four scales</p><h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-100">Designed for the way projects actually grow.</h2></div>
         <div className="grid gap-5 sm:grid-cols-2">
           {FEATURES.map((f) => (
             <div

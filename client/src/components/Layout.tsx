@@ -32,9 +32,10 @@ export function Layout() {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-slate-800/80 bg-slate-950/80 backdrop-blur lg:flex">
-        <div className="px-5 py-5">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-slate-800/80 bg-slate-950/75 backdrop-blur-xl lg:flex">
+        <div className="px-5 pb-3 pt-6">
           <Logo />
+          <p className="mt-5 px-1 text-[10px] font-bold uppercase tracking-[.2em] text-slate-600">Navigation</p>
         </div>
         <nav className="mt-2 flex-1 space-y-1 px-3">
           {NAV.map((item) => (

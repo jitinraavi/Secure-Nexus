@@ -16,10 +16,10 @@ export function Button({
 }) {
   const variants: Record<string, string> = {
     primary:
-      "bg-emerald-500 text-emerald-950 hover:bg-emerald-400 shadow-lg shadow-emerald-500/20 focus-visible:ring-emerald-400",
-    secondary: "bg-slate-800 text-slate-100 hover:bg-slate-700 focus-visible:ring-slate-500 border border-slate-700",
-    outline: "border border-slate-700 text-slate-200 hover:bg-slate-800/60 focus-visible:ring-slate-500",
-    ghost: "text-slate-300 hover:bg-slate-800/60 focus-visible:ring-slate-500",
+      "bg-emerald-400 text-slate-950 hover:bg-emerald-300 shadow-lg shadow-emerald-500/20 focus-visible:ring-emerald-400",
+    secondary: "border border-slate-700/80 bg-slate-800/80 text-slate-100 hover:border-slate-600 hover:bg-slate-700 focus-visible:ring-slate-500",
+    outline: "border border-slate-700 text-slate-200 hover:border-emerald-500/50 hover:bg-emerald-500/5 focus-visible:ring-slate-500",
+    ghost: "text-slate-300 hover:bg-white/[0.05] hover:text-white focus-visible:ring-slate-500",
     danger: "bg-rose-600/90 text-white hover:bg-rose-500 focus-visible:ring-rose-400",
   };
   const sizes: Record<string, string> = {
@@ -30,7 +30,7 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-60 disabled:cursor-not-allowed",
+        "inline-flex items-center justify-center font-semibold transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-60 disabled:cursor-not-allowed",
         variants[variant],
         sizes[size],
         className,
@@ -67,7 +67,7 @@ export function Input({
         {icon && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">{icon}</span>}
         <input
           className={cn(
-            "w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30",
+            "w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20",
             icon ? "pl-10" : undefined,
             error && "border-rose-500/70 focus:border-rose-500 focus:ring-rose-500/30",
             className,
@@ -91,7 +91,7 @@ export function Select({
       {label && <span className="text-sm font-medium text-slate-300">{label}</span>}
       <select
         className={cn(
-          "w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30",
+          "w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20",
           className,
         )}
         {...props}
@@ -104,7 +104,7 @@ export function Select({
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn("rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur", className)}>
+    <div className={cn("gw-panel rounded-2xl", className)}>
       {children}
     </div>
   );
