@@ -475,9 +475,10 @@ export function catalogEntry(id: string): CatalogEntry | undefined {
   return CATALOG.find((c) => c.id === id);
 }
 
-export function furnitureMount(type: string): "floor" | "wall" | "ceiling" {
+export function furnitureMount(type: string): "unassigned" | "floor" | "wall" | "ceiling" {
   if (type === "ceiling-fan") return "ceiling";
   if (type === "air-conditioner") return "wall";
+  if (type === "wall-mirror" || type === "vanity-sink") return "unassigned";
   return "floor";
 }
 

@@ -317,6 +317,7 @@ export function Editor() {
                 <input type="range" min={0.5} max={1.5} step={0.05} value={selected.scale} onChange={(e) => updateSelected({ scale: Number(e.target.value) })} className="w-full accent-emerald-500" />
               </div>
               <Select label="Mounting" value={selected.mount ?? furnitureMount(selected.type)} onChange={(e) => updateSelected({ mount: e.target.value as FurnitureItem["mount"] })}>
+                <option value="unassigned">Choose placement</option>
                 <option value="floor">Floor</option>
                 <option value="wall">Wall</option>
                 <option value="ceiling">Ceiling</option>

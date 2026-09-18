@@ -139,7 +139,7 @@ export interface FurnitureItem {
   mountWall?: RoomWall;
 }
 
-export type FurnitureMount = "floor" | "wall" | "ceiling";
+export type FurnitureMount = "unassigned" | "floor" | "wall" | "ceiling";
 
 export type RoomOpeningKind = "window" | "door";
 export type RoomWall = "north" | "east" | "south" | "west";
