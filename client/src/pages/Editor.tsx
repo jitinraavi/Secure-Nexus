@@ -9,7 +9,7 @@ import {
 import { useToast } from "../components/Toast";
 import { Badge, Button, Modal, Select, Spinner, Toggle } from "../components/ui";
 import { Canvas3D, type EditorApi } from "../editor/Canvas3D";
-import { CATALOG, catalogEntry } from "../lib/catalog";
+import { CATALOG, catalogEntry, furnitureMount } from "../lib/catalog";
 import { buildDxf } from "../lib/dxf";
 import { buildBillOfMaterials, buildObjMtl } from "../lib/obj";
 import { download, downloadBlob, zipFiles } from "../lib/download";
@@ -164,8 +164,10 @@ export function Editor() {
       x: 300 * (design.furniture.length % 4) - 450,
       z: 200 * (design.furniture.length % 3) - 200,
       rotationDeg: 0,
-      scale: 1,
-      color: entry.defaultColor,
+        scale: 1,
+        color: entry.defaultColor,
+        mount: furnitureMount(type),
+        mountWall: "north",
     };
     mutateFurniture((items) => [...items, item]);
     setSelectedId(item.id);
@@ -314,6 +316,19 @@ export function Editor() {
                 <div className="flex justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scale</p><p className="text-xs text-slate-400">{Math.round(selected.scale * 100)}%</p></div>
                 <input type="range" min={0.5} max={1.5} step={0.05} value={selected.scale} onChange={(e) => updateSelected({ scale: Number(e.target.value) })} className="w-full accent-emerald-500" />
               </div>
+              <Select label="Mounting" value={selected.mount ?? furnitureMount(selected.type)} onChange={(e) => updateSelected({ mount: e.target.value as FurnitureItem["mount"] })}>
+                <option value="floor">Floor</option>
+                <option value="wall">Wall</option>
+                <option value="ceiling">Ceiling</option>
+              </Select>
+              {(selected.mount ?? furnitureMount(selected.type)) === "wall" && (
+                <Select label="Wall" value={selected.mountWall ?? "north"} onChange={(e) => updateSelected({ mountWall: e.target.value as FurnitureItem["mountWall"] })}>
+                  <option value="north">North wall</option>
+                  <option value="east">East wall</option>
+                  <option value="south">South wall</option>
+                  <option value="west">West wall</option>
+                </Select>
+              )}
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Rotate</p>
                 <div className="grid grid-cols-3 gap-2">

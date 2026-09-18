@@ -5,7 +5,7 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { Design, FurnitureItem } from "../types";
 import { addTechnicalEdges } from "../lib/modelcore";
-import { buildFurniture } from "../lib/catalog";
+import { buildFurniture, catalogEntry, furnitureMount } from "../lib/catalog";
 
 const MM = 0.001;
 const WALL_THICKNESS = 120;
@@ -462,7 +462,7 @@ export function Canvas3D({
     }
 
     for (const item of desired.values()) {
-      const sig = `${item.type}|${item.color}|${item.scale}`;
+      const sig = `${item.type}|${item.color}|${item.scale}|${item.mount ?? ""}|${item.mountWall ?? "north"}|${design.room.widthMm}|${design.room.depthMm}|${design.room.wallHeightMm}`;
       let rec = itemGroups.current.get(item.id);
       if (!rec || rec.sig !== sig) {
         if (rec) {
@@ -478,16 +478,32 @@ export function Canvas3D({
             o.receiveShadow = true;
           }
         });
-        group.position.set(item.x * MM, 0, item.z * MM);
-        group.rotation.y = (item.rotationDeg * Math.PI) / 180;
+        const mount = item.mount ?? furnitureMount(item.type);
+        const room = designRef.current.room;
+        const itemHeight = (catalogEntry(item.type)?.h ?? 0) * MM * item.scale;
+        const wall = item.mountWall ?? "north";
+        const halfW = room.widthMm * MM / 2;
+        const halfD = room.depthMm * MM / 2;
+        if (mount === "ceiling") {
+          group.position.set(item.x * MM, Math.max(room.wallHeightMm * MM - itemHeight, 0.2), item.z * MM);
+        } else if (mount === "wall") {
+          const y = Math.max(room.wallHeightMm * MM - itemHeight - 0.25, 0.3);
+          if (wall === "north") group.position.set(item.x * MM, y, halfD - 0.16);
+          if (wall === "south") group.position.set(item.x * MM, y, -halfD + 0.16);
+          if (wall === "east") group.position.set(halfW - 0.16, y, item.z * MM);
+          if (wall === "west") group.position.set(-halfW + 0.16, y, item.z * MM);
+        } else {
+          group.position.set(item.x * MM, 0, item.z * MM);
+        }
+        group.rotation.y = (item.rotationDeg * Math.PI) / 180 + (mount === "wall" && (wall === "east" || wall === "west") ? Math.PI / 2 : 0);
         scene.add(group);
         rec = { group, sig };
         itemGroups.current.set(item.id, rec);
       } else {
-        groupSync(rec.group, item, sig);
+        groupSync(rec.group, item, sig, design.room);
       }
     }
-  }, [design.furniture]);
+  }, [design.furniture, design.room.widthMm, design.room.depthMm, design.room.wallHeightMm]);
 
   /* Selection ring follow */
   useEffect(() => {
@@ -520,9 +536,24 @@ export function Canvas3D({
   return <div ref={containerRef} className="h-full w-full cursor-grab active:cursor-grabbing" />;
 }
 
-function groupSync(group: THREE.Group, item: FurnitureItem, sig: string) {
-  group.position.set(item.x * MM, 0, item.z * MM);
-  group.rotation.y = (item.rotationDeg * Math.PI) / 180;
+function groupSync(group: THREE.Group, item: FurnitureItem, sig: string, room: Design["room"]) {
+  const mount = item.mount ?? furnitureMount(item.type);
+  const wall = item.mountWall ?? "north";
+  const itemHeight = (catalogEntry(item.type)?.h ?? 0) * MM * item.scale;
+  const halfW = room.widthMm * MM / 2;
+  const halfD = room.depthMm * MM / 2;
+  if (mount === "ceiling") {
+    group.position.set(item.x * MM, Math.max(room.wallHeightMm * MM - itemHeight, 0.2), item.z * MM);
+  } else if (mount === "wall") {
+    const y = Math.max(room.wallHeightMm * MM - itemHeight - 0.25, 0.3);
+    if (wall === "north") group.position.set(item.x * MM, y, halfD - 0.16);
+    if (wall === "south") group.position.set(item.x * MM, y, -halfD + 0.16);
+    if (wall === "east") group.position.set(halfW - 0.16, y, item.z * MM);
+    if (wall === "west") group.position.set(-halfW + 0.16, y, item.z * MM);
+  } else {
+    group.position.set(item.x * MM, 0, item.z * MM);
+  }
+  group.rotation.y = (item.rotationDeg * Math.PI) / 180 + (mount === "wall" && (wall === "east" || wall === "west") ? Math.PI / 2 : 0);
   group.userData.sig = sig;
 }
 

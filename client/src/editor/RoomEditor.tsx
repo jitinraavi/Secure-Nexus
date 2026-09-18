@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { DoorFacing, FurnitureItem, InteriorRoom, RoomOpening } from "../types";
+import type { DoorFacing, FurnitureItem, InteriorRoom, RoomOpening, RoomWall } from "../types";
 import { Button, Input, Modal } from "../components/ui";
-import { buildFurniture, catalogEntry } from "../lib/catalog";
+import { buildFurniture, catalogEntry, furnitureMount } from "../lib/catalog";
 import { cn } from "../lib/cn";
 import { uid } from "../lib/modelcore";
 import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects";
@@ -104,6 +104,8 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
         rotationDeg: 0,
         scale: 1,
         color,
+        mount: furnitureMount(catalogId),
+        mountWall: "north",
       });
     }
     onChange({ ...room, furniture: [...(room.furniture ?? []), ...items] });
@@ -232,8 +234,28 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
 
       for (const item of r.furniture ?? []) {
         const node = buildFurniture(item);
-        node.position.set(item.x, 0, item.z);
+        const mount = item.mount ?? furnitureMount(item.type);
+        const itemHeight = (catalogEntry(item.type)?.h ?? 0) * 0.001 * item.scale;
+        const wall = item.mountWall ?? "north";
+        if (mount === "ceiling") {
+          node.position.set(item.x, Math.max(WALL_H - itemHeight, 0.2), item.z);
+        } else if (mount === "wall") {
+          node.position.y = Math.max(WALL_H - itemHeight - 0.25, 0.3);
+          if (wall === "north") node.position.set(item.x, node.position.y, halfD - 0.16);
+          if (wall === "south") node.position.set(item.x, node.position.y, -halfD + 0.16);
+          if (wall === "east") {
+            node.position.set(halfW - 0.16, node.position.y, item.z);
+            node.rotation.y = Math.PI / 2;
+          }
+          if (wall === "west") {
+            node.position.set(-halfW + 0.16, node.position.y, item.z);
+            node.rotation.y = Math.PI / 2;
+          }
+        } else {
+          node.position.set(item.x, 0, item.z);
+        }
         node.rotation.y = (item.rotationDeg * Math.PI) / 180;
+        if (mount === "wall" && (wall === "east" || wall === "west")) node.rotation.y += Math.PI / 2;
         node.userData.selectId = item.id;
         node.userData.selectKind = "furniture";
         group.add(node);
@@ -425,7 +447,11 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
           {selected ? (
             <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Selected</p>
-              <Input label="Name" value={selected.name} onChange={(e) => patchFurniture(selected.id, { name: e.target.value })} />
+               <Input label="Name" value={selected.name} onChange={(e) => patchFurniture(selected.id, { name: e.target.value })} />
+               <div className="grid grid-cols-2 gap-2">
+                 <label className="text-[11px] text-slate-400">Mounting<select value={selected.mount ?? furnitureMount(selected.type)} onChange={(e) => patchFurniture(selected.id, { mount: e.target.value as FurnitureItem["mount"] })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-200"><option value="floor">Floor</option><option value="wall">Wall</option><option value="ceiling">Ceiling</option></select></label>
+                 {(selected.mount ?? furnitureMount(selected.type)) === "wall" && <label className="text-[11px] text-slate-400">Wall<select value={selected.mountWall ?? "north"} onChange={(e) => patchFurniture(selected.id, { mountWall: e.target.value as RoomWall })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-200"><option value="north">North</option><option value="east">East</option><option value="south">South</option><option value="west">West</option></select></label>}
+               </div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="space-y-1">
                   <span className="text-[11px] text-slate-400">Colour</span>

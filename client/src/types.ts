@@ -135,7 +135,11 @@ export interface FurnitureItem {
   rotationDeg: number;
   scale: number;
   color: string;
+  mount?: FurnitureMount;
+  mountWall?: RoomWall;
 }
+
+export type FurnitureMount = "floor" | "wall" | "ceiling";
 
 export type RoomOpeningKind = "window" | "door";
 export type RoomWall = "north" | "east" | "south" | "west";

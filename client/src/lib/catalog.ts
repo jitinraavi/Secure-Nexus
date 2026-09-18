@@ -475,6 +475,12 @@ export function catalogEntry(id: string): CatalogEntry | undefined {
   return CATALOG.find((c) => c.id === id);
 }
 
+export function furnitureMount(type: string): "floor" | "wall" | "ceiling" {
+  if (type === "ceiling-fan") return "ceiling";
+  if (type === "air-conditioner") return "wall";
+  return "floor";
+}
+
 export function applyFinish(group: THREE.Group, color: string) {
   const tintables = (group.userData.tintables ?? []) as THREE.MeshStandardMaterial[];
   for (const m of tintables) m.color.set(color);
