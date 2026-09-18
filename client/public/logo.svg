@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" role="img" aria-labelledby="title desc">
+  <title id="title">Groundwork Design Studio</title>
+  <desc id="desc">Gold geometric house mark and Groundwork Design Studio wordmark on charcoal.</desc>
+  <rect width="900" height="360" rx="18" fill="#1b2026"/>
+  <g fill="none" stroke="#d6a84a" stroke-width="16" stroke-linejoin="miter">
+    <path d="M330 108 450 22l120 86v112H330z"/>
+    <path d="m366 104 84-60 84 60v74"/>
+    <path d="M450 116h58v58h-58z" fill="#d6a84a" stroke="none"/>
+    <path d="M450 174h-42v-42"/>
+    <path d="M306 236h288"/>
+  </g>
+  <text x="450" y="296" fill="#d6a84a" font-family="Arial, Helvetica, sans-serif" font-size="47" font-weight="700" letter-spacing="4" text-anchor="middle">GROUNDWORK</text>
+  <text x="450" y="333" fill="#d6a84a" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="600" letter-spacing="7" text-anchor="middle">DESIGN STUDIO</text>
+</svg>
