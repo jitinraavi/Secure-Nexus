@@ -7,8 +7,12 @@ import type {
   InfraDesign,
   InfraKind,
   PortDesign,
+  DraftElement,
 } from "../types";
 import { addTechnicalEdges, material, prismAt } from "./modelcore";
+import { infraReviewFindings } from "./review";
+import { buildTerrainVisualization, defaultTerrain } from "./terrain";
+import { buildMepScene } from "./mep";
 
 /**
  * Guided infrastructure models.
@@ -101,7 +105,7 @@ export function defaultDam(): DamDesign {
 }
 
 export function defaultInfra(kind: InfraKind): InfraDesign {
-  const base: InfraDesign = { version: 1, kind, facilities: [] };
+  const base: InfraDesign = { version: 1, kind, modelReady: false, facilities: [], terrain: { ...defaultTerrain } };
   if (kind === "highway") base.highway = defaultHighway();
   if (kind === "airport") base.airport = defaultAirport();
   if (kind === "ports") base.ports = defaultPort();
@@ -117,7 +121,10 @@ export function normalizeInfra(infra: InfraDesign | undefined, kind: InfraKind):
     ...base,
     ...infra,
     kind,
+    modelReady: infra.modelReady ?? true,
     facilities: infra.facilities ?? [],
+    terrain: { ...defaultTerrain, ...infra.terrain },
+    drafts: infra.drafts ?? [],
     highway: kind === "highway" ? { ...base.highway!, ...infra.highway } : undefined,
     airport: kind === "airport" ? { ...base.airport!, ...infra.airport } : undefined,
     ports: kind === "ports" ? { ...base.ports!, ...infra.ports } : undefined,
@@ -155,6 +162,21 @@ function addFacilities(g: THREE.Group, infra: InfraDesign, ext: InfraExtent): vo
       serial++;
     }
   }
+}
+
+function buildEmptyInfraScene(ext: InfraExtent): THREE.Group {
+  const g = new THREE.Group();
+  const site = prismAt(0, -0.08, 0, ext.w, 0.12, ext.d, material("#343b42", { rough: 0.95 }));
+  site.userData.noSelect = true;
+  g.add(site);
+  const boundary = material("#d6a84a", { rough: 0.7 });
+  g.add(
+    prismAt(0, 0.02, -ext.d / 2, ext.w, 0.04, 0.08, boundary),
+    prismAt(0, 0.02, ext.d / 2, ext.w, 0.04, 0.08, boundary),
+    prismAt(-ext.w / 2, 0.02, 0, 0.08, 0.04, ext.d, boundary),
+    prismAt(ext.w / 2, 0.02, 0, 0.08, 0.04, ext.d, boundary),
+  );
+  return g;
 }
 
 /* ------------------------------- Site extents ------------------------------- */
@@ -196,33 +218,36 @@ export function infraExtent(infra: InfraDesign): InfraExtent {
 
 /* --------------------------------- Terrain ---------------------------------- */
 
-function terrainMesh(w: number, d: number, rough: number, base: number): THREE.Mesh {
-  const seg = 48;
-  const geo = new THREE.PlaneGeometry(w, d, seg, seg);
-  geo.rotateX(-Math.PI / 2);
-  const pos = geo.attributes.position as THREE.BufferAttribute;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const y =
-      base +
-      Math.sin(x * 0.013) * rough * 0.9 +
-      Math.cos(z * 0.011) * rough * 0.8 +
-      Math.sin((x + z) * 0.017) * rough * 0.5;
-    pos.setY(i, y);
-  }
-  pos.needsUpdate = true;
-  geo.computeVertexNormals();
-  const mesh = new THREE.Mesh(geo, material("#7d8a63", { rough: 0.95 }));
-  mesh.receiveShadow = true;
-  mesh.userData.noSelect = true;
-  return mesh;
-}
-
 function waterMesh(w: number, d: number, x: number, y: number, z: number, opacity = 0.72): THREE.Mesh {
   const mesh = prismAt(x, y, z, w, 0.15, d, material("#2f6fb0", { rough: 0.15, metal: 0.3, trans: opacity }));
   mesh.userData.noSelect = true;
   return mesh;
+}
+
+function buildCivilDraft(draft: DraftElement): THREE.Group {
+  const g = new THREE.Group();
+  const color = draft.color || (draft.civilKind === "contour" ? "#a3c77b" : "#f2c14e");
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+  if (draft.kind === "circle") {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(Math.max(Math.min(draft.w, draft.d) / 2 - 0.15, 0.1), Math.min(draft.w, draft.d) / 2, 48), mat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.18;
+    g.add(ring);
+  } else if (draft.kind === "rectangle") {
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(draft.w, draft.d), mat);
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.y = 0.18;
+    g.add(plane);
+  } else {
+    const line = new THREE.Mesh(new THREE.BoxGeometry(Math.max(draft.w, 0.2), 0.08, Math.max(draft.d, 0.08)), mat);
+    line.position.y = 0.2;
+    g.add(line);
+  }
+  g.position.set(draft.x, 0, draft.z);
+  g.rotation.y = (draft.rotationDeg * Math.PI) / 180;
+  g.userData.selectId = draft.id;
+  g.userData.selectKind = "draft";
+  return g;
 }
 
 function dashedLine(count: number, x0: number, z0: number, dx: number, dz: number, len: number, width: number, mat: THREE.Material): THREE.Group {
@@ -238,7 +263,6 @@ function dashedLine(count: number, x0: number, z0: number, dx: number, dz: numbe
 
 function buildHighway(h: HighwayDesign, ext: InfraExtent, loc: InfraDesign["location"]): THREE.Group {
   const g = new THREE.Group();
-  g.add(terrainMesh(ext.w, ext.d, h.terrainRoughnessM, 0));
 
   const carriage = h.lanes * h.laneWidthM;
   const asphalt = material(h.surface === "bituminous" ? "#2b2f36" : "#b9bcc0", { rough: 0.85 });
@@ -310,7 +334,6 @@ function buildHighway(h: HighwayDesign, ext: InfraExtent, loc: InfraDesign["loca
 
 function buildAirport(a: AirportDesign, ext: InfraExtent): THREE.Group {
   const g = new THREE.Group();
-  g.add(terrainMesh(ext.w, ext.d, 0.6, 0));
 
   const concrete = material("#b9bcc0", { rough: 0.85 });
   const runwayMat = material("#4a4f56", { rough: 0.8 });
@@ -478,7 +501,6 @@ function buildPort(p: PortDesign, ext: InfraExtent): THREE.Group {
 
 function buildDam(d: DamDesign, ext: InfraExtent): THREE.Group {
   const g = new THREE.Group();
-  g.add(terrainMesh(ext.w, ext.d, 1.4, 0));
 
   const concrete = material("#a9adb2", { rough: 0.85 });
   const earth = material("#8a7d5f", { rough: 1 });
@@ -565,6 +587,13 @@ function buildDam(d: DamDesign, ext: InfraExtent): THREE.Group {
 
 export function buildInfraScene(infra: InfraDesign): THREE.Group {
   const ext = infraExtent(infra);
+  const layerVisible = (id: string) => infra.layers?.find((layer) => layer.id === id)?.visible !== false;
+  if (infra.modelReady === false) {
+    const empty = buildEmptyInfraScene(ext);
+    empty.add(buildTerrainVisualization(ext.w, ext.d, infra.terrain));
+    addTechnicalEdges(empty, "#8b6b31", 0.5);
+    return empty;
+  }
   const scene = infra.kind === "highway"
     ? buildHighway(infra.highway!, ext, infra.location)
     : infra.kind === "airport"
@@ -572,7 +601,10 @@ export function buildInfraScene(infra: InfraDesign): THREE.Group {
       : infra.kind === "ports"
         ? buildPort(infra.ports!, ext)
         : buildDam(infra.dams!, ext);
-  addFacilities(scene, infra, ext);
+  scene.add(buildTerrainVisualization(ext.w, ext.d, infra.terrain));
+  if (layerVisible("facilities")) addFacilities(scene, infra, ext);
+  if (layerVisible("drafting")) for (const draft of infra.drafts ?? []) scene.add(buildCivilDraft(draft));
+  if (layerVisible("mep")) scene.add(buildMepScene(infra.mep));
   addTechnicalEdges(scene, "#253746", 0.5);
   return scene;
 }
@@ -707,7 +739,14 @@ export function computeInfraTakeoff(infra: InfraDesign): InfraTakeoff {
     );
   }
 
-  const order = ["Earthwork", "Pavement", "Dam body", "Spillway", "Reservoir", "Marine", "Yard", "Structures", "Finishes", "Buildings", "Equipment"];
+  for (const facility of infra.facilities ?? []) {
+    add(`facility-${facility.id}`, "Facilities", `${facility.kind} (${facility.count} nos)`, facility.count, "nos", `${facility.lengthM} × ${facility.widthM} × ${facility.heightM} m stored facility schedule`);
+  }
+  if ((infra.drafts ?? []).length > 0) {
+    add("civil-drafts", "Schedules", "Civil drafting annotations", infra.drafts!.length, "nos", "Stored contour, alignment and grade geometry");
+  }
+
+  const order = ["Earthwork", "Pavement", "Dam body", "Spillway", "Reservoir", "Marine", "Yard", "Structures", "Finishes", "Buildings", "Equipment", "Facilities", "Schedules"];
   const groups = order
     .map((group) => ({ group, items: items.filter((i) => i.group === group) }))
     .filter((g) => g.items.length > 0);
@@ -787,7 +826,28 @@ export function buildInfraNotesText({ projectName, infra }: { projectName: strin
     push("Gates", `${d.spillwayGates} × ${d.gateWidthM} m`);
     push("Stilling basin", d.stillingBasin ? "Yes" : "No");
   }
+  lines.push(`- Model status: ${infra.modelReady === false ? "not generated" : "generated"}`);
   lines.push(...cfgLines.map((l) => `- ${l}`));
+  lines.push("");
+
+  if ((infra.facilities ?? []).length > 0 || (infra.drafts ?? []).length > 0) {
+    lines.push("## Facility & civil annotation schedule");
+    for (const facility of infra.facilities ?? []) {
+      lines.push(`- ${facility.kind} · ${facility.count} nos · ${facility.lengthM} × ${facility.widthM} × ${facility.heightM} m`);
+    }
+    for (const draft of infra.drafts ?? []) {
+      lines.push(`- ${draft.kind} · ${draft.civilKind ?? "annotation"} · ${draft.w} m at (${draft.x}, ${draft.z}) · elevation ${draft.elevationM ?? 0} m · grade ${draft.gradePct ?? 0}%`);
+    }
+    lines.push("");
+  }
+
+  const findings = infraReviewFindings(infra);
+  const markups = infra.review?.markers ?? [];
+  lines.push("## Coordination review");
+  lines.push(`Automatic findings · ${findings.length}`);
+  findings.forEach((finding) => lines.push(`- ${finding.severity} (${finding.score}/100, ${finding.category}): ${finding.text} [${finding.approximation}]`));
+  lines.push(`Saved markups · ${markups.length}`);
+  markups.forEach((marker) => lines.push(`- ${marker.severity} / ${marker.status}: ${marker.text}`));
   lines.push("");
 
   lines.push("## Material takeoff");

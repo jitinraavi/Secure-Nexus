@@ -7,6 +7,8 @@ import { buildFurniture, catalogEntry, furnitureMount } from "../lib/catalog";
 import { cn } from "../lib/cn";
 import { uid } from "../lib/modelcore";
 import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects";
+import { MepPanel } from "../components/MepPanel";
+import { buildMepScene } from "../lib/mep";
 
 /**
  * In-room furniture editor.
@@ -232,7 +234,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
          group.add(openingMesh);
        }
 
-      for (const item of r.furniture ?? []) {
+       for (const item of r.furniture ?? []) {
         const node = buildFurniture(item);
         const mount = item.mount ?? furnitureMount(item.type);
         const itemHeight = (catalogEntry(item.type)?.h ?? 0) * 0.001 * item.scale;
@@ -269,9 +271,10 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
           ring.position.set(item.x, 0.02, item.z);
           group.add(ring);
         }
-      }
+       }
+       group.add(buildMepScene(r.mep));
 
-      controls.target.set(0, 1, 0);
+       controls.target.set(0, 1, 0);
       controls.update();
     };
 
@@ -462,13 +465,17 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
           })()}
 
           {selected ? (
-            <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+           <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Selected</p>
                <Input label="Name" value={selected.name} onChange={(e) => patchFurniture(selected.id, { name: e.target.value })} />
                <div className="grid grid-cols-2 gap-2">
                  <label className="text-[11px] text-slate-400">Mounting<select value={selected.mount ?? furnitureMount(selected.type)} onChange={(e) => patchFurniture(selected.id, { mount: e.target.value as FurnitureItem["mount"] })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-200"><option value="unassigned">Choose placement</option><option value="floor">Floor</option><option value="wall">Wall</option><option value="ceiling">Ceiling</option></select></label>
                  {(selected.mount ?? furnitureMount(selected.type)) === "wall" && <label className="text-[11px] text-slate-400">Wall<select value={selected.mountWall ?? "north"} onChange={(e) => patchFurniture(selected.id, { mountWall: e.target.value as RoomWall })} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-200"><option value="north">North</option><option value="east">East</option><option value="south">South</option><option value="west">West</option></select></label>}
-               </div>
+           </div>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+            <MepPanel value={room.mep} onChange={(mep) => onChange({ ...room, mep })} />
+          </div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="space-y-1">
                   <span className="text-[11px] text-slate-400">Colour</span>

@@ -1,5 +1,6 @@
 import type {
   AmenityData,
+  BuildingLevel,
   BuildingBranch,
   CommercialStyle,
   CommunityDesign,
@@ -9,6 +10,8 @@ import type {
   UndergroundParking,
   UnitSystem,
 } from "../types";
+import { defaultTerrain } from "./terrain";
+import { DEFAULT_STRUCTURAL_SETTINGS } from "./structural";
 import { uid } from "./modelcore";
 
 /* ------------------------------ Unit conversions ------------------------------ */
@@ -214,10 +217,37 @@ export function defaultCommunity(branch: BuildingBranch): CommunityDesign {
     land: { unit: "m", width: 1, depth: 1 },
     parking: { mode: "none", surfaceBays: 0 },
     amenities: [],
+    terrain: { ...defaultTerrain },
+    drafting: {
+      gridVisible: true,
+      gridSize: 0.5,
+      snapEnabled: true,
+      orthogonal: true,
+      angleIncrement: 15,
+      alignment: true,
+    },
     towers: [],
     exteriors: [],
     interiors: [],
+    levels: defaultLevels(),
+    structuralGrid: [],
+    structural: { ...DEFAULT_STRUCTURAL_SETTINGS },
   };
+}
+
+export function defaultLevels(): BuildingLevel[] {
+  return [{ id: "level-0", name: "Ground Floor", elevation: 0, floorHeight: 3.2 }];
+}
+
+export function levelsForDesign(design: CommunityDesign): BuildingLevel[] {
+  if (design.levels?.length) return design.levels;
+  const count = Math.max(1, ...design.towers.map((tower) => tower.floors));
+  return Array.from({ length: count }, (_, index) => ({
+    id: `level-${index}`,
+    name: index === 0 ? "Ground Floor" : `Level ${index + 1}`,
+    elevation: index * 3.2,
+    floorHeight: 3.2,
+  }));
 }
 
 /* -------------------------------- Helpers ----------------------------------- */

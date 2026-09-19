@@ -126,6 +126,50 @@ export interface RoomConfig {
   floorColor: string;
 }
 
+export type MepElementKind = "duct" | "pipe" | "cable-tray" | "equipment" | "fixture";
+
+export interface MepPoint {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Preliminary coordination geometry; not a fabrication or code-compliant design. */
+export interface MepElement {
+  id: string;
+  kind: MepElementKind;
+  name: string;
+  route: MepPoint[];
+  width: number;
+  height: number;
+  diameter: number;
+  color: string;
+  visible: boolean;
+  /** Optional planning input; absence preserves legacy elements. */
+  ratedPowerKw?: number;
+  levelId?: string;
+}
+
+export interface MepPlanningInputs {
+  areaM2: number;
+  ceilingHeightM: number;
+  occupancy: number;
+  airChangesPerHour: number;
+  coolingLoadWPerM2: number;
+  designAirVelocityMps: number;
+  pipeVelocityMps: number;
+  plumbingFlowLps: number;
+  minimumClearanceM: number;
+  electricalDemandFactor: number;
+}
+
+export interface MepDesign {
+  version: 1;
+  enabled: boolean;
+  elements: MepElement[];
+  planning?: MepPlanningInputs;
+}
+
 export interface FurnitureItem {
   id: string;
   type: string;
@@ -179,6 +223,19 @@ export interface LandSite {
   depth: number;
 }
 
+export type TerrainProfileAxis = "x" | "z";
+
+/** Local terrain controls. The elevation surface is deterministic when no DEM is available. */
+export interface TerrainSettings {
+  enabled: boolean;
+  baseElevationM: number;
+  reliefM: number;
+  contourIntervalM: number;
+  contoursVisible: boolean;
+  profileAxis: TerrainProfileAxis;
+  profileOffsetM: number;
+}
+
 export interface UndergroundParking {
   levels: number;
   floorHeight: number;
@@ -217,11 +274,153 @@ export interface AmenityData {
   shape?: string;
 }
 
+export type DraftElementKind = "line" | "rectangle" | "circle" | "dimension" | "wall" | "slab" | "column" | "roof";
+
+export type ParametricConstraintKind = "alignment" | "parallel" | "perpendicular" | "level" | "equal";
+
+export type DraftGrip = "width-start" | "width-end" | "depth-start" | "depth-end";
+
+/** Optional parametric intent. All fields are additive for older saved designs. */
+export interface ParametricFamilyMetadata {
+  family?: string;
+  type?: string;
+  instance?: string;
+}
+
+export interface ParametricLocks {
+  x?: boolean;
+  z?: boolean;
+  width?: boolean;
+  depth?: boolean;
+  height?: boolean;
+  rotation?: boolean;
+  level?: boolean;
+}
+
+export interface ParametricConstraint {
+  id: string;
+  kind: ParametricConstraintKind;
+  targetId?: string;
+  axis?: "x" | "z";
+  locked?: boolean;
+}
+
+export interface DraftElement {
+  id: string;
+  kind: DraftElementKind;
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  h?: number;
+  rotationDeg: number;
+  color: string;
+  /** Optional civil annotation metadata; geometry remains editable in metres. */
+  civilKind?: "contour" | "alignment" | "grade";
+  elevationM?: number;
+  gradePct?: number;
+  label?: string;
+  family?: ParametricFamilyMetadata;
+  locks?: ParametricLocks;
+  constraints?: ParametricConstraint[];
+}
+
+export interface DraftingSettings {
+  gridVisible: boolean;
+  gridSize: number;
+  snapEnabled: boolean;
+  orthogonal: boolean;
+  angleIncrement: number;
+  alignment: boolean;
+}
+
+export interface DesignLayer {
+  id: string;
+  name: string;
+  visible: boolean;
+  color: string;
+}
+
+export type SectionAxis = "x" | "y" | "z";
+
+export interface SectionSettings {
+  enabled: boolean;
+  axis: SectionAxis;
+  /** Lower bound of the visible interval, in scene metres. */
+  offset: number;
+  /** Visible interval length, in scene metres. */
+  depth: number;
+}
+
+export type ReviewSeverity = "note" | "warning" | "blocker";
+export type ReviewStatus = "open" | "resolved";
+
+export interface ReviewMarker {
+  id: string;
+  text: string;
+  severity: ReviewSeverity;
+  status: ReviewStatus;
+  x: number;
+  z: number;
+  targetIds?: string[];
+}
+
+export interface DesignReview {
+  markers: ReviewMarker[];
+}
+
+export interface BuildingLevel {
+  id: string;
+  name: string;
+  elevation: number;
+  floorHeight: number;
+}
+
+export type StructuralGridAxis = "x" | "z";
+
+export interface StructuralGridLine {
+  id: string;
+  axis: StructuralGridAxis;
+  label: string;
+  position: number;
+  extent: number;
+  color: string;
+}
+
+/** Screening inputs only; these are not design-code or permit parameters. */
+export interface StructuralSettings {
+  enabled: boolean;
+  deadLoadKPa: number;
+  liveLoadKPa: number;
+  concreteStrengthMPa: number;
+  soilBearingKPa: number;
+  columnWidthM: number;
+  columnDepthM: number;
+  beamWidthM: number;
+  beamDepthM: number;
+  footingWidthM: number;
+  footingDepthM: number;
+  safetyFactor: number;
+  windPressureKPa?: number;
+  seismicCoefficient?: number;
+  loadCombinations?: StructuralLoadCombination[];
+}
+
+export interface StructuralLoadCombination {
+  id: string;
+  label: string;
+  deadFactor: number;
+  liveFactor: number;
+  windFactor: number;
+  seismicFactor: number;
+}
+
 export interface TowerData {
   id: string;
   label: string;
   x: number;
   z: number;
+  rotY?: number;
   floors: number;
   unitsPerFloor: number;
   unitWidth: number;
@@ -234,6 +433,9 @@ export interface TowerData {
   facadeColor: string;
   /** When present, replaces the generated facade windows/entrance with explicit openings. */
   openings?: TowerOpening[];
+  family?: ParametricFamilyMetadata;
+  locks?: ParametricLocks;
+  constraints?: ParametricConstraint[];
 }
 
 export type TowerOpeningKind = "window" | "door";
@@ -275,6 +477,10 @@ export interface InteriorRoom {
   doorFacing: DoorFacing;
   furniture?: FurnitureItem[];
   openings?: RoomOpening[];
+  mep?: MepDesign;
+  family?: ParametricFamilyMetadata;
+  locks?: ParametricLocks;
+  constraints?: ParametricConstraint[];
 }
 
 export interface SiteLocation {
@@ -374,12 +580,20 @@ export interface DamDesign {
 export interface InfraDesign {
   version: 1;
   kind: InfraKind;
+  /** New projects remain an empty technical site until the user generates the model. */
+  modelReady?: boolean;
   facilities?: InfraFacility[];
+  layers?: DesignLayer[];
+  drafts?: DraftElement[];
+  review?: DesignReview;
+  section?: SectionSettings;
+  terrain?: TerrainSettings;
   location?: SiteLocation;
   highway?: HighwayDesign;
   airport?: AirportDesign;
   ports?: PortDesign;
   dams?: DamDesign;
+  mep?: MepDesign;
 }
 
 export interface CommunityDesign {
@@ -391,9 +605,20 @@ export interface CommunityDesign {
   location?: SiteLocation;
   parking: Parking;
   amenities: AmenityData[];
+  drafts?: DraftElement[];
+  drafting?: DraftingSettings;
+  layers?: DesignLayer[];
+  levels?: BuildingLevel[];
+  structuralGrid?: StructuralGridLine[];
+  structural?: StructuralSettings;
+  activeLevelId?: string;
+  review?: DesignReview;
+  section?: SectionSettings;
+  terrain?: TerrainSettings;
   towers: TowerData[];
   exteriors: ExteriorPanel[];
   interiors: InteriorRoom[];
+  mep?: MepDesign;
 }
 
 export interface Design {
@@ -401,6 +626,7 @@ export interface Design {
   room: RoomConfig;
   furniture: FurnitureItem[];
   curtains: CurtainConfig | null;
+  mep?: MepDesign;
   community?: CommunityDesign;
   infra?: InfraDesign;
 }
@@ -417,5 +643,6 @@ export function defaultDesign(): Design {
     },
     furniture: [],
     curtains: null,
+    mep: { version: 1, enabled: true, elements: [] },
   };
 }

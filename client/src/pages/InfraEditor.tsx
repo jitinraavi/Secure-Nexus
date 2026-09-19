@@ -1,25 +1,35 @@
-import { useEffect, useMemo, useState } from "react";
-import type { AirportDesign, DamDesign, HighwayDesign, InfraDesign, InfraFacility, InfraKind, PortDesign } from "../types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AirportDesign, DamDesign, DraftElement, HighwayDesign, InfraDesign, InfraFacility, InfraKind, PortDesign, ReviewSeverity } from "../types";
 import { Button, Select, Toggle } from "../components/ui";
+import { ParametricControls } from "../components/ParametricControls";
+import { CadToolPalette, type CadTool } from "../components/CadToolPalette";
 import { InfraScene } from "../editor/InfraScene";
 import { SiteLocator, type LocatorMode } from "../editor/SiteLocator";
 import { useToast } from "../components/Toast";
 import { cn } from "../lib/cn";
+import { MepPanel } from "../components/MepPanel";
+import { DesignExportMenu } from "../components/DesignExportMenu";
+import { SectionControls } from "../components/SectionControls";
+import { TerrainControls } from "../components/TerrainControls";
 import { download } from "../lib/download";
-import { copyToClipboard, notesFilename, shareText } from "../lib/notes";
+import { buildBoqCsv, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
+import { infraReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
+import { applyDraftOperation, constrainedDraftPatch, duplicateDraftArray, patchDraftGrip } from "../lib/drafting";
 import {
   INFRA_LABELS,
   buildInfraNotesText,
   computeInfraTakeoff,
   infraSummary,
+  infraExtent,
 } from "../lib/infra";
 
-type StepId = "location" | "design" | "takeoff";
+type StepId = "location" | "design" | "takeoff" | "review";
 
 const STEPS: { id: StepId; label: string }[] = [
   { id: "location", label: "Site & alignment" },
   { id: "design", label: "Design" },
   { id: "takeoff", label: "Takeoff & notes" },
+  { id: "review", label: "Review" },
 ];
 
 const FACILITY_OPTIONS: Record<InfraKind, { kind: string; label: string }[]> = {
@@ -58,6 +68,13 @@ const FACILITY_OPTIONS: Record<InfraKind, { kind: string; label: string }[]> = {
   ],
 };
 
+const INFRA_LAYERS = [
+  { id: "model", name: "Engineering model", color: "#d6a84a" },
+  { id: "facilities", name: "Facilities", color: "#7fb6c9" },
+  { id: "drafting", name: "Drafting geometry", color: "#e5bd67" },
+  { id: "mep", name: "MEP coordination", color: "#f59e0b" },
+] as const;
+
 const LOCATOR_MODE: Record<InfraKind, LocatorMode> = {
   highway: "route",
   airport: "area",
@@ -72,6 +89,7 @@ interface InfraEditorProps {
   infra: InfraDesign;
   onChange: (infra: InfraDesign) => void;
   projectName?: string;
+  design?: import("../types").Design;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -118,16 +136,41 @@ function Num({
   );
 }
 
-export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorProps) {
+export function InfraEditor({ kind, infra, onChange, projectName, design }: InfraEditorProps) {
   const toast = useToast();
   const [step, setStep] = useState<StepId>("location");
   const [facilityKind, setFacilityKind] = useState(FACILITY_OPTIONS[kind][0].kind);
+  const [activeTool, setActiveTool] = useState<CadTool>("select");
+  const [layersOpen, setLayersOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const historyRef = useRef<{ past: InfraDesign[]; future: InfraDesign[] }>({ past: [], future: [] });
+  const [reviewText, setReviewText] = useState("");
+  const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
 
   useEffect(() => {
     setFacilityKind(FACILITY_OPTIONS[kind][0].kind);
   }, [kind]);
 
-  const update = (patch: Partial<InfraDesign>) => onChange({ ...infra, ...patch });
+  const commitInfra = (next: InfraDesign) => {
+    historyRef.current.past = [...historyRef.current.past.slice(-49), infra];
+    historyRef.current.future = [];
+    onChange(next);
+  };
+  const update = (patch: Partial<InfraDesign>) => commitInfra({ ...infra, ...patch });
+  const undo = () => {
+    const previous = historyRef.current.past.pop();
+    if (!previous) return;
+    historyRef.current.future.unshift(infra);
+    onChange(previous);
+  };
+  const redo = () => {
+    const next = historyRef.current.future.shift();
+    if (!next) return;
+    historyRef.current.past.push(infra);
+    onChange(next);
+  };
+  const layers = infra.layers ?? INFRA_LAYERS.map((layer) => ({ ...layer, visible: true }));
+  const toggleLayer = (id: string) => update({ layers: layers.map((layer) => layer.id === id ? { ...layer, visible: !layer.visible } : layer) });
 
   const takeoff = useMemo(() => computeInfraTakeoff(infra), [infra]);
 
@@ -154,6 +197,77 @@ export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorP
 
   const patchFacility = (id: string, patch: Partial<InfraFacility>) =>
     update({ facilities: (infra.facilities ?? []).map((f) => (f.id === id ? { ...f, ...patch } : f)) });
+
+  const selectedDraft = (infra.drafts ?? []).find((draft) => draft.id === selectedId);
+  const reviewFindings = infraReviewFindings(infra);
+  const markers = reviewMarkers(infra.review);
+  const addReviewMarker = () => {
+    if (!reviewText.trim()) return;
+    update({ review: { markers: [...markers, { id: `review-${Date.now()}`, text: reviewText.trim(), severity: reviewSeverity, status: "open", x: 0, z: 0, targetIds: selectedId ? [selectedId] : undefined }] } });
+    setReviewText("");
+  };
+  const patchDraft = (id: string, patch: Partial<DraftElement>) =>
+    update({ drafts: (infra.drafts ?? []).map((draft) => draft.id === id ? { ...draft, ...constrainedDraftPatch(draft, patch, infra.drafts ?? []) } : draft) });
+
+  const operateDraft = (operation: "trim" | "extend" | "offset" | "rotate" | "mirror") => {
+    if (selectedDraft) patchDraft(selectedDraft.id, applyDraftOperation(selectedDraft, operation));
+  };
+
+  const arrayDraft = () => {
+    if (!selectedDraft) return;
+    const copies = duplicateDraftArray(selectedDraft);
+    update({ drafts: [...(infra.drafts ?? []), ...copies.slice(1)] });
+    setSelectedId(copies[copies.length - 1].id);
+  };
+
+  const draftingPanel = (
+    <Section title="Civil site drafting">
+      <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
+        Draw a line or dimension on the generated site for a working alignment, grade note, or contour reference. Select it with the canvas and edit its measured values here.
+      </p>
+      {selectedDraft ? (
+        <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold capitalize text-slate-200">{selectedDraft.civilKind ?? selectedDraft.kind}</p>
+            <button onClick={() => { update({ drafts: (infra.drafts ?? []).filter((draft) => draft.id !== selectedDraft.id) }); setSelectedId(null); }} className="text-xs font-semibold text-rose-400">Remove</button>
+          </div>
+           <Select label="Annotation" value={selectedDraft.civilKind ?? "contour"} onChange={(e) => patchDraft(selectedDraft.id, { civilKind: e.target.value as DraftElement["civilKind"] })}>
+            <option value="contour">Contour reference</option>
+            <option value="alignment">Alignment</option>
+            <option value="grade">Grade annotation</option>
+           </Select>
+           <ParametricControls
+             family={selectedDraft.family}
+             locks={selectedDraft.locks}
+             constraints={selectedDraft.constraints}
+             targets={(infra.drafts ?? []).filter((draft) => draft.id !== selectedDraft.id).map((draft) => ({ id: draft.id, label: draft.family?.instance || draft.label || `${draft.kind} ${draft.id.slice(-4)}` }))}
+              onChange={(patch) => patchDraft(selectedDraft.id, patch)}
+            />
+           <div className="grid grid-cols-3 gap-1.5">
+             {(["trim", "extend", "offset", "rotate", "mirror"] as const).map((operation) => <Button key={operation} size="sm" variant="secondary" onClick={() => operateDraft(operation)}>{operation[0].toUpperCase() + operation.slice(1)}</Button>)}
+             <Button size="sm" variant="secondary" onClick={arrayDraft}>Array x3</Button>
+           </div>
+           <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2">
+             <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-amber-300">Editable grips</p>
+             <div className="grid grid-cols-4 gap-1.5">
+               <Button size="sm" variant="secondary" onClick={() => patchDraft(selectedDraft.id, patchDraftGrip(selectedDraft, "width-start", 0.5))}>W-</Button>
+               <Button size="sm" variant="secondary" onClick={() => patchDraft(selectedDraft.id, patchDraftGrip(selectedDraft, "width-end", 0.5))}>W+</Button>
+               <Button size="sm" variant="secondary" onClick={() => patchDraft(selectedDraft.id, patchDraftGrip(selectedDraft, "depth-start", 0.5))}>D-</Button>
+               <Button size="sm" variant="secondary" onClick={() => patchDraft(selectedDraft.id, patchDraftGrip(selectedDraft, "depth-end", 0.5))}>D+</Button>
+             </div>
+           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Num label="X" value={selectedDraft.x} onChange={(v) => patchDraft(selectedDraft.id, { x: v })} step={1} unit=" m" />
+            <Num label="Z" value={selectedDraft.z} onChange={(v) => patchDraft(selectedDraft.id, { z: v })} step={1} unit=" m" />
+            <Num label="Length" value={selectedDraft.w} onChange={(v) => patchDraft(selectedDraft.id, { w: Math.max(v || 0.5, 0.5) })} min={0.5} step={1} unit=" m" />
+            <Num label="Elevation" value={selectedDraft.elevationM ?? 0} onChange={(v) => patchDraft(selectedDraft.id, { elevationM: v })} step={0.1} unit=" m" />
+            <Num label="Grade" value={selectedDraft.gradePct ?? 0} onChange={(v) => patchDraft(selectedDraft.id, { gradePct: v })} step={0.1} unit=" %" />
+            <Num label="Rotation" value={selectedDraft.rotationDeg} onChange={(v) => patchDraft(selectedDraft.id, { rotationDeg: v })} step={1} unit=" °" />
+          </div>
+        </div>
+      ) : <p className="text-xs text-slate-600">No civil annotation selected.</p>}
+    </Section>
+  );
 
   const facilitiesPanel = (
     <Section title={`${INFRA_LABELS[kind]} facilities`}>
@@ -236,6 +350,7 @@ export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorP
 
   const locationPanel = (
     <Section title="Where will it be built?">
+      <TerrainControls value={infra.terrain} width={infraExtent(infra).w} depth={infraExtent(infra).d} onChange={(terrain) => update({ terrain })} />
       <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
         {kind === "highway"
           ? "Search the corridor and trace the road alignment on the satellite map. The captured length and bearing set the model and the takeoff."
@@ -388,6 +503,23 @@ export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorP
       </Section>
     );
 
+  const modelActionPanel = (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">Parametric model</p>
+      <p className="mt-1 text-xs leading-relaxed text-slate-400">
+        {infra.modelReady === false
+          ? "The canvas is intentionally empty. Adjust the design values, add facilities, then generate the model when you are ready."
+          : "The model is generated from the current parameters. You can return to an empty canvas and rebuild it at any time."}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => update({ modelReady: true })}>
+          {infra.modelReady === false ? "Generate model" : "Regenerate model"}
+        </Button>
+        {infra.modelReady !== false && <Button size="sm" variant="secondary" onClick={() => update({ modelReady: false })}>Return to empty canvas</Button>}
+      </div>
+    </div>
+  );
+
   /* ------------------------------ Takeoff step ------------------------------ */
   const exportNotes = async (how: "download" | "copy" | "share") => {
     const text = buildInfraNotesText({ projectName: projectName || "Untitled project", infra });
@@ -408,6 +540,11 @@ export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorP
     }
   };
 
+  const exportBoq = () => {
+    download(boqFilename(projectName || "project"), buildBoqCsv(takeoff.items), "text/csv;charset=utf-8");
+    toast.push({ title: "BOQ downloaded", description: "Planning quantities exported as CSV.", tone: "success" });
+  };
+
   const takeoffPanel = (
     <Section title="Material takeoff & notes">
       <div className="grid grid-cols-2 gap-2">
@@ -420,6 +557,7 @@ export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorP
       </div>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={() => void exportNotes("download")}>Download .txt</Button>
+        <Button size="sm" variant="secondary" onClick={exportBoq}>Download BOQ .csv</Button>
         <Button size="sm" variant="secondary" onClick={() => void exportNotes("copy")}>Copy for notes</Button>
         <Button size="sm" variant="secondary" onClick={() => void exportNotes("share")}>Share</Button>
       </div>
@@ -447,23 +585,66 @@ export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorP
     </Section>
   );
 
+  const reviewPanel = (
+    <Section title="Coordination review">
+      <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
+         Site-fit, vertical-envelope, clearance, MEP-to-facility, and approximate structure checks. Scores are screening priorities, not code compliance.
+      </p>
+      <div className="space-y-2">
+         <p className="text-xs font-semibold text-slate-300">Automatic checks ({reviewFindings.length}) · risk {reviewRiskScore(reviewFindings)}/100</p>
+        {reviewFindings.length === 0 && <p className="text-xs text-emerald-300">No basic site-fit clashes detected.</p>}
+         {reviewFindings.map((finding) => <button key={finding.id} onClick={() => setSelectedId(finding.targetIds[0])} className="block w-full rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-left text-xs text-amber-200"><span className="font-semibold">{finding.severity} · {finding.score}/100</span> · {finding.category} · {finding.text}<span className="mt-1 block text-[10px] text-amber-300/70">Approximation: {finding.approximation}</span></button>)}
+      </div>
+      <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+        <p className="text-xs font-semibold text-slate-300">Add coordination markup</p>
+        <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} placeholder="e.g. Confirm utility crossing at chainage 1+200" className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500" />
+        <div className="flex gap-2"><Select label="Severity" value={reviewSeverity} onChange={(e) => setReviewSeverity(e.target.value as ReviewSeverity)}><option value="note">Note</option><option value="warning">Warning</option><option value="blocker">Blocker</option></Select><Button size="sm" className="mt-6" onClick={addReviewMarker} disabled={!reviewText.trim()}>Add markup</Button></div>
+      </div>
+      <div className="space-y-2"><p className="text-xs font-semibold text-slate-300">Saved markups ({markers.length})</p>{markers.length === 0 && <p className="text-xs text-slate-600">No saved coordination markups.</p>}{markers.map((marker) => <div key={marker.id} className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs"><div className="flex items-start justify-between gap-2"><span className="text-slate-200">{marker.text}</span><button className="text-rose-400" onClick={() => update({ review: { markers: markers.filter((m) => m.id !== marker.id) } })}>Remove</button></div><button className="mt-1 text-slate-500 hover:text-emerald-300" onClick={() => update({ review: { markers: markers.map((m) => m.id === marker.id ? { ...m, status: m.status === "open" ? "resolved" : "open" } : m) } })}>{marker.severity} · {marker.status}</button></div>)}</div>
+    </Section>
+  );
+
+  const mepPanel = <Section title="MEP coordination"><MepPanel value={infra.mep} onChange={(mep) => update({ mep })} /></Section>;
+
   const panels: Record<StepId, React.ReactNode> = {
-    location: locationPanel,
-    design: <>{designPanel}{facilitiesPanel}</>,
+    location: <>{locationPanel}{draftingPanel}</>,
+    design: <>{modelActionPanel}{designPanel}{facilitiesPanel}{draftingPanel}{mepPanel}</>,
     takeoff: takeoffPanel,
+    review: reviewPanel,
   };
 
   const activeIndex = STEPS.findIndex((s) => s.id === step);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <div className="gw-sheet-toolbar relative mb-2 mt-2 flex min-h-10 items-center gap-2 overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/80 px-2 py-1.5 backdrop-blur">
+         <span className="hidden px-2 text-[10px] font-bold uppercase tracking-[.16em] text-slate-500 sm:inline">CAD tools</span>
+         {design && <DesignExportMenu design={design} projectName={projectName} />}
+         <CadToolPalette active={activeTool} onChange={(tool) => { setActiveTool(tool); if (selectedDraft && ["trim", "extend", "offset", "rotate", "mirror"].includes(tool)) operateDraft(tool as "trim" | "extend" | "offset" | "rotate" | "mirror"); if (selectedDraft && tool === "array") arrayDraft(); }} compact tools={["select", "move", "measure", "rotate", "offset", "trim", "extend", "mirror", "array", "line", "rectangle", "circle", "dimension"]} />
+        <Button variant="ghost" size="sm" onClick={() => setLayersOpen((open) => !open)}>Layers</Button>
+        <Button variant="ghost" size="sm" onClick={undo} disabled={historyRef.current.past.length === 0}>Undo</Button>
+        <Button variant="ghost" size="sm" onClick={redo} disabled={historyRef.current.future.length === 0}>Redo</Button>
+        {layersOpen && (
+          <div className="absolute right-2 top-12 z-30 w-56 rounded-xl border border-slate-700 bg-slate-900/95 p-2 shadow-2xl backdrop-blur">
+            <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">Layer visibility</p>
+            {layers.map((layer) => (
+              <button key={layer.id} onClick={() => toggleLayer(layer.id)} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-slate-300 hover:bg-slate-800">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: layer.color }} />
+                <span className="flex-1">{layer.name}</span>
+                <span className={layer.visible ? "text-emerald-300" : "text-slate-600"}>{layer.visible ? "ON" : "OFF"}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <div className="flex w-full shrink-0 flex-col border-r border-slate-800 bg-slate-900/40 lg:w-96">
+         <div className="flex w-full shrink-0 flex-col border-r border-slate-800 bg-slate-900/40 lg:w-96">
           <div className="flex gap-1 overflow-x-auto border-b border-slate-800 px-3 py-2">
             {STEPS.map((s, i) => (
-              <button
+               <button
                 key={s.id}
                 onClick={() => setStep(s.id)}
+                aria-current={step === s.id ? "step" : undefined}
                 className={cn(
                   "flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
                   step === s.id ? "bg-emerald-500/15 text-emerald-300" : "text-slate-500 hover:bg-slate-800",
@@ -477,13 +658,13 @@ export function InfraEditor({ kind, infra, onChange, projectName }: InfraEditorP
               </button>
             ))}
           </div>
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">{panels[step]}</div>
+           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4"><SectionControls value={infra.section} onChange={(section) => update({ section })} />{panels[step]}</div>
         </div>
 
         <div className="relative min-h-[420px] flex-1">
-          <InfraScene infra={infra} />
-          <div className="pointer-events-none absolute left-3 top-3 rounded-xl bg-slate-950/80 px-3 py-2 text-xs text-slate-300 backdrop-blur">
-            {INFRA_LABELS[kind]}
+           <InfraScene infra={infra} activeTool={activeTool} onSelect={setSelectedId} onChange={commitInfra} />
+           <div className="pointer-events-none absolute left-3 top-3 rounded-xl bg-slate-950/80 px-3 py-2 text-xs text-slate-300 backdrop-blur">
+             {INFRA_LABELS[kind]} · {infra.section?.enabled ? `Section ${infra.section.axis.toUpperCase()} / ${infra.section.depth} m` : "Full model"}
           </div>
           <div className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] rounded-xl bg-slate-950/85 px-3 py-2 text-xs text-emerald-300 backdrop-blur">
             {infraSummary(infra)}

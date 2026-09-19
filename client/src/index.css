@@ -33,6 +33,42 @@ body {
 
 button, a, input, select { -webkit-tap-highlight-color: transparent; }
 button:active { transform: translateY(1px); }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid #e5bd67;
+  outline-offset: 2px;
+}
+
+.gw-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3.25rem;
+  padding: 0.7rem 1rem;
+  border: 1px solid rgba(71, 85, 105, 0.55);
+  border-radius: 0.9rem;
+  background: linear-gradient(110deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.62));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
+}
+
+.gw-sheet-toolbar {
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.gw-sheet-section {
+  border-top: 1px solid rgba(71, 85, 105, 0.38);
+  padding-top: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .gw-sheet-header { align-items: flex-start; padding: 0.65rem 0.8rem; }
+  .gw-sheet-header .inline-flex { max-width: 42%; white-space: normal; text-align: right; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
 
 .gw-panel {
   border: 1px solid rgba(71, 85, 105, 0.55);

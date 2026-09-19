@@ -12,6 +12,7 @@ import { Canvas3D, type EditorApi } from "../editor/Canvas3D";
 import { CATALOG, catalogEntry, furnitureMount } from "../lib/catalog";
 import { buildDxf } from "../lib/dxf";
 import { buildBillOfMaterials, buildObjMtl } from "../lib/obj";
+import { buildBimExchange, buildBimScheduleCsv, buildIfcStep } from "../lib/bim";
 import { download, downloadBlob, zipFiles } from "../lib/download";
 import type { Design, FurnitureItem, InfraKind, ProjectType } from "../types";
 import { defaultDesign, PROJECT_TYPE_LABELS } from "../types";
@@ -21,6 +22,8 @@ import { defaultCommunity } from "../lib/community";
 import { ensureInfraDesign, INFRA_LABELS } from "../lib/infra";
 import { CommunityEditor } from "./CommunityEditor";
 import { InfraEditor } from "./InfraEditor";
+import { MepPanel } from "../components/MepPanel";
+import { SheetHeader } from "../components/SheetHeader";
 
 const SWATCHES = [
   "#7c8a99", "#a4714f", "#8a6a45", "#5d7b8a", "#6b5542", "#4c7a9c",
@@ -29,7 +32,7 @@ const SWATCHES = [
 
 const CATEGORIES = [...new Set(CATALOG.map((c) => c.category))];
 
-type PanelTab = "items" | "room" | "curtains";
+type PanelTab = "items" | "room" | "curtains" | "mep";
 type MobilePanel = PanelTab | "catalog";
 
 const wallKey = (w: "north" | "south" | "east" | "west") =>
@@ -241,8 +244,26 @@ export function Editor() {
         downloadBlob(`${stem}.glb`, blob);
       } else if (format === "csv") {
         download(`${stem}-bom.csv`, buildBillOfMaterials(design), "text/csv");
+      } else if (format === "bim") {
+        const { obj, mtl } = buildObjMtl(design);
+        const entries: { name: string; content: string | Blob }[] = [
+          { name: `${stem}.ifc`, content: buildIfcStep(design) },
+          { name: `${stem}.ifc.json`, content: buildBimExchange(design) },
+          { name: `${stem}-coordination.csv`, content: buildBimScheduleCsv(design) },
+          { name: `${stem}.dxf`, content: buildDxf(design) },
+          { name: `${stem}.obj`, content: obj },
+          { name: `${stem}.mtl`, content: mtl },
+        ];
+        try {
+          entries.push({ name: `${stem}.glb`, content: await api.exportGlb() });
+        } catch {
+          /* The structured package remains useful when the optional GLB scene is unavailable. */
+        }
+        downloadBlob(`${stem}-coordination.zip`, await zipFiles(entries));
       } else if (format === "png") {
         /* handled separately */
+      } else if (format === "ifc") {
+        download(`${stem}.ifc`, buildIfcStep(design), "application/x-step");
       }
       await recordExport(id!, format);
       toast.push({ title: `Exported ${format.toUpperCase()}`, description: `${stem}.${format === "blender" ? "zip" : format}`, tone: "success" });
@@ -279,7 +300,7 @@ export function Editor() {
   const panelContent = (
     <>
       <div className="mb-3 flex gap-1 rounded-xl bg-slate-950 p-1">
-        {([["items", "Place"], ["room", "Room"], ["curtains", "Curtains"]] as const).map(([key, label]) => (
+        {([["items", "Place"], ["room", "Room"], ["curtains", "Curtains"], ["mep", "MEP"]] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setPanelTab(key)}
@@ -391,6 +412,8 @@ export function Editor() {
           )}
         </div>
       )}
+
+      {panelTab === "mep" && <div className="flex-1 space-y-4 overflow-y-auto"><MepPanel value={design.mep} onChange={(mep) => changeDesign({ ...design, mep })} /></div>}
     </>
   );
 
@@ -404,14 +427,12 @@ export function Editor() {
   if (communityActive && community) {
     return (
       <div className="relative flex h-[calc(100vh-6rem)] flex-col lg:h-[calc(100vh-3rem)]">
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => scheduleSave(design)}
-            className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500"
-            aria-label="Project name"
-          />
+        <SheetHeader
+          eyebrow="Project sheet"
+          title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />}
+          meta={`${PROJECT_TYPE_LABELS[projectType] ?? projectType} · ${saving ? "Saving" : lastSaved ? "Saved" : "Draft"}`}
+        />
+        <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
           <p className="text-xs text-slate-500">
             {landDimensionText(community)}
             {saving ? " · saving…" : lastSaved ? " · saved" : ""}
@@ -424,7 +445,8 @@ export function Editor() {
         <CommunityEditor
            branch={residentialProject ? "residential" : "commercial"}
           community={community}
-          projectName={name}
+           projectName={name}
+           design={design}
           onChange={(c) => {
             const next = { ...design, community: c };
             setDesign(next);
@@ -438,7 +460,8 @@ export function Editor() {
   if (infraActive && infraKind && design.infra) {
     return (
       <div className="relative flex h-[calc(100vh-6rem)] flex-col lg:h-[calc(100vh-3rem)]">
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
+        <SheetHeader eyebrow="Project sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={`${INFRA_LABELS[infraKind]} · ${saving ? "Saving" : lastSaved ? "Saved" : "Draft"}`} tone="amber" />
+        <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -459,6 +482,7 @@ export function Editor() {
           kind={infraKind}
           infra={design.infra}
           projectName={name}
+          design={design}
           onChange={(next) => {
             const updated = { ...design, infra: next };
             setDesign(updated);
@@ -471,23 +495,16 @@ export function Editor() {
 
   return (
     <div className="relative flex h-[calc(100vh-6rem)] flex-col lg:h-[calc(100vh-3rem)]">
-      {/* Toolbar */}
-      <div className="mb-3 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => scheduleSave(design)}
-            className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500"
-            aria-label="Project name"
-          />
+       <SheetHeader eyebrow="Interior sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={`${PROJECT_TYPE_LABELS[projectType] ?? projectType} · ${saving ? "Saving" : lastSaved ? "Saved" : "Draft"}`} />
+       <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
+         <div className="min-w-0 flex-1">
           <p className="mt-0.5 text-xs text-slate-500">
             {design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} item(s)
             {saving ? " · saving…" : lastSaved ? " · saved" : ""}
           </p>
         </div>
 
-        <Badge tone="slate">{PROJECT_TYPE_LABELS[projectType] ?? projectType}</Badge>
+         <Badge tone="slate">{design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} items</Badge>
 
         <Button variant="secondary" size="sm" onClick={() => setCameraOpen(true)} disabled={!canUseCamera}>
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M9 3L7.3 5H4a2 2 0 00-2 2v11a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-3.3L15 3H9zm3 14a5 5 0 110-10 5 5 0 010 10zm0-8a3 3 0 100 6 3 3 0 000-6z" /></svg>
@@ -580,7 +597,7 @@ export function Editor() {
 
       {/* Mobile bottom bar (visible on small screens) */}
       <div className="flex lg:hidden shrink-0 border-t border-slate-800 bg-slate-950">
-        {([["catalog", "Library"], ["items", "Place"], ["room", "Room"], ["curtains", "Curtains"]] as const).map(([p, label]) => (
+        {([["catalog", "Library"], ["items", "Place"], ["room", "Room"], ["curtains", "Curtains"], ["mep", "MEP"]] as const).map(([p, label]) => (
           <button
             key={p}
             onClick={() => {
@@ -607,7 +624,7 @@ export function Editor() {
               {mobilePanel === "catalog" ? "Furniture library"
                 : mobilePanel === "items" ? "Place & edit items"
                 : mobilePanel === "room" ? "Room settings"
-                : "Curtains"}
+                 : mobilePanel === "curtains" ? "Curtains" : "MEP coordination"}
             </p>
             <button onClick={() => setMobilePanel(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100">
               <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M6 18L18 6" strokeLinecap="round" /></svg>
@@ -657,10 +674,26 @@ export function Editor() {
             busy={exporting === "csv"}
             onClick={() => void exportTo("csv")}
           />
+           <ConnectorCard
+             name="IFC STEP"
+             detail="Minimal IFC4 coordination model with building, storey and proxy elements"
+             format="IFC"
+             icon="M12 3l8 4v10l-8 4-8-4V7l8-4zm0 3L7 8.5v7l5 2.5 5-2.5v-7L12 6z"
+             busy={exporting === "ifc"}
+             onClick={() => void exportTo("ifc")}
+           />
+           <ConnectorCard
+             name="BIM coordination package"
+            detail="IFC-like JSON, normalized entity CSV, plus DXF/OBJ/GLB where available"
+            format="ZIP"
+            icon="M4 5h16M4 12h16M4 19h16"
+            busy={exporting === "bim"}
+            onClick={() => void exportTo("bim")}
+          />
         </div>
         <p className="mt-4 flex items-center gap-2 text-xs text-slate-500">
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" /></svg>
-          DXF is open-format and opens directly in AutoCAD. DWG/SKP are proprietary — use Autodesk Platform Services or a converter for those.
+           DXF is open-format and opens directly in AutoCAD. IFC is a minimal IFC4 coordination export with proxy/approximate geometry. DWG/SKP are proprietary — use Autodesk Platform Services or a converter for those.
         </p>
       </Modal>
 

@@ -6,6 +6,7 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import type { Design, FurnitureItem } from "../types";
 import { addTechnicalEdges } from "../lib/modelcore";
 import { buildFurniture, catalogEntry, furnitureMount } from "../lib/catalog";
+import { buildMepScene } from "../lib/mep";
 
 const MM = 0.001;
 const WALL_THICKNESS = 120;
@@ -427,11 +428,12 @@ export function Canvas3D({
     addTechnicalEdges(room, "#334155", 0.7);
     scene.add(room);
     roomGroupRef.current = room;
+    scene.add(buildMepScene(design.mep));
 
     const curtain = buildCurtainParts(design);
     if (curtain) scene.add(curtain);
     curtainGroupRef.current = curtain;
-  }, [design.room, design.curtains]);
+  }, [design.room, design.curtains, design.mep]);
 
   /* Photo overlay */
   useEffect(() => {

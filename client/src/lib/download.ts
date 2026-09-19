@@ -21,7 +21,7 @@ export function downloadBlob(filename: string, blob: Blob) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function zipFiles(entries: { name: string; content: string }[]): Promise<Blob> {
+export async function zipFiles(entries: { name: string; content: string | Blob }[]): Promise<Blob> {
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
   for (const e of entries) zip.file(e.name, e.content);

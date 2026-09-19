@@ -1,6 +1,8 @@
 import type { CommunityDesign } from "../types";
 import { FACADES, UNIT_LABELS, amenityKind, landAreaSqYards, landMeters } from "./community";
 import { computeTakeoff, type TakeoffResult } from "./takeoff";
+import { communityReviewFindings } from "./review";
+import { analyzeCommunity } from "./structural";
 
 /**
  * Notes-app export.
@@ -74,6 +76,28 @@ export function buildNotesText({ projectName, design, takeoff }: NotesContext): 
     lines.push("");
   }
 
+  lines.push("## Level & drafting schedule");
+  for (const level of design.levels ?? [{ name: "Ground Floor", elevation: 0, floorHeight: 3.2 }]) {
+    lines.push(`- ${level.name} · elevation ${level.elevation} m · floor height ${level.floorHeight} m`);
+  }
+  lines.push(`- Structural grid lines · ${design.structuralGrid?.length ?? 0}`);
+  for (const draft of design.drafts ?? []) {
+    const annotation = draft.civilKind ? ` · ${draft.civilKind}` : "";
+    lines.push(`- ${draft.kind}${annotation} · ${draft.w} × ${draft.d} m at (${draft.x}, ${draft.z})`);
+  }
+  lines.push("");
+
+  const structural = analyzeCommunity(design);
+  lines.push("## Preliminary structural screening");
+  lines.push("Not certified engineering, a code check, or a substitute for site-specific loads, geotechnical information, sealed drawings, or a licensed structural engineer.");
+  lines.push(`- Floor area · ${structural.totalAreaM2.toFixed(0)} m²`);
+  lines.push(`- Gravity load screen · ${structural.totalLoadKN.toFixed(0)} kN`);
+  lines.push(`- Wind base shear screen · ${structural.totalWindBaseShearKN.toFixed(0)} kN`);
+  lines.push(`- Seismic base shear screen · ${structural.totalSeismicBaseShearKN.toFixed(0)} kN`);
+  structural.results.forEach((result) => lines.push(`- ${result.tower.label} · governing ${result.governingCombination} · ${result.governingLoadKN.toFixed(0)} kN · lateral screen ${result.lateralUtilization.toFixed(2)}x`));
+  structural.warnings.forEach((warning) => lines.push(`- Warning · ${warning}`));
+  lines.push("");
+
   if (design.exteriors.length > 0) {
     lines.push("## Exterior material panels");
     design.exteriors.forEach((p) => {
@@ -94,6 +118,15 @@ export function buildNotesText({ projectName, design, takeoff }: NotesContext): 
     });
     lines.push("");
   }
+
+  const findings = communityReviewFindings(design);
+  const markups = design.review?.markers ?? [];
+  lines.push("## Coordination review");
+  lines.push(`Automatic findings · ${findings.length}`);
+  findings.forEach((finding) => lines.push(`- ${finding.severity} (${finding.score}/100, ${finding.category}): ${finding.text} [${finding.approximation}]`));
+  lines.push(`Saved markups · ${markups.length}`);
+  markups.forEach((marker) => lines.push(`- ${marker.severity} / ${marker.status}: ${marker.text}`));
+  lines.push("");
 
   lines.push("## Material takeoff");
   for (const g of t.groups) {
@@ -119,6 +152,19 @@ export function buildNotesText({ projectName, design, takeoff }: NotesContext): 
 export function notesFilename(projectName: string): string {
   const safe = projectName.replace(/[^a-z0-9-_ ]/gi, "").trim().replace(/\s+/g, "-").slice(0, 40) || "project";
   return `${safe}-brief.txt`;
+}
+
+export function boqFilename(projectName: string): string {
+  const safe = projectName.replace(/[^a-z0-9-_ ]/gi, "").trim().replace(/\s+/g, "-").slice(0, 40) || "project";
+  return `${safe}-boq.csv`;
+}
+
+export function buildBoqCsv(items: Array<{ group: string; label: string; qty: number; unit: string; basis: string }>): string {
+  const cell = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+  return [
+    ["Group", "Item", "Quantity", "Unit", "Basis"].map(cell).join(","),
+    ...items.map((item) => [item.group, item.label, item.qty, item.unit, item.basis].map(cell).join(",")),
+  ].join("\n");
 }
 
 export async function copyToClipboard(text: string): Promise<boolean> {

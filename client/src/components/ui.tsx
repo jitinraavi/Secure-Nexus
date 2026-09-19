@@ -143,13 +143,16 @@ export function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onClick={onClose} />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="gw-modal-title"
         className={cn(
           "relative w-full rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl",
           wide ? "max-w-2xl" : "max-w-md",
         )}
       >
         <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-100">{title}</h3>
+          <h3 id="gw-modal-title" className="text-base font-semibold text-slate-100">{title}</h3>
           <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:text-slate-200" aria-label="Close">
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />

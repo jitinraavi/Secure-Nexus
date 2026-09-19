@@ -136,6 +136,9 @@ export function computeTakeoff(design: CommunityDesign): TakeoffResult {
   const openArea = Math.max(siteArea - footprint - (ug ? 0 : 0) - amenityArea * 0.5, 0);
   const paving = parkingBays * 12.5 + amenityArea * 0.35 + siteArea * 0.08;
   const softscape = Math.max(amenityArea * 0.6 + openArea * 0.45, 0);
+  const draftedStructural = (design.drafts ?? [])
+    .filter((draft) => draft.kind === "wall" || draft.kind === "slab" || draft.kind === "column" || draft.kind === "roof")
+    .reduce((sum, draft) => sum + draft.w * draft.d * Math.max(draft.h ?? 0.2, 0.05), 0);
 
   /* ------------------------- Cement / sand / aggregate -------------------- */
   const cementBags = concrete * 6.5;
@@ -153,6 +156,7 @@ export function computeTakeoff(design: CommunityDesign): TakeoffResult {
     { key: "pillars", group: "Concrete", label: `Basement columns (${pillarCount} nos)`, qty: round(pillars), unit: "m³", basis: "Count × 0.5×0.5 × clear height" },
     { key: "cores", group: "Concrete", label: "Lift & stair core walls", qty: round(liftCores), unit: "m³", basis: "Core walls allowance" },
     { key: "superstructure", group: "Concrete", label: "Superstructure — slabs, beams, columns", qty: round(superstructure), unit: "m³", basis: "Built-up area × 0.18 m equivalent" },
+    { key: "drafted-structural", group: "Concrete", label: "Drafted structural elements", qty: round(draftedStructural), unit: "m³", basis: "Stored wall, slab, column and roof geometry" },
     { key: "ramp", group: "Concrete", label: "Vehicle ramp (deck + walls)", qty: round(rampConcrete), unit: "m³", basis: "Ramp width × length × sections" },
 
     { key: "steel", group: "Steel", label: "Reinforcement steel (Fe500)", qty: round(steel, 2), unit: "t", basis: "100 kg per m³ of concrete" },
@@ -171,12 +175,17 @@ export function computeTakeoff(design: CommunityDesign): TakeoffResult {
     { key: "softscape", group: "Site & external", label: "Softscape / landscaping", qty: round(softscape), unit: "m²", basis: "Amenity greens + open area" },
     { key: "bays", group: "Site & external", label: "Parking bays", qty: parkingBays, unit: "nos", basis: "Surface + basement bay grid" },
 
+    { key: "levels", group: "Schedules", label: "Building levels", qty: Math.max(design.levels?.length ?? 0, 1), unit: "levels", basis: "Persisted level schedule" },
+    { key: "grid-lines", group: "Schedules", label: "Structural grid lines", qty: design.structuralGrid?.length ?? 0, unit: "nos", basis: "Persisted X/Z grid" },
+    { key: "room-plans", group: "Schedules", label: "Room plans", qty: design.interiors.length, unit: "nos", basis: "Persisted interior room plans" },
+    { key: "draft-elements", group: "Schedules", label: "Drafting elements", qty: design.drafts?.length ?? 0, unit: "nos", basis: "Persisted CAD geometry and annotations" },
+
     { key: "cement", group: "Binders", label: "Cement (OPC 53 grade)", qty: round(cementBags, 0), unit: "bags", basis: "6.5 bags per m³ of concrete" },
     { key: "sand", group: "Binders", label: "Fine aggregate (sand)", qty: round(sandM3), unit: "m³", basis: "Concrete + plaster mortar" },
     { key: "aggregate", group: "Binders", label: "Coarse aggregate", qty: round(aggregateM3), unit: "m³", basis: "Concrete + block infill" },
   ];
 
-  const groupOrder = ["Earthwork", "Concrete", "Steel", "Masonry", "Finishes", "Facade", "Site & external", "Binders"];
+  const groupOrder = ["Earthwork", "Concrete", "Steel", "Masonry", "Finishes", "Facade", "Site & external", "Schedules", "Binders"];
   const groups = groupOrder
     .map((g) => ({ group: g, items: items.filter((i) => i.group === g) }))
     .filter((g) => g.items.length > 0);

@@ -1,29 +1,42 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AmenityData,
+  BuildingLevel,
   BuildingBranch,
   CommercialStyle,
   CommunityDesign,
+  DraftElement,
   DoorFacing,
   ExteriorPanel,
+  InteriorRoom,
   TowerData,
   TowerOpening,
   ResidentialStyle,
   UnitSystem,
+  ReviewSeverity,
 } from "../types";
 import { Button, Input, Modal, Select, Toggle } from "../components/ui";
+import { ParametricControls } from "../components/ParametricControls";
+import { CadToolPalette, type CadTool } from "../components/CadToolPalette";
 import { CommunityScene, type SceneContextTarget } from "../editor/CommunityScene";
 import { RoomEditor } from "../editor/RoomEditor";
 import { SiteLocator } from "../editor/SiteLocator";
 import { type BoundaryMetrics } from "../lib/geo";
 import { useToast } from "../components/Toast";
 import { cn } from "../lib/cn";
+import { SectionControls } from "../components/SectionControls";
+import { TerrainControls } from "../components/TerrainControls";
 import { uid } from "../lib/modelcore";
 import { catalogEntry } from "../lib/catalog";
 import { download } from "../lib/download";
 import { computeTakeoff } from "../lib/takeoff";
-import { buildNotesText, copyToClipboard, notesFilename, shareText } from "../lib/notes";
+import { buildBoqCsv, buildNotesText, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
+import { communityReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
+import { applyDraftOperation, constrainedDraftPatch, constrainedDraftSize, duplicateDraftArray, draftingSettings, patchDraftGrip } from "../lib/drafting";
+import { analyzeCommunity, structuralSettings } from "../lib/structural";
 import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects";
+import { MepPanel } from "../components/MepPanel";
+import { DesignExportMenu } from "../components/DesignExportMenu";
 import {
   AMENITIES,
   DOOR_FACING_LABELS,
@@ -36,22 +49,36 @@ import {
   interiorLabel,
   landAreaSqYards,
   landMeters,
+  levelsForDesign,
   makeAmenity,
   makeRoom,
   towerMeters,
 } from "../lib/community";
 
-type StepId = "land" | "parking" | "basement" | "amenities" | "towers" | "exterior" | "interiors" | "takeoff";
+type StepId = "land" | "parking" | "basement" | "levels" | "drafting" | "analysis" | "amenities" | "towers" | "exterior" | "interiors" | "mep" | "takeoff" | "review";
+
+const COMMUNITY_LAYERS = [
+  { id: "buildings", name: "Buildings", color: "#d6a84a" },
+  { id: "site", name: "Site features", color: "#7fb6c9" },
+  { id: "drafting", name: "Drafting geometry", color: "#e5bd67" },
+  { id: "interiors", name: "Interior room plans", color: "#5eead4" },
+  { id: "mep", name: "MEP coordination", color: "#f59e0b" },
+] as const;
 
 const STEPS: { id: StepId; label: string }[] = [
   { id: "land", label: "Land" },
   { id: "parking", label: "Parking" },
   { id: "basement", label: "Basement" },
+  { id: "levels", label: "Levels & grid" },
+  { id: "drafting", label: "Drafting & structure" },
+  { id: "analysis", label: "Preliminary analysis" },
   { id: "amenities", label: "Ground floor amenities" },
   { id: "towers", label: "Towers & floors" },
   { id: "exterior", label: "Exterior" },
   { id: "interiors", label: "Interiors" },
+  { id: "mep", label: "MEP coordination" },
   { id: "takeoff", label: "Takeoff & notes" },
+  { id: "review", label: "Review" },
 ];
 
 interface CommunityEditorProps {
@@ -59,6 +86,7 @@ interface CommunityEditorProps {
   community: CommunityDesign;
   onChange: (c: CommunityDesign) => void;
   projectName?: string;
+  design?: import("../types").Design;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -137,10 +165,12 @@ function UndergroundForm({
   );
 }
 
-export function CommunityEditor({ branch, community, onChange, projectName }: CommunityEditorProps) {
+export function CommunityEditor({ branch, community, onChange, projectName, design }: CommunityEditorProps) {
   const toast = useToast();
   const [step, setStep] = useState<StepId>("land");
   const [focusMode, setFocusMode] = useState(false);
+  const [activeTool, setActiveTool] = useState<CadTool>("select");
+  const [layersOpen, setLayersOpen] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [pickKind, setPickKind] = useState(() => amenitiesFor(branch)[0]?.kind ?? AMENITIES[0].kind);
   const [newRoomType, setNewRoomType] = useState("living");
@@ -148,7 +178,12 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const [context, setContext] = useState<SceneContextTarget | null>(null);
   const [gen, setGen] = useState<{ mode: "site" | "room"; roomId?: string; x: number; z: number; text: string } | null>(null);
   const [furnishRoomId, setFurnishRoomId] = useState<string | null>(null);
+  const [reviewText, setReviewText] = useState("");
+  const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
   const c = community;
+  const levels = levelsForDesign(c);
+  const activeLevelId = c.activeLevelId && levels.some((level) => level.id === c.activeLevelId) ? c.activeLevelId : levels[0]?.id;
+  const historyRef = useRef<{ past: CommunityDesign[]; future: CommunityDesign[] }>({ past: [], future: [] });
 
   useEffect(() => {
     const available = amenitiesFor(branch, c.commercialStyle);
@@ -176,11 +211,59 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   };
 
   const takeoff = useMemo(() => computeTakeoff(c), [c]);
+  const structuralAnalysis = useMemo(() => analyzeCommunity(c), [c]);
 
-  const update = (patch: Partial<CommunityDesign>) => onChange({ ...c, ...patch });
+  const commitDesign = (next: CommunityDesign) => {
+    historyRef.current.past = [...historyRef.current.past.slice(-49), c];
+    historyRef.current.future = [];
+    onChange(next);
+  };
+
+  const update = (patch: Partial<CommunityDesign>) => commitDesign({ ...c, ...patch });
+
+  const layers = c.layers ?? COMMUNITY_LAYERS.map((layer) => ({ ...layer, visible: true }));
+  const toggleLayer = (id: string) => update({ layers: layers.map((layer) => layer.id === id ? { ...layer, visible: !layer.visible } : layer) });
+
+  const undo = () => {
+    const previous = historyRef.current.past.pop();
+    if (!previous) return;
+    historyRef.current.future.unshift(c);
+    onChange(previous);
+  };
+
+  const redo = () => {
+    const next = historyRef.current.future.shift();
+    if (!next) return;
+    historyRef.current.past.push(c);
+    onChange(next);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT") return;
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z") return;
+      event.preventDefault();
+      if (event.shiftKey) redo(); else undo();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [redo, undo]);
 
   const selectedTower = c.towers.find((t) => t.id === selectedId);
   const selectedAmenity = c.amenities.find((a) => a.id === selectedId);
+  const selectedDraft = (c.drafts ?? []).find((d) => d.id === selectedId);
+  const reviewFindings = communityReviewFindings(c);
+  const markers = reviewMarkers(c.review);
+
+  const addReviewMarker = () => {
+    const text = reviewText.trim();
+    if (!text) return;
+    const target = selectedTower ?? selectedAmenity;
+    const marker = { id: uid("review"), text, severity: reviewSeverity, status: "open" as const, x: target?.x ?? 0, z: target?.z ?? 0, targetIds: target ? [target.id] : undefined };
+    update({ review: { markers: [...markers, marker] } });
+    setReviewText("");
+  };
 
   const addSiteObject = (recipe: ReturnType<typeof parseObjectQuery>, x: number, z: number) => {
     if (!recipe) return;
@@ -280,8 +363,11 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
 
   /* ------------------------------- Land step ------------------------------- */
   const land = c.land;
+  const terrainPanel = <TerrainControls value={c.terrain} width={landMeters(land).w} depth={landMeters(land).d} onChange={(terrain) => update({ terrain })} />;
   const landPanel = (
-    <Section title="Plot size">
+    <>
+      {terrainPanel}
+      <Section title="Plot size">
       <SiteLocator
         location={c.location}
         onChange={(loc) => update({ location: loc })}
@@ -312,7 +398,8 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
         <Num label="Width" value={land.width} onChange={(v) => update({ land: { ...land, width: Math.max(v > 0 ? v : 1, 1) } })} min={1} step={0.5} unit={` ${UNIT_LABELS[land.unit]}`} />
         <Num label="Depth" value={land.depth} onChange={(v) => update({ land: { ...land, depth: Math.max(v > 0 ? v : 1, 1) } })} min={1} step={0.5} unit={` ${UNIT_LABELS[land.unit]}`} />
       </div>
-    </Section>
+      </Section>
+    </>
   );
 
   /* ------------------------------ Parking step ----------------------------- */
@@ -386,6 +473,73 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   const patchAmenity = (id: string, patch: Partial<AmenityData>) =>
     update({ amenities: c.amenities.map((a) => (a.id === id ? { ...a, ...patch } : a)) });
 
+  const patchDraft = (id: string, patch: Partial<DraftElement>) => {
+    const drafts = c.drafts ?? [];
+    const draft = drafts.find((item) => item.id === id);
+    if (!draft) return;
+    update({ drafts: drafts.map((d) => (d.id === id ? { ...d, ...constrainedDraftPatch(draft, patch, drafts) } : d)) });
+  };
+
+  const operateDraft = (operation: "trim" | "extend" | "offset" | "rotate" | "mirror") => {
+    if (selectedDraft) patchDraft(selectedDraft.id, applyDraftOperation(selectedDraft, operation));
+  };
+
+  const arrayDraft = () => {
+    if (!selectedDraft) return;
+    const copies = duplicateDraftArray(selectedDraft);
+    update({ drafts: [...(c.drafts ?? []), ...copies.slice(1)] });
+    setSelectedId(copies[copies.length - 1].id);
+  };
+
+  const patchLevel = (id: string, patch: Partial<BuildingLevel>) =>
+    update({ levels: levels.map((level) => (level.id === id ? { ...level, ...patch } : level)) });
+
+  const levelsPanel = (
+    <Section title="Levels & structural grid">
+      <Select label="Floor plan level" value={activeLevelId ?? ""} onChange={(e) => update({ activeLevelId: e.target.value })}>
+        {levels.map((level) => <option key={level.id} value={level.id}>{level.name} · {level.elevation.toFixed(2)} m</option>)}
+      </Select>
+      <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
+        The selected level controls which room plans and grid elevation are shown in the scene. Tower floor numbers start at 0 for the ground floor.
+      </p>
+      <Button size="sm" onClick={() => {
+        const index = levels.length;
+        const level: BuildingLevel = { id: uid("lvl"), name: `Level ${index + 1}`, elevation: index * 3.2, floorHeight: 3.2 };
+        update({ levels: [...levels, level], activeLevelId: level.id });
+      }}>+ Add level</Button>
+      <div className="space-y-2">
+        {levels.map((level, index) => (
+          <div key={level.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <Input label={`Level ${index + 1} name`} value={level.name} onChange={(e) => patchLevel(level.id, { name: e.target.value })} />
+              {levels.length > 1 && <button onClick={() => update({ levels: levels.filter((item) => item.id !== level.id), activeLevelId: activeLevelId === level.id ? levels.find((item) => item.id !== level.id)?.id : activeLevelId })} className="mt-4 text-xs font-semibold text-rose-400">Remove</button>}
+            </div>
+             <div className="mt-2 grid grid-cols-2 gap-2">
+              <Num label="Elevation" value={level.elevation} onChange={(v) => patchLevel(level.id, { elevation: v })} step={0.1} unit=" m" />
+              <Num label="Floor height" value={level.floorHeight} onChange={(v) => patchLevel(level.id, { floorHeight: Math.max(v || 2.4, 2.4) })} step={0.1} unit=" m" />
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-emerald-400">Grid axes</p>
+      <div className="flex gap-2">
+        <Button size="sm" variant="secondary" onClick={() => update({ structuralGrid: [...(c.structuralGrid ?? []), { id: uid("grid"), axis: "x", label: `A${(c.structuralGrid?.length ?? 0) + 1}`, position: 0, extent: Math.max(landMeters(land).d, 20), color: "#38bdf8" }] })}>+ X axis</Button>
+        <Button size="sm" variant="secondary" onClick={() => update({ structuralGrid: [...(c.structuralGrid ?? []), { id: uid("grid"), axis: "z", label: `${(c.structuralGrid?.length ?? 0) + 1}`, position: 0, extent: Math.max(landMeters(land).w, 20), color: "#fbbf24" }] })}>+ Z axis</Button>
+      </div>
+      {(c.structuralGrid ?? []).map((axis) => (
+        <div key={axis.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+          <div className="flex items-center justify-between"><p className="text-sm font-semibold text-slate-200">{axis.label} · {axis.axis.toUpperCase()} axis</p><button onClick={() => update({ structuralGrid: (c.structuralGrid ?? []).filter((item) => item.id !== axis.id) })} className="text-xs font-semibold text-rose-400">Remove</button></div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <Input label="Label" value={axis.label} onChange={(e) => update({ structuralGrid: (c.structuralGrid ?? []).map((item) => item.id === axis.id ? { ...item, label: e.target.value } : item) })} />
+            <Num label="Position" value={axis.position} onChange={(v) => update({ structuralGrid: (c.structuralGrid ?? []).map((item) => item.id === axis.id ? { ...item, position: v } : item) })} step={0.5} unit=" m" />
+            <Num label="Extent" value={axis.extent} onChange={(v) => update({ structuralGrid: (c.structuralGrid ?? []).map((item) => item.id === axis.id ? { ...item, extent: Math.max(v || 1, 1) } : item) })} step={1} unit=" m" />
+            <label className="block text-xs font-medium text-slate-400">Color<input type="color" value={axis.color} onChange={(e) => update({ structuralGrid: (c.structuralGrid ?? []).map((item) => item.id === axis.id ? { ...item, color: e.target.value } : item) })} className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-slate-700 bg-slate-900" /></label>
+          </div>
+        </div>
+      ))}
+    </Section>
+  );
+
   const amenitiesPanel = (
     <Section title="Site features & amenities">
       {branch === "commercial" && (
@@ -427,6 +581,135 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
     </Section>
   );
 
+  const draftingPanel = (
+    <Section title="Drafting & structural elements">
+      {(() => {
+        const settings = draftingSettings(c.drafting);
+        const setDrafting = (patch: Partial<typeof settings>) => update({ drafting: { ...settings, ...patch } });
+        return (
+          <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-200">Constraint phase</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Snapping is bounded to nearby grid and alignment references. Existing draft data stays unchanged.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Num label="Grid size" value={settings.gridSize} onChange={(v) => setDrafting({ gridSize: Math.min(Math.max(v || 0.5, 0.1), 10) })} min={0.1} max={10} step={0.1} unit=" m" />
+              <Select label="Angle snap" value={String(settings.angleIncrement)} onChange={(e) => setDrafting({ angleIncrement: Number(e.target.value) })}>
+                <option value="0">Free angle</option><option value="5">5°</option><option value="15">15°</option><option value="30">30°</option><option value="45">45°</option><option value="90">90°</option>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Toggle checked={settings.gridVisible} onChange={(gridVisible) => setDrafting({ gridVisible })} label="Show grid" />
+              <Toggle checked={settings.snapEnabled} onChange={(snapEnabled) => setDrafting({ snapEnabled })} label="Snap to grid" />
+              <Toggle checked={settings.orthogonal} onChange={(orthogonal) => setDrafting({ orthogonal })} label="Orthogonal lines" />
+              <Toggle checked={settings.alignment} onChange={(alignment) => setDrafting({ alignment })} label="Align nearby" />
+            </div>
+          </div>
+        );
+      })()}
+      {selectedDraft ? (
+        <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold capitalize text-slate-200">{selectedDraft.kind}</p>
+            <button onClick={() => update({ drafts: (c.drafts ?? []).filter((d) => d.id !== selectedDraft.id) })} className="text-xs font-semibold text-rose-400">Remove</button>
+          </div>
+           <Select label="Civil annotation" value={selectedDraft.civilKind ?? "contour"} onChange={(e) => patchDraft(selectedDraft.id, { civilKind: e.target.value as DraftElement["civilKind"] })}>
+            <option value="contour">Contour reference</option>
+            <option value="alignment">Alignment</option>
+            <option value="grade">Grade annotation</option>
+           </Select>
+           <ParametricControls
+             family={selectedDraft.family}
+             locks={selectedDraft.locks}
+             constraints={selectedDraft.constraints}
+             targets={(c.drafts ?? []).filter((draft) => draft.id !== selectedDraft.id).map((draft) => ({ id: draft.id, label: draft.family?.instance || draft.label || `${draft.kind} ${draft.id.slice(-4)}` }))}
+              onChange={(patch) => patchDraft(selectedDraft.id, patch)}
+            />
+           <div className="grid grid-cols-3 gap-1.5">
+             {(["trim", "extend", "offset", "rotate", "mirror"] as const).map((operation) => <Button key={operation} size="sm" variant="secondary" onClick={() => operateDraft(operation)}>{operation[0].toUpperCase() + operation.slice(1)}</Button>)}
+             <Button size="sm" variant="secondary" onClick={arrayDraft}>Array x3</Button>
+           </div>
+           <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2">
+             <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-amber-300">Editable grips</p>
+             <div className="grid grid-cols-4 gap-1.5">
+               <Button size="sm" variant="secondary" onClick={() => patchDraft(selectedDraft.id, patchDraftGrip(selectedDraft, "width-start", 0.5))}>W-</Button>
+               <Button size="sm" variant="secondary" onClick={() => patchDraft(selectedDraft.id, patchDraftGrip(selectedDraft, "width-end", 0.5))}>W+</Button>
+               <Button size="sm" variant="secondary" onClick={() => patchDraft(selectedDraft.id, patchDraftGrip(selectedDraft, "depth-start", 0.5))}>D-</Button>
+               <Button size="sm" variant="secondary" onClick={() => patchDraft(selectedDraft.id, patchDraftGrip(selectedDraft, "depth-end", 0.5))}>D+</Button>
+             </div>
+           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Num label="X" value={selectedDraft.x} onChange={(v) => patchDraft(selectedDraft.id, { x: v })} step={0.5} unit=" m" />
+            <Num label="Z" value={selectedDraft.z} onChange={(v) => patchDraft(selectedDraft.id, { z: v })} step={0.5} unit=" m" />
+            <Num label="Width" value={selectedDraft.w} onChange={(v) => patchDraft(selectedDraft.id, { w: constrainedDraftSize(v, draftingSettings(c.drafting)) })} min={0.1} step={0.5} unit=" m" />
+            <Num label="Depth" value={selectedDraft.d} onChange={(v) => patchDraft(selectedDraft.id, { d: constrainedDraftSize(v, draftingSettings(c.drafting)) })} min={0.1} step={0.5} unit=" m" />
+            {(selectedDraft.kind === "wall" || selectedDraft.kind === "slab" || selectedDraft.kind === "column" || selectedDraft.kind === "roof") && <Num label="Height" value={selectedDraft.h ?? 0.2} onChange={(v) => patchDraft(selectedDraft.id, { h: Math.max(v || 0.05, 0.05) })} min={0.05} step={0.1} unit=" m" />}
+            <Num label="Elevation" value={selectedDraft.elevationM ?? 0} onChange={(v) => patchDraft(selectedDraft.id, { elevationM: v })} step={0.1} unit=" m" />
+            <Num label="Grade" value={selectedDraft.gradePct ?? 0} onChange={(v) => patchDraft(selectedDraft.id, { gradePct: v })} step={0.1} unit=" %" />
+            <Num label="Rotation" value={selectedDraft.rotationDeg} onChange={(v) => patchDraft(selectedDraft.id, { rotationDeg: v })} step={15} unit=" °" />
+          </div>
+          <label className="block text-xs font-medium text-slate-400">Element color<input type="color" value={selectedDraft.color} onChange={(e) => patchDraft(selectedDraft.id, { color: e.target.value })} className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-slate-700 bg-slate-900" /></label>
+        </div>
+      ) : (
+        <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs leading-relaxed text-slate-500">Choose Wall, Slab, Column, Roof, Line, Rectangle or Circle from the CAD toolbar, then select it to edit its parametric properties.</p>
+      )}
+    </Section>
+  );
+
+  const analysisPanel = (
+    <Section title="Preliminary structural analysis">
+      <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200">
+        Planning-level estimates only. This is not certified engineering, a code check, or a substitute for a licensed structural engineer, geotechnical report, sealed drawings, or site-specific loads.
+      </p>
+      {(() => {
+        const settings = structuralSettings(c.structural);
+        const setStructural = (patch: Partial<typeof settings>) => update({ structural: { ...settings, ...patch } });
+        return <>
+          <Toggle checked={settings.enabled} onChange={(enabled) => setStructural({ enabled })} label="Enable screening estimates" />
+          <div className="grid grid-cols-2 gap-2">
+            <Num label="Dead load" value={settings.deadLoadKPa} onChange={(v) => setStructural({ deadLoadKPa: Math.max(v, 0) })} step={0.5} unit=" kPa" />
+            <Num label="Live load" value={settings.liveLoadKPa} onChange={(v) => setStructural({ liveLoadKPa: Math.max(v, 0) })} step={0.5} unit=" kPa" />
+            <Num label="Concrete strength" value={settings.concreteStrengthMPa} onChange={(v) => setStructural({ concreteStrengthMPa: Math.max(v, 10) })} step={1} unit=" MPa" />
+            <Num label="Soil bearing input" value={settings.soilBearingKPa} onChange={(v) => setStructural({ soilBearingKPa: Math.max(v, 25) })} step={10} unit=" kPa" />
+            <Num label="Column width" value={settings.columnWidthM} onChange={(v) => setStructural({ columnWidthM: Math.max(v, 0.15) })} step={0.05} unit=" m" />
+            <Num label="Column depth" value={settings.columnDepthM} onChange={(v) => setStructural({ columnDepthM: Math.max(v, 0.15) })} step={0.05} unit=" m" />
+            <Num label="Beam width" value={settings.beamWidthM} onChange={(v) => setStructural({ beamWidthM: Math.max(v, 0.15) })} step={0.05} unit=" m" />
+            <Num label="Beam depth" value={settings.beamDepthM} onChange={(v) => setStructural({ beamDepthM: Math.max(v, 0.2) })} step={0.05} unit=" m" />
+            <Num label="Footing width" value={settings.footingWidthM} onChange={(v) => setStructural({ footingWidthM: Math.max(v, 0.5) })} step={0.1} unit=" m" />
+            <Num label="Footing depth" value={settings.footingDepthM} onChange={(v) => setStructural({ footingDepthM: Math.max(v, 0.5) })} step={0.1} unit=" m" />
+            <Num label="Wind pressure" value={settings.windPressureKPa ?? 1} onChange={(v) => setStructural({ windPressureKPa: Math.max(v, 0) })} step={0.1} unit=" kPa" />
+            <Num label="Seismic coefficient" value={settings.seismicCoefficient ?? 0.12} onChange={(v) => setStructural({ seismicCoefficient: Math.max(v, 0) })} step={0.01} unit=" g" />
+          </div>
+          <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+            <p className="text-xs font-semibold text-slate-300">Editable screening combinations</p>
+            <p className="text-[11px] leading-relaxed text-slate-500">Factors are planning assumptions only. D = dead, L = live, W = wind, E = seismic.</p>
+            {structuralAnalysis.loadCombinations.map((combination, index) => <div key={combination.id} className="grid grid-cols-[1.3fr_repeat(4,minmax(0,1fr))] gap-1.5">
+              <Input aria-label={`${combination.label} label`} value={combination.label} onChange={(e) => setStructural({ loadCombinations: structuralAnalysis.loadCombinations.map((item, itemIndex) => itemIndex === index ? { ...item, label: e.target.value } : item) })} placeholder="Combination" />
+              <Num label="D" value={combination.deadFactor} onChange={(v) => setStructural({ loadCombinations: structuralAnalysis.loadCombinations.map((item, itemIndex) => itemIndex === index ? { ...item, deadFactor: Math.max(v, 0) } : item) })} step={0.1} />
+              <Num label="L" value={combination.liveFactor} onChange={(v) => setStructural({ loadCombinations: structuralAnalysis.loadCombinations.map((item, itemIndex) => itemIndex === index ? { ...item, liveFactor: Math.max(v, 0) } : item) })} step={0.1} />
+              <Num label="W" value={combination.windFactor} onChange={(v) => setStructural({ loadCombinations: structuralAnalysis.loadCombinations.map((item, itemIndex) => itemIndex === index ? { ...item, windFactor: Math.max(v, 0) } : item) })} step={0.1} />
+              <Num label="E" value={combination.seismicFactor} onChange={(v) => setStructural({ loadCombinations: structuralAnalysis.loadCombinations.map((item, itemIndex) => itemIndex === index ? { ...item, seismicFactor: Math.max(v, 0) } : item) })} step={0.1} />
+            </div>)}
+          </div>
+        </>;
+      })()}
+      <div className="grid grid-cols-2 gap-2">
+         {[['Total floor area', `${structuralAnalysis.totalAreaM2.toFixed(0)} m²`], ['Estimated gravity load', `${structuralAnalysis.totalLoadKN.toFixed(0)} kN`], ['Wind base shear screen', `${structuralAnalysis.totalWindBaseShearKN.toFixed(0)} kN`], ['Seismic base shear screen', `${structuralAnalysis.totalSeismicBaseShearKN.toFixed(0)} kN`]].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2"><p className="text-[11px] text-slate-500">{label}</p><p className="text-sm font-semibold text-slate-200">{value}</p></div>)}
+      </div>
+      <div className="space-y-2">
+        {structuralAnalysis.results.map((result) => <div key={result.tower.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+          <p className="text-sm font-semibold text-slate-200">{result.tower.label}</p>
+           <p className="mt-1 text-xs text-slate-400">{result.areaM2.toFixed(1)} m² footprint · {(result.areaM2 * Math.max(result.tower.floors, 1)).toFixed(1)} m² floor area · {result.heightM.toFixed(1)} m high · {result.estimatedLoadKN.toFixed(0)} kN gravity load</p>
+           <p className="mt-1 text-xs text-cyan-300">Governing screen: {result.governingCombination} at {result.governingLoadKN.toFixed(0)} kN · W {result.windBaseShearKN.toFixed(0)} kN · E {result.seismicBaseShearKN.toFixed(0)} kN</p>
+           <div className="mt-2 space-y-1">{result.checks.map((check) => <p key={check.text} className={`text-xs ${check.status === "warning" ? "text-amber-300" : "text-emerald-300"}`}>{check.status === "warning" ? "Warning" : "Screened"}: {check.text}</p>)}</div>
+           <p className="mt-2 text-[11px] leading-relaxed text-amber-300">Reinforcement: {result.reinforcementWarning}</p>
+           {result.connectionWarnings.map((warning) => <p key={warning} className="text-[11px] leading-relaxed text-amber-300">Connection: {warning}</p>)}
+        </div>)}
+      </div>
+      {structuralAnalysis.warnings.map((warning) => <p key={warning} className="text-[11px] leading-relaxed text-slate-500">{warning}</p>)}
+    </Section>
+  );
+
   /* ------------------------------ Towers step ------------------------------ */
   const towerSpot = (index: number): { x: number; z: number } => {
     const { w: W, d: D } = landMeters(land);
@@ -458,8 +741,28 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
     update({ towers: [...c.towers, { ...defaultTowerFor(branch, names[next % names.length], spot, style), id: uid("tw") }] });
   };
 
-  const patchTower = (id: string, patch: Partial<TowerData>) =>
-    update({ towers: c.towers.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
+  const patchTower = (id: string, patch: Partial<TowerData>) => {
+    const tower = c.towers.find((item) => item.id === id);
+    if (!tower) return;
+    const next = { ...patch };
+    if (tower.locks?.x) delete next.x;
+    if (tower.locks?.z) delete next.z;
+    if (tower.locks?.width) delete next.unitWidth;
+    if (tower.locks?.depth) delete next.unitDepth;
+    if (tower.locks?.height) delete next.floorHeight;
+    for (const constraint of tower.constraints ?? []) {
+      const target = c.towers.find((item) => item.id === constraint.targetId);
+      if (!constraint.locked || !target) continue;
+      if (constraint.kind === "alignment") {
+        if (constraint.axis === "x") next.x = target.x;
+        else if (constraint.axis === "z") next.z = target.z;
+        else { next.x = target.x; next.z = target.z; }
+      } else if (constraint.kind === "parallel") next.rotY = target.rotY ?? 0;
+      else if (constraint.kind === "perpendicular") next.rotY = (target.rotY ?? 0) + 90;
+      else if (constraint.kind === "equal") { next.unitWidth = target.unitWidth; next.unitDepth = target.unitDepth; }
+    }
+    update({ towers: c.towers.map((t) => (t.id === id ? { ...t, ...next } : t)) });
+  };
 
   const customizeOpenings = (tower: TowerData) => patchTower(tower.id, { openings: tower.openings ?? [] });
 
@@ -522,10 +825,19 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
               <Num label="Unit depth" value={t.unitDepth} onChange={(v) => patchTower(t.id, { unitDepth: Math.max(v || 3, 3) })} step={0.5} unit=" m" />
               <Num label="Floor height" value={t.floorHeight} onChange={(v) => patchTower(t.id, { floorHeight: Math.max(v || 2.4, 2.4) })} step={0.1} unit=" m" />
               <Select label="Main door facing" value={t.doorFacing} onChange={(e) => patchTower(t.id, { doorFacing: e.target.value as DoorFacing })}>
-                {(Object.keys(DOOR_FACING_LABELS) as DoorFacing[]).map((f) => <option key={f} value={f}>{DOOR_FACING_LABELS[f]}</option>)}
-              </Select>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
+               {(Object.keys(DOOR_FACING_LABELS) as DoorFacing[]).map((f) => <option key={f} value={f}>{DOOR_FACING_LABELS[f]}</option>)}
+               </Select>
+             </div>
+             <div className="mt-3">
+               <ParametricControls
+                 family={t.family}
+                 locks={t.locks}
+                 constraints={t.constraints}
+                 targets={c.towers.filter((target) => target.id !== t.id).map((target) => ({ id: target.id, label: target.label }))}
+                 onChange={(patch) => patchTower(t.id, patch)}
+               />
+             </div>
+             <div className="mt-2 grid grid-cols-2 gap-2">
               <Num label="Common area / floor" value={t.commonAreaPerFloor} onChange={(v) => patchTower(t.id, { commonAreaPerFloor: Math.max(v || 0, 0) })} step={1} unit=" m²" />
               <Num label="Open space / floor" value={t.openAreaPerFloor} onChange={(v) => patchTower(t.id, { openAreaPerFloor: Math.max(v || 0, 0) })} step={1} unit=" m²" />
             </div>
@@ -651,6 +963,27 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
   );
 
   /* ----------------------------- Interiors step ---------------------------- */
+  const patchRoom = (id: string, patch: Partial<InteriorRoom>) => {
+    const room = c.interiors.find((item) => item.id === id);
+    if (!room) return;
+    const next = { ...patch };
+    if (room.locks?.x) delete next.x;
+    if (room.locks?.z) delete next.z;
+    if (room.locks?.width) delete next.w;
+    if (room.locks?.depth) delete next.d;
+    if (room.locks?.level) delete next.floor;
+    for (const constraint of room.constraints ?? []) {
+      const target = c.interiors.find((item) => item.id === constraint.targetId);
+      if (!constraint.locked || !target) continue;
+      if (constraint.kind === "alignment") {
+        if (constraint.axis === "x") next.x = target.x;
+        else if (constraint.axis === "z") next.z = target.z;
+        else { next.x = target.x; next.z = target.z; }
+      } else if (constraint.kind === "equal") { next.w = target.w; next.d = target.d; }
+      else if (constraint.kind === "level") next.floor = target.floor;
+    }
+    update({ interiors: c.interiors.map((item) => item.id === id ? { ...item, ...next } : item) });
+  };
   const interiorsPanel = (
     <Section title="Interiors">
       <div className="flex gap-2">
@@ -670,25 +1003,40 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
         }}>+ Room</Button>
       </div>
       <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
-        Name and size the rooms inside each {branch === "residential" ? "apartment" : "office"} unit. Room furniture, drag-and-drop and right-click object placement arrive in Phase 2.
+        Name and size the rooms inside each {branch === "residential" ? "apartment" : "office"} unit. Room plans are shown on the canvas when the Interior room plans layer is visible.
       </p>
       {c.interiors.length === 0 && <p className="text-xs text-slate-600">No rooms yet.</p>}
       {c.interiors.map((r) => (
-        <div key={r.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+         <div key={r.id} className={cn("rounded-xl border bg-slate-950/50 p-3", r.id === selectedId ? "border-teal-400/60" : "border-slate-800")}>
           <div className="flex items-center justify-between gap-2">
-            <Input label="Room name" value={r.name} onChange={(e) => update({ interiors: c.interiors.map((x) => x.id === r.id ? { ...x, name: e.target.value } : x) })} />
+            <Input label="Room name" value={r.name} onChange={(e) => patchRoom(r.id, { name: e.target.value })} />
             <button onClick={() => update({ interiors: c.interiors.filter((x) => x.id !== r.id) })} className="mt-4 text-xs font-semibold text-rose-400 hover:text-rose-300">Remove</button>
           </div>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <Select label="Type" value={r.type} onChange={(e) => update({ interiors: c.interiors.map((x) => x.id === r.id ? { ...x, type: e.target.value } : x) })}>
-              {INTERIOR_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
-            </Select>
-            <Num label="Width" value={r.w} onChange={(v) => update({ interiors: c.interiors.map((x) => x.id === r.id ? { ...x, w: Math.max(v || 1, 1) } : x) })} step={0.5} unit=" m" />
-            <Num label="Depth" value={r.d} onChange={(v) => update({ interiors: c.interiors.map((x) => x.id === r.id ? { ...x, d: Math.max(v || 1, 1) } : x) })} step={0.5} unit=" m" />
-            <Select label="Door facing" value={r.doorFacing} onChange={(e) => update({ interiors: c.interiors.map((x) => x.id === r.id ? { ...x, doorFacing: e.target.value as DoorFacing } : x) })}>
+           <div className="mt-2 grid grid-cols-2 gap-2">
+              <Num label="Plan X" value={r.x} onChange={(v) => patchRoom(r.id, { x: v })} step={0.5} unit=" m" />
+              <Num label="Plan Z" value={r.z} onChange={(v) => patchRoom(r.id, { z: v })} step={0.5} unit=" m" />
+              <Select label="Type" value={r.type} onChange={(e) => patchRoom(r.id, { type: e.target.value })}>
+               {INTERIOR_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+             </Select>
+               <Select label="Level" value={String(r.floor)} onChange={(e) => patchRoom(r.id, { floor: Math.max(0, Math.min(Number(e.target.value), levels.length - 1)) })}>
+                {levels.map((level, index) => <option key={level.id} value={index}>{level.name}</option>)}
+              </Select>
+              <div className="col-span-2">
+                <ParametricControls
+                  family={r.family}
+                  locks={r.locks}
+                  constraints={r.constraints}
+                  targets={c.interiors.filter((target) => target.id !== r.id).map((target) => ({ id: target.id, label: target.name }))}
+                  onChange={(patch) => patchRoom(r.id, patch)}
+                />
+              </div>
+              <Num label="Width" value={r.w} onChange={(v) => patchRoom(r.id, { w: Math.max(v || 1, 1) })} step={0.5} unit=" m" />
+              <Num label="Depth" value={r.d} onChange={(v) => patchRoom(r.id, { d: Math.max(v || 1, 1) })} step={0.5} unit=" m" />
+              <Select label="Door facing" value={r.doorFacing} onChange={(e) => patchRoom(r.id, { doorFacing: e.target.value as DoorFacing })}>
               {(Object.keys(DOOR_FACING_LABELS) as DoorFacing[]).map((f) => <option key={f} value={f}>{DOOR_FACING_LABELS[f]}</option>)}
             </Select>
-          </div>
+           </div>
+           <button onClick={() => setSelectedId(r.id)} className="mt-2 w-full rounded-lg border border-slate-700 px-2 py-1.5 text-[11px] font-semibold text-slate-300 hover:border-teal-400 hover:text-teal-300">Select room plan on canvas</button>
 
           {/* Furniture */}
           <div className="mt-2 rounded-lg border border-slate-800/70 bg-slate-950/40 p-2">
@@ -753,8 +1101,17 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
     }
   };
 
+  const exportBoq = () => {
+    download(boqFilename(projectName || "project"), buildBoqCsv(takeoff.items), "text/csv;charset=utf-8");
+    toast.push({ title: "BOQ downloaded", description: "Planning quantities exported as CSV.", tone: "success" });
+  };
+
   const takeoffPanel = (
     <Section title="Material takeoff & notes">
+      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+        <p className="gw-kicker text-emerald-300">BOQ ready</p>
+        <p className="mt-1 text-xs leading-relaxed text-slate-400">Review the planning quantities below, then download the CSV for estimating or share the project brief with your team.</p>
+      </div>
       <div className="grid grid-cols-2 gap-2">
         {[
           ["Site area", `${takeoff.summary.siteAreaM2.toLocaleString()} m²`],
@@ -774,9 +1131,10 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => void exportNotes("download")}>Download .txt</Button>
-        <Button size="sm" variant="secondary" onClick={() => void exportNotes("copy")}>Copy for notes</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => void exportNotes("download")}>Download .txt</Button>
+          <Button size="sm" variant="secondary" onClick={exportBoq}>Download BOQ .csv</Button>
+          <Button size="sm" variant="secondary" onClick={() => void exportNotes("copy")}>Copy for notes</Button>
         <Button size="sm" variant="secondary" onClick={() => void exportNotes("share")}>Share</Button>
       </div>
 
@@ -805,34 +1163,106 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
     </Section>
   );
 
+  const reviewPanel = (
+    <Section title="Coordination review">
+      <div className="flex items-center justify-between rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-2">
+        <span className="text-xs font-semibold text-rose-200">Review gate</span>
+        <span className="text-xs text-rose-300">{reviewFindings.length} automatic check{reviewFindings.length === 1 ? "" : "s"} · {markers.length} markup{markers.length === 1 ? "" : "s"}</span>
+      </div>
+      <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
+         Rotated footprint, vertical-envelope, clearance, MEP/building, and approximate structure checks. Scores are screening priorities, not code compliance.
+      </p>
+      <div className="space-y-2">
+         <p className="text-xs font-semibold text-slate-300">Automatic checks ({reviewFindings.length}) · risk {reviewRiskScore(reviewFindings)}/100</p>
+        {reviewFindings.length === 0 && <p className="text-xs text-emerald-300">No tower or amenity footprint clashes detected.</p>}
+        {reviewFindings.map((finding) => (
+          <button key={finding.id} onClick={() => setSelectedId(finding.targetIds[0])} className="block w-full rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-left text-xs text-rose-200 hover:bg-rose-500/10">
+             <span className="font-semibold">{finding.severity} · {finding.score}/100</span> · {finding.category} · {finding.text}
+             <span className="mt-1 block text-[10px] text-rose-300/70">Approximation: {finding.approximation}</span>
+          </button>
+        ))}
+      </div>
+      <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+        <p className="text-xs font-semibold text-slate-300">Add markup {selectedId ? "for selected object" : "at site origin"}</p>
+        <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} placeholder="e.g. Confirm fire access clearance" className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500" />
+        <div className="flex gap-2">
+          <Select label="Severity" value={reviewSeverity} onChange={(e) => setReviewSeverity(e.target.value as ReviewSeverity)}>
+            <option value="note">Note</option><option value="warning">Warning</option><option value="blocker">Blocker</option>
+          </Select>
+          <Button size="sm" className="mt-6" onClick={addReviewMarker} disabled={!reviewText.trim()}>Add markup</Button>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-slate-300">Saved markups ({markers.length})</p>
+        {markers.length === 0 && <p className="text-xs text-slate-600">No saved coordination markups.</p>}
+        {markers.map((marker) => (
+          <div key={marker.id} className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs">
+            <div className="flex items-start justify-between gap-2"><span className="text-slate-200">{marker.text}</span><button className="text-rose-400" onClick={() => update({ review: { markers: markers.filter((m) => m.id !== marker.id) } })}>Remove</button></div>
+            <button className="mt-1 text-slate-500 hover:text-emerald-300" onClick={() => update({ review: { markers: markers.map((m) => m.id === marker.id ? { ...m, status: m.status === "open" ? "resolved" : "open" } : m) } })}>{marker.severity} · {marker.status}</button>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+
+  const mepPanel = <Section title="MEP coordination"><MepPanel value={c.mep} onChange={(mep) => update({ mep })} /></Section>;
+
   const panels: Record<StepId, React.ReactNode> = {
     land: landPanel,
     parking: parkPanel,
     basement: basementPanel,
+    levels: levelsPanel,
+    drafting: draftingPanel,
+    analysis: analysisPanel,
     amenities: amenitiesPanel,
     towers: towersPanel,
     exterior: exteriorsPanel,
     interiors: interiorsPanel,
+    mep: mepPanel,
     takeoff: takeoffPanel,
+    review: reviewPanel,
+  };
+
+  const runSceneTool = (tool: CadTool) => {
+    setActiveTool(tool);
+    if (tool === "add-building") {
+      addTower();
+      setStep("towers");
+    }
+    if (tool === "add-feature") {
+      addAmenity();
+      setStep("amenities");
+    }
+    if (tool === "line" || tool === "rectangle" || tool === "circle" || tool === "dimension" || tool === "wall" || tool === "slab" || tool === "column" || tool === "roof") {
+      setStep("drafting");
+    }
+    if (tool === "rotate" && selectedId) {
+      if (selectedAmenity) patchAmenity(selectedId, { rotY: (selectedAmenity.rotY + 90) % 360 });
+      if (selectedTower) patchTower(selectedId, { rotY: ((selectedTower.rotY ?? 0) + 90) % 360 });
+    }
+    if (selectedDraft && ["trim", "extend", "offset", "rotate", "mirror"].includes(tool)) operateDraft(tool as "trim" | "extend" | "offset" | "rotate" | "mirror");
+    if (selectedDraft && tool === "array") arrayDraft();
   };
 
   const activeIndex = STEPS.findIndex((s) => s.id === step);
 
   return (
-    <div ref={workspaceRef} className={cn(
-      "flex min-h-0 flex-1 flex-col",
+      <div ref={workspaceRef} className={cn(
+      "relative flex min-h-0 flex-1 flex-col",
       focusMode && "fixed left-0 top-0 z-50 h-[100dvh] w-screen bg-slate-950 p-3",
     )}>
-      <div className="mb-2 flex min-h-10 items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/80 px-2 py-1.5 backdrop-blur">
-        <span className="hidden px-2 text-xs font-semibold uppercase tracking-wide text-slate-500 sm:inline">
-          Workspace
-        </span>
+      <div className="gw-sheet-toolbar mb-2 mt-2 flex min-h-10 items-center gap-2 overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/80 px-2 py-1.5 backdrop-blur">
+         <span className="hidden px-2 text-xs font-semibold uppercase tracking-wide text-slate-500 sm:inline">
+           Workspace
+         </span>
+         {design && <DesignExportMenu design={design} projectName={projectName} />}
         {focusMode && (
           <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto" aria-label="Workspace tools">
             {STEPS.map((s, i) => (
               <button
                 key={s.id}
                 onClick={() => setStep(s.id)}
+                aria-current={step === s.id ? "step" : undefined}
                 className={cn(
                   "flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition",
                   step === s.id ? "bg-emerald-500/15 text-emerald-300" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
@@ -857,7 +1287,35 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
           </svg>
           <span className="hidden sm:inline">{focusMode ? "Show tools" : "Expand canvas"}</span>
         </Button>
+        <div className="hidden items-center gap-1 border-l border-slate-800 pl-2 sm:flex">
+          <Button variant="ghost" size="sm" onClick={undo} disabled={historyRef.current.past.length === 0} title="Undo (Ctrl/Cmd+Z)">Undo</Button>
+          <Button variant="ghost" size="sm" onClick={redo} disabled={historyRef.current.future.length === 0} title="Redo (Ctrl/Cmd+Shift+Z)">Redo</Button>
+          <Button variant="ghost" size="sm" onClick={() => setLayersOpen((open) => !open)} title="Layer visibility">Layers</Button>
+        </div>
       </div>
+      {layersOpen && (
+        <div className="absolute right-3 top-12 z-30 w-56 rounded-xl border border-slate-700 bg-slate-900/95 p-2 shadow-2xl backdrop-blur">
+          <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">Layer visibility</p>
+          {layers.map((layer) => (
+            <button key={layer.id} onClick={() => toggleLayer(layer.id)} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs text-slate-300 hover:bg-slate-800">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: layer.color }} />
+              <span className="flex-1">{layer.name}</span>
+              <span className={cn("text-[10px] font-bold", layer.visible ? "text-emerald-300" : "text-slate-600")}>{layer.visible ? "ON" : "OFF"}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {focusMode && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900/70 px-2 py-1.5">
+          <span className="px-2 text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">Tools</span>
+          <CadToolPalette active={activeTool} onChange={runSceneTool} compact />
+          <span className="ml-auto hidden text-[11px] text-slate-500 md:inline">
+            {activeTool === "measure" && (selectedAmenity ? `${selectedAmenity.w} × ${selectedAmenity.d} m` : selectedTower ? `${towerMeters(selectedTower).w.toFixed(1)} × ${towerMeters(selectedTower).d.toFixed(1)} m` : "Select an object")}
+            {activeTool === "move" && "Drag a selected object in the canvas"}
+            {activeTool === "select" && "Click an object to inspect it"}
+          </span>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Left: stepper + params */}
         <div className={cn(
@@ -882,7 +1340,7 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
               </button>
             ))}
           </div>
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">{panels[step]}</div>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4"><SectionControls value={c.section} onChange={(section) => update({ section })} />{panels[step]}</div>
         </div>
 
         {/* Right: 3D scene */}
@@ -891,7 +1349,8 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
             design={c}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            onChange={onChange}
+             onChange={commitDesign}
+             activeTool={activeTool}
             onContextTarget={(t) => {
               setSelectedId(t.id ?? null);
               setContext(t);
@@ -950,7 +1409,16 @@ export function CommunityEditor({ branch, community, onChange, projectName }: Co
                 <ContextItem danger onClick={() => { update({ towers: c.towers.filter((t) => t.id !== context.id), exteriors: c.exteriors.filter((p) => p.towerId !== context.id) }); setContext(null); }}>Delete</ContextItem>
               </>
             )}
-            {context.kind === "amenity" && context.id && (
+             {context.kind === "room" && context.id && (
+               <>
+                 <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                   {c.interiors.find((room) => room.id === context.id)?.name ?? "Room plan"}
+                 </p>
+                 <ContextItem onClick={() => { setStep("interiors"); setSelectedId(context.id!); setContext(null); }}>Edit room plan</ContextItem>
+                 <ContextItem onClick={() => { setFurnishRoomId(context.id!); setContext(null); }}>Open room editor</ContextItem>
+               </>
+             )}
+             {context.kind === "amenity" && context.id && (
               <>
                 <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   {c.amenities.find((a) => a.id === context.id)?.label ?? amenityKind(c.amenities.find((a) => a.id === context.id)?.kind ?? "")?.label ?? "Object"}

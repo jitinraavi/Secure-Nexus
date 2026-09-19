@@ -2,11 +2,16 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import type { AmenityData, CommunityDesign, ExteriorPanel, TowerData, TowerOpening } from "../types";
+import type { CadTool } from "../components/CadToolPalette";
+import type { AmenityData, BuildingLevel, CommunityDesign, DraftElement, DraftElementKind, ExteriorPanel, InteriorRoom, StructuralGridLine, TowerData, TowerOpening } from "../types";
 import { addTechnicalEdges, material, prism, prismAt } from "../lib/modelcore";
-import { amenityKind, facadeOption, landMeters, towerMeters, undergroundDepth } from "../lib/community";
+import { amenityKind, facadeOption, landMeters, levelsForDesign, towerMeters, undergroundDepth } from "../lib/community";
 import { pitFootprint } from "../lib/takeoff";
 import { buildMapGround } from "../lib/mapGround";
+import { sectionClippingPlanes } from "../lib/section";
+import { constrainDraftEnd, constrainedDraftPatch, constrainedDraftSize, draftingSettings, snapDraftPoint } from "../lib/drafting";
+import { buildTerrainVisualization } from "../lib/terrain";
+import { buildMepScene } from "../lib/mep";
 
 /* ---------------------------------- Builder ---------------------------------- */
 
@@ -216,6 +221,121 @@ function buildAmenityMesh(a: AmenityData): THREE.Group {
   return g;
 }
 
+function buildDraftMesh(draft: DraftElement, selected = false): THREE.Group {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: draft.color, transparent: true, opacity: 0.82, side: THREE.DoubleSide });
+  if (draft.kind === "line") {
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-draft.w / 2, 0.12, 0),
+        new THREE.Vector3(draft.w / 2, 0.12, 0),
+      ]),
+      new THREE.LineBasicMaterial({ color: draft.color, linewidth: 2 }),
+    );
+    g.add(line);
+  } else if (draft.kind === "dimension") {
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-draft.w / 2, 0.16, 0),
+        new THREE.Vector3(draft.w / 2, 0.16, 0),
+      ]),
+      new THREE.LineBasicMaterial({ color: draft.color, linewidth: 2 }),
+    );
+    const tickA = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.8), mat);
+    const tickB = tickA.clone();
+    tickA.position.set(-draft.w / 2, 0.16, 0);
+    tickB.position.set(draft.w / 2, 0.16, 0);
+    const label = labelSprite(`${draft.w.toFixed(2)} m`);
+    label.position.set(0, 0.28, 0);
+    label.scale.set(4, 1, 1);
+    g.add(line, tickA, tickB, label);
+  } else if (draft.kind === "circle") {
+    const circle = new THREE.Mesh(new THREE.RingGeometry(Math.max(Math.min(draft.w, draft.d) / 2 - 0.12, 0.1), Math.min(draft.w, draft.d) / 2, 48), mat);
+    circle.rotation.x = -Math.PI / 2;
+    circle.position.y = 0.12;
+    g.add(circle);
+  } else if (draft.kind === "rectangle") {
+    const rectangle = new THREE.Mesh(new THREE.PlaneGeometry(draft.w, draft.d), mat);
+    rectangle.rotation.x = -Math.PI / 2;
+    rectangle.position.y = 0.12;
+    g.add(rectangle);
+  } else {
+    const height = Math.max(draft.h ?? (draft.kind === "column" ? 3 : draft.kind === "wall" ? 2.7 : 0.25), 0.05);
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(draft.w, height, draft.d),
+      new THREE.MeshStandardMaterial({ color: draft.color, roughness: 0.78 }),
+    );
+    body.position.y = height / 2;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    g.add(body);
+  }
+  g.position.set(draft.x, 0, draft.z);
+  g.rotation.y = (draft.rotationDeg * Math.PI) / 180;
+  g.userData.selectId = draft.id;
+  g.userData.selectKind = "draft";
+  g.userData.selW = draft.w;
+  g.userData.selD = draft.d;
+  if (selected && draft.kind !== "line" && draft.kind !== "dimension") {
+    const gripMat = new THREE.MeshBasicMaterial({ color: "#f6c453" });
+    for (const [x, z] of [[-draft.w / 2, 0], [draft.w / 2, 0], [0, -draft.d / 2], [0, draft.d / 2]]) {
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.08, 0.18), gripMat);
+      grip.position.set(x, 0.22, z);
+      grip.userData.noSelect = true;
+      g.add(grip);
+    }
+  }
+  return g;
+}
+
+function buildRoomPlanMesh(room: InteriorRoom, tower: TowerData, level: BuildingLevel): THREE.Group {
+  const g = new THREE.Group();
+  // Keep the plan above the solid tower so it remains legible in the site view.
+  const y = level.elevation + 0.12;
+  const fill = new THREE.Mesh(
+    new THREE.PlaneGeometry(Math.max(room.w, 0.5), Math.max(room.d, 0.5)),
+    new THREE.MeshBasicMaterial({ color: "#5eead4", transparent: true, opacity: 0.2, side: THREE.DoubleSide }),
+  );
+  fill.rotation.x = -Math.PI / 2;
+  fill.position.y = y;
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(Math.max(room.w, 0.5), 0.04, Math.max(room.d, 0.5))),
+    new THREE.LineBasicMaterial({ color: "#5eead4", transparent: true, opacity: 0.95 }),
+  );
+  outline.position.y = y + 0.02;
+  g.add(fill, outline);
+  const label = labelSprite(`${room.name} · F${room.floor + 1}`);
+  label.position.set(0, y + 0.08, 0);
+  label.scale.set(Math.max(room.w * 0.7, 3), 0.7, 1);
+  g.add(label);
+  g.position.set(tower.x + room.x, 0, tower.z + room.z);
+  g.userData.selectId = room.id;
+  g.userData.selectKind = "room";
+  g.userData.selW = room.w;
+  g.userData.selD = room.d;
+  return g;
+}
+
+function buildStructuralGridLine(axis: StructuralGridLine, level: BuildingLevel): THREE.Group {
+  const g = new THREE.Group();
+  const half = Math.max(axis.extent, 1) / 2;
+  const points = axis.axis === "x"
+    ? [new THREE.Vector3(axis.position, level.elevation + 0.08, -half), new THREE.Vector3(axis.position, level.elevation + 0.08, half)]
+    : [new THREE.Vector3(-half, level.elevation + 0.08, axis.position), new THREE.Vector3(half, level.elevation + 0.08, axis.position)];
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(points),
+    new THREE.LineBasicMaterial({ color: axis.color, transparent: true, opacity: 0.9 }),
+  );
+  line.userData.noSelect = true;
+  const label = labelSprite(axis.label);
+  label.position.copy(points[0]);
+  label.position.y += 0.12;
+  label.scale.set(3.5, 0.9, 1);
+  g.add(line, label);
+  g.userData.noSelect = true;
+  return g;
+}
+
 function windowGrid(w: number, h: number, rows: number, cols: number, color: string): THREE.Group {
   const g = new THREE.Group();
   const cw = w / cols;
@@ -327,6 +447,7 @@ function buildTowerMesh(t: TowerData, panels: ExteriorPanel[]): THREE.Group {
   }
 
   g.position.set(t.x, 0, t.z);
+  g.rotation.y = ((t.rotY ?? 0) * Math.PI) / 180;
   g.userData.selectId = t.id;
   g.userData.selectKind = "tower";
   g.userData.selW = w;
@@ -334,16 +455,21 @@ function buildTowerMesh(t: TowerData, panels: ExteriorPanel[]): THREE.Group {
   return g;
 }
 
-function buildSite(design: CommunityDesign): THREE.Group {
+function buildSite(design: CommunityDesign, selectedId?: string | null): THREE.Group {
   const g = new THREE.Group();
+  const layerVisible = (id: string) => design.layers?.find((layer) => layer.id === id)?.visible !== false;
   const { w: W, d: D } = landMeters(design.land);
   const halfW = W / 2;
   const halfD = D / 2;
+  const levels = levelsForDesign(design);
+  const activeLevelIndex = Math.max(0, levels.findIndex((level) => level.id === design.activeLevelId));
+  const activeLevel = levels[activeLevelIndex] ?? levels[0];
 
   /* Natural ground slab */
   const ground = prism(W, 0.6, D, material("#7a6a4f", { rough: 1 }));
   ground.position.y = -0.3;
   g.add(ground);
+  g.add(buildTerrainVisualization(W, D, design.terrain));
 
   /* Map overlay slot (filled asynchronously with OSM / Google map) */
   const mapSlot = new THREE.Group();
@@ -378,25 +504,45 @@ function buildSite(design: CommunityDesign): THREE.Group {
   }
 
   /* Amenities on the ground floor */
-  for (const a of design.amenities) {
-    try {
-      g.add(buildAmenityMesh(a));
-    } catch {
-      /* skip */
+  if (layerVisible("site")) {
+    for (const a of design.amenities) {
+      try {
+        g.add(buildAmenityMesh(a));
+      } catch {
+        /* skip */
+      }
+    }
+  }
+
+  if (layerVisible("drafting")) for (const draft of design.drafts ?? []) g.add(buildDraftMesh(draft, draft.id === selectedId));
+  if (layerVisible("mep")) g.add(buildMepScene(design.mep));
+
+  if (activeLevel) {
+    for (const axis of design.structuralGrid ?? []) g.add(buildStructuralGridLine(axis, activeLevel));
+  }
+
+  if (layerVisible("interiors")) {
+    for (const room of design.interiors) {
+      const tower = design.towers.find((candidate) => candidate.id === room.towerId);
+      if (tower && room.floor === activeLevelIndex) g.add(buildRoomPlanMesh(room, tower, activeLevel));
     }
   }
 
   /* Towers */
-  for (const t of design.towers) {
-    g.add(buildTowerMesh(t, design.exteriors));
+  if (layerVisible("buildings")) {
+    for (const t of design.towers) {
+      g.add(buildTowerMesh(t, design.exteriors));
+    }
   }
 
   /* Tower labels */
-  for (const t of design.towers) {
-    const lbl = labelSprite(t.label);
-    const { d: td } = towerMeters(t);
-    lbl.position.set(t.x, towerMeters(t).h + 2.2, t.z + td / 2 + 1.5);
-    g.add(lbl);
+  if (layerVisible("buildings")) {
+    for (const t of design.towers) {
+      const lbl = labelSprite(t.label);
+      const { d: td } = towerMeters(t);
+      lbl.position.set(t.x, towerMeters(t).h + 2.2, t.z + td / 2 + 1.5);
+      g.add(lbl);
+    }
   }
 
   g.userData.noSelect = true;
@@ -534,7 +680,7 @@ function selectionRing(w: number, d: number): THREE.Mesh {
 }
 
 export function buildCommunityScene(design: CommunityDesign, selectedId?: string | null): THREE.Group {
-  const g = buildSite(design);
+  const g = buildSite(design, selectedId);
   addTechnicalEdges(g, "#263746", 0.58);
   if (selectedId) {
     const target = g.children.find((c) => c.userData?.selectId === selectedId);
@@ -550,7 +696,7 @@ export function buildCommunityScene(design: CommunityDesign, selectedId?: string
 /* --------------------------------- Component --------------------------------- */
 
 export interface SceneContextTarget {
-  kind: "tower" | "amenity" | "ground";
+  kind: "tower" | "amenity" | "draft" | "room" | "ground";
   id?: string;
   x: number;
   z: number;
@@ -564,9 +710,10 @@ interface CommunitySceneProps {
   onSelect?: (id: string | null) => void;
   onChange?: (next: CommunityDesign) => void;
   onContextTarget?: (target: SceneContextTarget) => void;
+  activeTool?: CadTool;
 }
 
-export function CommunityScene({ design, selectedId, onSelect, onChange, onContextTarget }: CommunitySceneProps) {
+export function CommunityScene({ design, selectedId, onSelect, onChange, onContextTarget, activeTool = "select" }: CommunitySceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -578,16 +725,19 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
   const designRef = useRef(design);
   const selectedRef = useRef<string | null>(selectedId ?? null);
   const handlersRef = useRef({ onSelect, onChange, onContextTarget });
+  const toolRef = useRef(activeTool);
   const mapToken = useRef(0);
   designRef.current = design;
   selectedRef.current = selectedId ?? null;
   handlersRef.current = { onSelect, onChange, onContextTarget };
+  toolRef.current = activeTool;
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.localClippingEnabled = true;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
@@ -631,10 +781,16 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     sun.shadow.camera.near = 10;
     scene.add(sun);
 
-    const grid = new THREE.GridHelper(600, 60, 0x1e293b, 0x1e293b);
+    const grid = new THREE.GridHelper(600, 600, 0x1e293b, 0x1e293b);
     grid.position.y = -0.3;
     grid.material = new THREE.LineBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.35 });
     scene.add(grid);
+    const updateGrid = () => {
+      const settings = draftingSettings(designRef.current.drafting);
+      grid.visible = settings.gridVisible;
+      grid.scale.setScalar(settings.gridSize);
+    };
+    updateGrid();
 
     const fitShadows = () => {
       const { w: WW, d: DD } = landMeters(designRef.current.land);
@@ -650,7 +806,9 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
 
     const group = new THREE.Group();
     const rebuild = () => {
+      updateGrid();
       group.clear();
+      renderer.clippingPlanes = sectionClippingPlanes(designRef.current.section);
       const root = buildCommunityScene(designRef.current, selectedRef.current);
       group.add(root);
       if (!group.parent) scene.add(group);
@@ -700,7 +858,6 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     const ndc = new THREE.Vector2();
     const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const hitPoint = new THREE.Vector3();
-
     const pick = (clientX: number, clientY: number) => {
       const rect = renderer.domElement.getBoundingClientRect();
       ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -732,9 +889,22 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     };
 
     let drag: { id: string; kind: string; node: THREE.Object3D; startX: number; startZ: number; grabX: number; grabZ: number; moved: boolean } | null = null;
+    let draw: { kind: DraftElementKind; startX: number; startZ: number; endX: number; endZ: number; rotationDeg: number } | null = null;
+    const drawTools = new Set(["line", "rectangle", "circle", "dimension", "wall", "slab", "column", "roof"]);
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
+      const tool = toolRef.current;
+      if (drawTools.has(tool)) {
+        const ground = groundAt(e.clientX, e.clientY);
+        if (!ground) return;
+        const settings = draftingSettings(designRef.current.drafting);
+        const point = snapDraftPoint({ x: ground.x, z: ground.z }, settings, designRef.current);
+        draw = { kind: tool as DraftElementKind, startX: point.x, startZ: point.z, endX: point.x, endZ: point.z, rotationDeg: 0 };
+        controls.enabled = false;
+        renderer.domElement.setPointerCapture?.(e.pointerId);
+        return;
+      }
       const target = pick(e.clientX, e.clientY);
       if (!target) {
         handlersRef.current.onSelect?.(null);
@@ -759,11 +929,21 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      if (draw) {
+        const ground = groundAt(e.clientX, e.clientY);
+        if (ground) {
+          draw.endX = ground.x;
+          draw.endZ = ground.z;
+        }
+        return;
+      }
       if (!drag) return;
       const ground = groundAt(e.clientX, e.clientY);
       if (!ground) return;
-      const nx = drag.startX + (ground.x - drag.grabX);
-      const nz = drag.startZ + (ground.z - drag.grabZ);
+      const settings = draftingSettings(designRef.current.drafting);
+      const point = snapDraftPoint({ x: drag.startX + (ground.x - drag.grabX), z: drag.startZ + (ground.z - drag.grabZ) }, settings, designRef.current);
+      const nx = point.x;
+      const nz = point.z;
       drag.node.position.x = nx;
       drag.node.position.z = nz;
       if (Math.abs(nx - drag.startX) > 0.01 || Math.abs(nz - drag.startZ) > 0.01) drag.moved = true;
@@ -782,10 +962,41 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
         handlersRef.current.onChange({ ...current, towers: current.towers.map((t) => (t.id === id ? { ...t, x, z } : t)) });
       } else if (kind === "amenity") {
         handlersRef.current.onChange({ ...current, amenities: current.amenities.map((a) => (a.id === id ? { ...a, x, z } : a)) });
+      } else if (kind === "draft") {
+        handlersRef.current.onChange({ ...current, drafts: (current.drafts ?? []).map((d) => (d.id === id ? { ...d, ...constrainedDraftPatch(d, { x, z }, current.drafts ?? []) } : d)) });
+      } else if (kind === "room") {
+        const room = current.interiors.find((candidate) => candidate.id === id);
+        const tower = room && current.towers.find((candidate) => candidate.id === room.towerId);
+        if (room) handlersRef.current.onChange({ ...current, interiors: current.interiors.map((candidate) => (candidate.id === id ? { ...candidate, x: x - (tower?.x ?? 0), z: z - (tower?.z ?? 0) } : candidate)) });
       }
     };
 
     const onPointerUp = () => {
+      if (draw) {
+        const current = designRef.current;
+        const settings = draftingSettings(designRef.current.drafting);
+        const constrained = constrainDraftEnd({ x: draw.startX, z: draw.startZ }, { x: draw.endX, z: draw.endZ }, draw.kind, settings, current);
+        draw.endX = constrained.x;
+        draw.endZ = constrained.z;
+        const width = constrainedDraftSize(Math.abs(draw.endX - draw.startX), settings);
+        const depth = constrainedDraftSize(Math.abs(draw.endZ - draw.startZ), settings);
+        const draft: DraftElement = {
+          id: `draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          kind: draw.kind,
+          x: (draw.startX + draw.endX) / 2,
+          z: (draw.startZ + draw.endZ) / 2,
+          w: draw.kind === "circle" ? Math.max(width, depth) : width,
+          d: draw.kind === "line" || draw.kind === "dimension" ? 0.1 : draw.kind === "circle" ? Math.max(width, depth) : draw.kind === "wall" ? 0.2 : depth,
+          h: draw.kind === "wall" ? 2.7 : draw.kind === "column" ? 3 : draw.kind === "slab" || draw.kind === "roof" ? 0.25 : undefined,
+          rotationDeg: draw.kind === "line" || draw.kind === "dimension" ? constrained.rotationDeg : 0,
+          color: "#d6a84a",
+        };
+        draw = null;
+        controls.enabled = true;
+        handlersRef.current.onChange?.({ ...current, drafts: [...(current.drafts ?? []), draft] });
+        handlersRef.current.onSelect?.(draft.id);
+        return;
+      }
       commitDrag();
     };
 
