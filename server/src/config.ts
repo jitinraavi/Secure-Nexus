@@ -19,6 +19,13 @@ export const IS_PROD = NODE_ENV === "production";
 
 export const PORT = Number(process.env.PORT || 4000);
 
+/* Optional OpenAI-compatible assistant provider. The API key never leaves the server. */
+export const AI = {
+  apiKey: process.env.AI_API_KEY || "",
+  model: process.env.AI_MODEL || "",
+  baseUrl: (process.env.AI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, ""),
+};
+
 export const DATA_DIR = process.env.GROUNDWORK_DATA_DIR
   ? path.resolve(process.env.GROUNDWORK_DATA_DIR)
   : path.join(SERVER_ROOT, "data");

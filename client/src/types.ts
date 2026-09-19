@@ -631,6 +631,38 @@ export interface Design {
   infra?: InfraDesign;
 }
 
+/* AI plans are proposals only. Applying them remains a client/editor decision. */
+export type AssistantAction =
+  | { type: "set_plot_dimensions"; width: number; depth: number; unit: UnitSystem }
+  | { type: "add_tower"; label: string; x: number; z: number; floors?: number; unitsPerFloor?: number }
+  | { type: "remove_tower"; towerId: string }
+  | { type: "update_tower"; towerId: string; patch: Partial<Pick<TowerData, "label" | "x" | "z" | "rotY" | "floors" | "unitsPerFloor" | "unitWidth" | "unitDepth" | "floorHeight">> }
+  | { type: "add_amenity"; kind: string; x: number; z: number; w?: number; d?: number; h?: number }
+  | { type: "remove_amenity"; amenityId: string }
+  | { type: "update_amenity"; amenityId: string; patch: Partial<Pick<AmenityData, "x" | "z" | "rotY" | "w" | "d" | "h">> }
+  | { type: "add_drafting_element"; kind: DraftElementKind; x: number; z: number; w: number; d: number; h?: number; rotationDeg: number; color: string; label?: string }
+  | { type: "update_room_opening"; roomId: string; openingId?: string; roomPatch?: Partial<Pick<InteriorRoom, "floor" | "name" | "type" | "x" | "z" | "w" | "d">>; openingPatch?: Partial<Pick<RoomOpening, "kind" | "wall" | "offsetM" | "widthM" | "heightM" | "sillM">> }
+  | { type: "add_room_opening"; roomId: string; kind: RoomOpening["kind"]; wall: RoomOpening["wall"]; offsetM: number; widthM: number; heightM: number; sillM: number }
+  | { type: "add_room_furniture"; roomId: string; catalogId: string; name?: string; x: number; z: number; rotationDeg?: number; scale?: number; color?: string; mount?: FurnitureMount; mountWall?: RoomWall }
+  | { type: "update_room_furniture"; roomId: string; furnitureId: string; patch: Partial<Pick<FurnitureItem, "name" | "x" | "z" | "rotationDeg" | "scale" | "color" | "mount" | "mountWall" | "mountHeightM">> }
+  | { type: "add_mep_element"; kind: MepElementKind; name: string; route: MepPoint[]; width: number; height: number; diameter: number; ratedPowerKw?: number; levelId?: string }
+  | { type: "update_infrastructure"; parameters: { lanes?: number; laneWidthM?: number; designSpeedKph?: number; runways?: number; runwayLengthM?: number; berths?: number; damType?: DamDesign["damType"]; heightM?: number; facilities?: InfraFacility[]; facilityPatches?: { facilityId: string; patch: Partial<Pick<InfraFacility, "kind" | "count" | "lengthM" | "widthM" | "heightM">> }[] } }
+  | { type: "generate_infrastructure_model" }
+  | { type: "request_analysis"; scope: "structural" | "mep" | "infrastructure" | "site" | "general"; questions: string[] };
+
+export interface AssistantPlan {
+  summary: string;
+  actions: AssistantAction[];
+  warnings: string[];
+}
+
+export interface AssistantPlanResponse {
+  source: "ai" | "offline";
+  model: string | null;
+  assistantMessage: string;
+  plan: AssistantPlan;
+}
+
 export function defaultDesign(): Design {
   return {
     version: 1,

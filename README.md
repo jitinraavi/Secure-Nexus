@@ -26,6 +26,12 @@ The first server boot generates a random `MASTER_KEY` in `server/.env` (used to 
 
 The API lives in `server/`, the client in `client/`.
 
+### Assistant configuration
+
+The first assistant phase is opt-in and server-side. Set `AI_API_KEY` and `AI_MODEL` in `server/.env`; set `AI_BASE_URL` when using an OpenAI-compatible provider other than the default `https://api.openai.com/v1`. The client calls `POST /api/assistant/plan` with the current project context. Without `AI_API_KEY`, the endpoint returns a deterministic configuration-required message and no AI-generated actions.
+
+Assistant output is a validated, non-mutating action plan. Structural and MEP suggestions are preliminary coordination concepts and require review by qualified licensed professionals before use.
+
 ## Production build
 
 ```bash
@@ -83,7 +89,7 @@ server/src
   validate.ts       Zod schemas (email/password/confirm)
   audit.ts          audit log helper
   security.ts       rate limits, sessions, CSRF middleware
-  routes/           auth, secrets, audit, projects (+photo upload), payments
+  routes/           auth, secrets, audit, projects (+photo upload), payments, assistant plan
   payments/         plans + demo/razorpay/paypal providers
 client/src
   api.ts            typed API client (CSRF header injection)

@@ -8,6 +8,9 @@ import type {
   ProjectDetail,
   SessionInfo,
   User,
+  AssistantPlanResponse,
+  AssistantAction,
+  AssistantPlan,
 } from "./types";
 
 export class ApiError extends Error {
@@ -26,6 +29,33 @@ export function setCsrfToken(token: string | null) {
 
 export function getCsrfToken() {
   return csrfToken;
+}
+
+export interface AssistantPlanRequest {
+  message: string;
+  context: unknown;
+}
+
+export function requestAssistantPlan(input: AssistantPlanRequest): Promise<AssistantPlanResponse> {
+  return request<AssistantPlanResponse>("/api/assistant/plan", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface AssistantPlanPreview {
+  plan: AssistantPlan;
+  actionCount: number;
+  requiresProfessionalReview: boolean;
+}
+
+export function createAssistantPlanPreview(plan: AssistantPlan): AssistantPlanPreview {
+  return { plan, actionCount: plan.actions.length, requiresProfessionalReview: true };
+}
+
+/* The editor supplies the apply callback after user review; this never calls the persistence API. */
+export function applyAssistantPlanPreview(preview: AssistantPlanPreview, apply: (actions: AssistantAction[]) => void): void {
+  apply([...preview.plan.actions]);
 }
 
 async function request<T>(

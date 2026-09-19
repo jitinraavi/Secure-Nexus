@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AirportDesign, DamDesign, DraftElement, HighwayDesign, InfraDesign, InfraFacility, InfraKind, PortDesign, ReviewSeverity } from "../types";
-import { Button, Select, Toggle } from "../components/ui";
+import type { AirportDesign, AssistantPlan, DamDesign, DraftElement, HighwayDesign, InfraDesign, InfraFacility, InfraKind, PortDesign, ReviewSeverity } from "../types";
+import { Button, Modal, Select, Toggle } from "../components/ui";
 import { ParametricControls } from "../components/ParametricControls";
 import { CadToolPalette, type CadTool } from "../components/CadToolPalette";
 import { InfraScene } from "../editor/InfraScene";
 import { SiteLocator, type LocatorMode } from "../editor/SiteLocator";
 import { useToast } from "../components/Toast";
+import { requestAssistantPlan } from "../api";
+import { DesignAssistantPanel, type AssistantMessage } from "../components/DesignAssistantPanel";
 import { cn } from "../lib/cn";
 import { MepPanel } from "../components/MepPanel";
 import { DesignExportMenu } from "../components/DesignExportMenu";
@@ -22,6 +24,7 @@ import {
   infraSummary,
   infraExtent,
 } from "../lib/infra";
+import { applyInfrastructureAssistantActions, isInfrastructureActionPreviewOnly, previewInfrastructureAssistantActions } from "../lib/assistant";
 
 type StepId = "location" | "design" | "takeoff" | "review";
 
@@ -146,6 +149,10 @@ export function InfraEditor({ kind, infra, onChange, projectName, design }: Infr
   const historyRef = useRef<{ past: InfraDesign[]; future: InfraDesign[] }>({ past: [], future: [] });
   const [reviewText, setReviewText] = useState("");
   const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
+  const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
+  const [assistantPlan, setAssistantPlan] = useState<AssistantPlan | null>(null);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantPreviewOpen, setAssistantPreviewOpen] = useState(false);
 
   useEffect(() => {
     setFacilityKind(FACILITY_OPTIONS[kind][0].kind);
@@ -173,6 +180,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design }: Infr
   const toggleLayer = (id: string) => update({ layers: layers.map((layer) => layer.id === id ? { ...layer, visible: !layer.visible } : layer) });
 
   const takeoff = useMemo(() => computeInfraTakeoff(infra), [infra]);
+  const assistantPreviews = useMemo(() => assistantPlan ? previewInfrastructureAssistantActions(assistantPlan.actions, infra) : [], [assistantPlan, infra]);
 
   const patchHighway = (patch: Partial<HighwayDesign>) =>
     update({ highway: { ...infra.highway!, ...patch } });
@@ -197,6 +205,32 @@ export function InfraEditor({ kind, infra, onChange, projectName, design }: Infr
 
   const patchFacility = (id: string, patch: Partial<InfraFacility>) =>
     update({ facilities: (infra.facilities ?? []).map((f) => (f.id === id ? { ...f, ...patch } : f)) });
+
+  const requestPlan = async (message: string) => {
+    setAssistantMessages((items) => [...items, { role: "user", text: message }]);
+    setAssistantBusy(true);
+    try {
+      const response = await requestAssistantPlan({ message, context: { projectName, kind, infra } });
+      setAssistantPlan(response.plan);
+      setAssistantMessages((items) => [...items, { role: "assistant", text: response.assistantMessage }]);
+    } catch (error) {
+      setAssistantMessages((items) => [...items, { role: "assistant", text: error instanceof Error ? error.message : "Could not request an assistant plan." }]);
+    } finally {
+      setAssistantBusy(false);
+    }
+  };
+
+  const confirmAssistantPlan = () => {
+    if (!assistantPlan) return;
+    const result = applyInfrastructureAssistantActions(assistantPlan.actions, infra);
+    if (!result.applied.length) {
+      toast.push({ title: "Nothing applicable", description: "The proposed actions failed infrastructure validation.", tone: "error" });
+      return;
+    }
+    commitInfra(result.infra);
+    setAssistantPreviewOpen(false);
+    toast.push({ title: "Assistant actions applied", description: `${result.applied.length} infrastructure update${result.applied.length === 1 ? "" : "s"}. Review the generated model before professional use.`, tone: "success" });
+  };
 
   const selectedDraft = (infra.drafts ?? []).find((draft) => draft.id === selectedId);
   const reviewFindings = infraReviewFindings(infra);
@@ -666,10 +700,22 @@ export function InfraEditor({ kind, infra, onChange, projectName, design }: Infr
            <div className="pointer-events-none absolute left-3 top-3 rounded-xl bg-slate-950/80 px-3 py-2 text-xs text-slate-300 backdrop-blur">
              {INFRA_LABELS[kind]} · {infra.section?.enabled ? `Section ${infra.section.axis.toUpperCase()} / ${infra.section.depth} m` : "Full model"}
           </div>
-          <div className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] rounded-xl bg-slate-950/85 px-3 py-2 text-xs text-emerald-300 backdrop-blur">
-            {infraSummary(infra)}
-          </div>
-        </div>
+           <div className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] rounded-xl bg-slate-950/85 px-3 py-2 text-xs text-emerald-300 backdrop-blur">
+             {infraSummary(infra)}
+           </div>
+           <div className="pointer-events-auto absolute bottom-3 right-3 z-20">
+             <DesignAssistantPanel messages={assistantMessages} onCommand={(message) => void requestPlan(message)} plan={assistantPlan} busy={assistantBusy} previews={assistantPreviews} onPreview={() => setAssistantPreviewOpen(true)} onApply={() => setAssistantPreviewOpen(true)} />
+           </div>
+           <Modal open={assistantPreviewOpen} onClose={() => setAssistantPreviewOpen(false)} title="Assistant action preview" wide>
+             <div className="space-y-3">
+               <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200">Confirm only the bounded infrastructure parameter, facility, and model-generation updates you intend to make. Structural, MEP, and analysis suggestions remain preview-only.</p>
+               <div className="max-h-[50vh] space-y-2 overflow-auto rounded-xl border border-slate-800 bg-slate-950 p-3">
+                 {assistantPreviews.map((item, index) => <div key={`${item.action.type}-${index}`} className="rounded-lg border border-slate-800 px-3 py-2 text-xs"><p className={item.applicable ? "text-emerald-300" : "text-amber-300"}>{item.applicable ? "Ready to apply" : "Preview only / not applied"}</p><p className="mt-1 text-slate-300">{item.label}</p>{item.reason && <p className="mt-1 text-slate-500">{item.reason}</p>}</div>)}
+               </div>
+               <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setAssistantPreviewOpen(false)}>Cancel</Button><Button onClick={confirmAssistantPlan} disabled={!assistantPreviews.some((item) => item.applicable) || assistantPreviews.some((item) => !item.applicable && !isInfrastructureActionPreviewOnly(item.action))}>Confirm and apply</Button></div>
+             </div>
+           </Modal>
+         </div>
       </div>
     </div>
   );

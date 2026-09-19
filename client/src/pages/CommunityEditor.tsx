@@ -37,6 +37,10 @@ import { analyzeCommunity, structuralSettings } from "../lib/structural";
 import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects";
 import { MepPanel } from "../components/MepPanel";
 import { DesignExportMenu } from "../components/DesignExportMenu";
+import { DesignAssistantPanel, type AssistantMessage } from "../components/DesignAssistantPanel";
+import { requestAssistantPlan } from "../api";
+import { applyCommunityAssistantActions, isAssistantActionPreviewOnly, previewAssistantActions } from "../lib/assistant";
+import type { AssistantPlan } from "../types";
 import {
   AMENITIES,
   DOOR_FACING_LABELS,
@@ -179,6 +183,10 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const [context, setContext] = useState<SceneContextTarget | null>(null);
   const [gen, setGen] = useState<{ mode: "site" | "room"; roomId?: string; x: number; z: number; text: string } | null>(null);
   const [furnishRoomId, setFurnishRoomId] = useState<string | null>(null);
+  const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
+  const [assistantPlan, setAssistantPlan] = useState<AssistantPlan | null>(null);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantPreviewOpen, setAssistantPreviewOpen] = useState(false);
   const [reviewText, setReviewText] = useState("");
   const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
   const c = community;
@@ -215,6 +223,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
 
   const takeoff = useMemo(() => computeTakeoff(c), [c]);
   const structuralAnalysis = useMemo(() => analyzeCommunity(c), [c]);
+  const assistantPreviews = useMemo(() => assistantPlan ? previewAssistantActions(assistantPlan.actions, c, branch) : [], [assistantPlan, c, branch]);
 
   const commitDesign = (next: CommunityDesign) => {
     historyRef.current.past = [...historyRef.current.past.slice(-49), c];
@@ -258,6 +267,37 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const selectedDraft = (c.drafts ?? []).find((d) => d.id === selectedId);
   const reviewFindings = communityReviewFindings(c);
   const markers = reviewMarkers(c.review);
+
+  const requestPlan = async (message: string) => {
+    setAssistantMessages((items) => [...items, { role: "user", text: message }]);
+    setAssistantBusy(true);
+    try {
+      const response = await requestAssistantPlan({ message, context: { projectName, branch, design: c } });
+      setAssistantPlan(response.plan);
+      setAssistantMessages((items) => [...items, { role: "assistant", text: response.assistantMessage }]);
+    } catch (error) {
+      setAssistantMessages((items) => [...items, { role: "assistant", text: error instanceof Error ? error.message : "Could not request an assistant plan." }]);
+    } finally {
+      setAssistantBusy(false);
+    }
+  };
+
+  const confirmAssistantPlan = () => {
+    if (!assistantPlan) return;
+    const result = applyCommunityAssistantActions(assistantPlan.actions, c, branch);
+    if (!result.applied.length) {
+      toast.push({ title: "Nothing applicable", description: "The proposed actions could not be safely applied to this editor.", tone: "error" });
+      return;
+    }
+    commitDesign(result.design);
+    setStep(result.step ?? "land");
+    setSelectedId(result.selectedId ?? null);
+    setAssistantPreviewOpen(false);
+    const previewOnly = result.skipped.filter((item) => isAssistantActionPreviewOnly(item.action)).length;
+    toast.push({ title: "Assistant actions applied", description: `${result.applied.length} editor update${result.applied.length === 1 ? "" : "s"}${previewOnly ? `; ${previewOnly} preview-only action${previewOnly === 1 ? "" : "s"} remain unapplied` : ""}.`, tone: "success" });
+  };
+
+  const assistantHasInvalidActions = assistantPreviews.some((item) => !item.applicable && !isAssistantActionPreviewOnly(item.action));
 
   const addReviewMarker = () => {
     const text = reviewText.trim();
@@ -1492,6 +1532,32 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
           />
         );
       })()}
+      <div className="pointer-events-auto absolute bottom-3 right-3 z-20">
+        <DesignAssistantPanel
+          messages={assistantMessages}
+          onCommand={(message) => void requestPlan(message)}
+           plan={assistantPlan}
+           busy={assistantBusy}
+           previews={assistantPreviews}
+           onPreview={() => setAssistantPreviewOpen(true)}
+           onApply={() => setAssistantPreviewOpen(true)}
+         />
+       </div>
+      <Modal open={assistantPreviewOpen} onClose={() => setAssistantPreviewOpen(false)} title="Assistant action preview" wide>
+        <div className="space-y-3">
+            <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200">Review the typed actions before confirming. Nothing is persisted by the assistant, and infrastructure, MEP, structural, and analysis actions stay preview-only in this building editor.</p>
+           <div className="max-h-[50vh] space-y-2 overflow-auto rounded-xl border border-slate-800 bg-slate-950 p-3">
+             {assistantPreviews.length === 0 && <p className="text-xs text-slate-500">No plan available.</p>}
+             {assistantPreviews.map((item, index) => <div key={`${item.action.type}-${index}`} className="rounded-lg border border-slate-800 px-3 py-2 text-xs">
+               <p className={item.applicable ? "text-emerald-300" : "text-amber-300"}>{item.applicable ? "Ready to apply" : "Preview only / not applied"}</p>
+               <p className="mt-1 text-slate-300">{item.label}</p>
+               {item.reason && <p className="mt-1 text-slate-500">{item.reason}</p>}
+             </div>)}
+           </div>
+           {assistantHasInvalidActions && <p className="text-xs text-rose-300">One or more editor actions failed client-side validation. Correct the plan before applying any changes.</p>}
+           <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setAssistantPreviewOpen(false)}>Cancel</Button><Button onClick={confirmAssistantPlan} disabled={assistantHasInvalidActions || !assistantPreviews.some((item) => item.applicable)}>Confirm and apply</Button></div>
+         </div>
+       </Modal>
     </div>
   );
 }
