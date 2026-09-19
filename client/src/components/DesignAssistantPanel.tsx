@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Button } from "./ui";
 import type { AssistantPlan } from "../types";
 import type { AssistantActionPreview } from "../lib/assistant";
@@ -10,16 +10,57 @@ export interface AssistantMessage {
 
 export function DesignAssistantPanel({ messages, onCommand, plan, busy, onPreview, previews, onApply }: { messages: AssistantMessage[]; onCommand: (command: string) => void; plan?: AssistantPlan | null; busy?: boolean; onPreview?: () => void; previews?: AssistantActionPreview[]; onApply?: () => void }) {
   const [command, setCommand] = useState("");
+  const [minimized, setMinimized] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const submit = () => {
     if (!command.trim()) return;
     onCommand(command.trim());
     setCommand("");
   };
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      if (!dragRef.current) return;
+      setPosition({
+        x: dragRef.current.originX + event.clientX - dragRef.current.startX,
+        y: dragRef.current.originY + event.clientY - dragRef.current.startY,
+      });
+    };
+    const onUp = () => { dragRef.current = null; };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+  const beginDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button")) return;
+    dragRef.current = { startX: event.clientX, startY: event.clientY, originX: position.x, originY: position.y };
+  };
+  if (minimized) {
+    return (
+      <button
+        type="button"
+        onClick={() => setMinimized(false)}
+        className="flex items-center gap-2 rounded-full border border-[#d6a84a]/50 bg-slate-950/95 px-4 py-2 text-xs font-semibold text-[#e5bd67] shadow-2xl backdrop-blur-xl"
+        style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0)` }}
+      >
+        <span className="h-2 w-2 rounded-full bg-[#d6a84a]" />
+        Open design assistant
+      </button>
+    );
+  }
   return (
-    <aside className="flex w-[min(36rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-[#d6a84a]/30 bg-slate-950/95 shadow-2xl backdrop-blur-xl">
-      <div className="border-b border-slate-800 px-4 py-3">
+    <aside className="flex w-[min(36rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-[#d6a84a]/30 bg-slate-950/95 shadow-2xl backdrop-blur-xl" style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0)` }}>
+      <div onPointerDown={beginDrag} className="cursor-move border-b border-slate-800 px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
         <p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#d6a84a]">Design assistant</p>
         <p className="mt-1 text-xs text-slate-500">Commands become reversible design actions.</p>
+          </div>
+          <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => setMinimized(true)} className="rounded-lg px-2 py-1 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-100" aria-label="Minimize design assistant">Minimize</button>
+        </div>
       </div>
       <div className="min-h-48 flex-1 space-y-3 overflow-y-auto p-3">
         {messages.length === 0 && <p className="rounded-xl border border-slate-800 bg-slate-900/70 p-3 text-xs leading-relaxed text-slate-400">Describe the complete design you want. Example: “Build a 10-house villa community on a 100 m × 80 m plot with a pool, clubhouse, spa, gardens and internal roads.”</p>}
