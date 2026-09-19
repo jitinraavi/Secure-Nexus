@@ -169,6 +169,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const toast = useToast();
   const [step, setStep] = useState<StepId>("land");
   const [focusMode, setFocusMode] = useState(false);
+  const [focusPanelOpen, setFocusPanelOpen] = useState(false);
   const [activeTool, setActiveTool] = useState<CadTool>("select");
   const [layersOpen, setLayersOpen] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -201,12 +202,14 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const toggleFocusMode = async () => {
     if (document.fullscreenElement === workspaceRef.current) {
       await document.exitFullscreen?.();
+      setFocusPanelOpen(false);
       return;
     }
     try {
       await workspaceRef.current?.requestFullscreen?.();
     } catch {
       setFocusMode((value) => !value);
+      setFocusPanelOpen(false);
     }
   };
 
@@ -1261,7 +1264,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
             {STEPS.map((s, i) => (
               <button
                 key={s.id}
-                onClick={() => setStep(s.id)}
+                onClick={() => { setStep(s.id); setFocusPanelOpen(true); }}
                 aria-current={step === s.id ? "step" : undefined}
                 className={cn(
                   "flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition",
@@ -1309,12 +1312,27 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
         <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900/70 px-2 py-1.5">
           <span className="px-2 text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">Tools</span>
           <CadToolPalette active={activeTool} onChange={runSceneTool} compact />
+          <Button variant="ghost" size="sm" onClick={() => setFocusPanelOpen((open) => !open)}>
+            {focusPanelOpen ? "Close features" : "Open features"}
+          </Button>
           <span className="ml-auto hidden text-[11px] text-slate-500 md:inline">
             {activeTool === "measure" && (selectedAmenity ? `${selectedAmenity.w} × ${selectedAmenity.d} m` : selectedTower ? `${towerMeters(selectedTower).w.toFixed(1)} × ${towerMeters(selectedTower).d.toFixed(1)} m` : "Select an object")}
             {activeTool === "move" && "Drag a selected object in the canvas"}
             {activeTool === "select" && "Click an object to inspect it"}
           </span>
         </div>
+      )}
+      {focusMode && focusPanelOpen && (
+        <aside className="absolute bottom-3 left-3 top-[6.75rem] z-20 flex w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-950/95 shadow-2xl backdrop-blur-xl">
+          <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">Feature controls</p>
+              <p className="mt-1 text-sm font-semibold text-slate-100">{STEPS.find((item) => item.id === step)?.label}</p>
+            </div>
+            <button onClick={() => setFocusPanelOpen(false)} className="rounded-lg px-2 py-1 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-100">Close</button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto space-y-4 p-4">{panels[step]}</div>
+        </aside>
       )}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Left: stepper + params */}
