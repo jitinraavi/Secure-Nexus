@@ -94,7 +94,18 @@ router.post("/plan", asyncHandler(async (req, res) => {
     signal: AbortSignal.timeout(30_000),
   });
   if (!provider.ok) {
-    res.status(502).json({ error: "Assistant provider request failed" });
+    const providerBody = await provider.text().catch(() => "");
+    let providerMessage = "";
+    try {
+      const parsed = JSON.parse(providerBody) as { error?: { message?: string } | string };
+      providerMessage = typeof parsed.error === "string" ? parsed.error : parsed.error?.message || "";
+    } catch {
+      providerMessage = providerBody.slice(0, 240);
+    }
+    console.error(`[groundwork] Assistant provider failed (${provider.status}) at ${endpoint}: ${providerMessage}`);
+    res.status(502).json({
+      error: `Assistant provider request failed (${provider.status})${providerMessage ? `: ${providerMessage}` : ""}`,
+    });
     return;
   }
   let body: unknown;
