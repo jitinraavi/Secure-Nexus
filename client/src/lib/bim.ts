@@ -41,6 +41,25 @@ export function buildBimExchange(design: Design): string {
     geometry: { kind: "box", widthM: room.widthMm / 1000, depthM: room.depthMm / 1000, heightM: room.wallHeightMm / 1000 },
     properties: { wallColor: room.wallColor, floorColor: room.floorColor },
   }));
+  const roomWidth = room.widthMm / 1000;
+  const roomDepth = room.depthMm / 1000;
+  const roomHeight = room.wallHeightMm / 1000;
+  entities.push(
+    entity("room-slab", "SLAB", {
+      name: "Room floor slab",
+      geometry: { kind: "box", xM: roomWidth / 2, zM: roomDepth / 2, widthM: roomWidth, depthM: roomDepth, heightM: 0.15 },
+      properties: { approximation: "Nominal room floor slab; thickness is an exchange default." },
+    }),
+    entity("room-roof", "ROOF", {
+      name: "Room roof",
+      geometry: { kind: "box", xM: roomWidth / 2, zM: roomDepth / 2, yM: roomHeight, widthM: roomWidth, depthM: roomDepth, heightM: 0.15 },
+      properties: { approximation: "Nominal flat roof; roof build-up and drainage are not modeled." },
+    }),
+    entity("room-wall-north", "WALL", { name: "North wall", geometry: { kind: "box", xM: roomWidth / 2, zM: 0, widthM: roomWidth, depthM: 0.15, heightM: roomHeight } }),
+    entity("room-wall-south", "WALL", { name: "South wall", geometry: { kind: "box", xM: roomWidth / 2, zM: roomDepth, widthM: roomWidth, depthM: 0.15, heightM: roomHeight } }),
+    entity("room-wall-east", "WALL", { name: "East wall", geometry: { kind: "box", xM: roomWidth, zM: roomDepth / 2, widthM: 0.15, depthM: roomDepth, heightM: roomHeight, rotationDeg: 90 } }),
+    entity("room-wall-west", "WALL", { name: "West wall", geometry: { kind: "box", xM: 0, zM: roomDepth / 2, widthM: 0.15, depthM: roomDepth, heightM: roomHeight, rotationDeg: 90 } }),
+  );
 
   for (const item of design.furniture) {
     entities.push(entity(item.id, "FURNISHING", {
@@ -75,6 +94,24 @@ export function buildBimExchange(design: Design): string {
           geometry: { kind: "box", xM: roomPlan.x, zM: roomPlan.z, widthM: roomPlan.w, depthM: roomPlan.d, floor: roomPlan.floor },
           properties: { roomType: roomPlan.type, approximation: "Planning room envelope; openings and finishes are not fully exchanged." },
         }));
+        for (const opening of roomPlan.openings ?? []) {
+          entities.push(entity(opening.id, opening.kind === "door" ? "DOOR" : "WINDOW", {
+            name: `${opening.kind} ${opening.wall}`,
+            levelId: roomPlan.towerId,
+            geometry: { kind: "opening", xM: roomPlan.x + opening.offsetM, zM: roomPlan.z, widthM: opening.widthM, depthM: 0.1, heightM: opening.heightM, yM: opening.sillM },
+            properties: { wall: opening.wall, roomId: roomPlan.id, approximation: "Opening is exported as a typed element; host wall void and hardware are not modeled." },
+          }));
+        }
+      }
+      for (const tower of c.towers) {
+        for (const opening of tower.openings ?? []) {
+          entities.push(entity(opening.id, opening.kind === "door" ? "DOOR" : "WINDOW", {
+            name: `${opening.kind} ${opening.face}`,
+            levelId: `${tower.id}-floor-${opening.floor}`,
+            geometry: { kind: "opening", xM: tower.x + opening.offset, zM: tower.z, widthM: opening.width, depthM: 0.1, heightM: opening.height, yM: opening.floor * tower.floorHeight + opening.sill, rotationDeg: tower.rotY ?? 0 },
+            properties: { towerId: tower.id, face: opening.face, approximation: "Parametric opening; host facade, frame and hardware are not modeled." },
+          }));
+        }
       }
       for (const panel of c.exteriors) {
         entities.push(entity(panel.id, "FACADE_PANEL", {
@@ -165,9 +202,9 @@ function ifcGuid(index: number): string {
 }
 
 /**
- * Small IFC4 STEP coordination export. It intentionally uses proxy elements
- * without fabrication geometry: the source model is mostly planning intent,
- * while the hierarchy and names remain consumable by IFC viewers.
+ * IFC4 STEP coordination export. Geometry is deliberately limited to boxes
+ * and swept rectangular profiles because the editor stores planning intent,
+ * rather than construction-ready solids.
  */
 export function buildIfcStep(design: Design): string {
   const exchange = JSON.parse(buildBimExchange(design)) as { entities: ExchangeEntity[] };
@@ -182,37 +219,129 @@ export function buildIfcStep(design: Design): string {
   const personOrg = add("IFCPERSONANDORGANIZATION", `#${owner},#${org},$`);
   const application = add("IFCAPPLICATION", `#${org},'1.0','Groundwork Design Studio','GROUNDWORK'`);
   const history = add("IFCOWNERHISTORY", `#${personOrg},#${application},$,.ADDED.,$,$,$,0`);
-  const origin = add("IFCCARTESIANPOINT", "((0.,0.,0.))".replace("((", "(").replace("))", ")"));
-  const up = add("IFCDIRECTION", "((0.,0.,1.))".replace("((", "(").replace("))", ")"));
+  const origin = add("IFCCARTESIANPOINT", "(0.,0.,0.)");
+  const up = add("IFCDIRECTION", "(0.,0.,1.)");
+  const east = add("IFCDIRECTION", "(1.,0.,0.)");
   const worldAxis = add("IFCAXIS2PLACEMENT3D", `#${origin},$,#${up}`);
   const context = add("IFCGEOMETRICREPRESENTATIONCONTEXT", `$, 'Model', 3, 1.E-05, #${worldAxis},$`);
   const metre = add("IFCSIUNIT", "*,.LENGTHUNIT.,$,.METRE.");
-  const units = add("IFCUNITASSIGNMENT", `(#${metre})`);
+  const area = add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.");
+  const volume = add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.");
+  const units = add("IFCUNITASSIGNMENT", `(#${metre},#${area},#${volume})`);
   const project = add("IFCPROJECT", `'${ifcGuid(1)}',#${history},'Groundwork exchange',$,$,$,$,$,$,(#${context}),#${units}`);
-  const placementAxis = add("IFCAXIS2PLACEMENT3D", `#${origin},$,#${up}`);
-  const sitePlacement = add("IFCLOCALPLACEMENT", `$,#${placementAxis}`);
+  const placement = (x = 0, y = 0, z = 0, rotation = 0, parent?: number) => {
+    const point = add("IFCCARTESIANPOINT", `(${number(x).toFixed(3)},${number(y).toFixed(3)},${number(z).toFixed(3)})`);
+    const angle = rotation ? Math.PI * rotation / 180 : 0;
+    const ref = rotation ? add("IFCDIRECTION", `(${number(Math.cos(angle)).toFixed(6)},${number(Math.sin(angle)).toFixed(6)},0.)`) : east;
+    const axis = add("IFCAXIS2PLACEMENT3D", `#${point},#${up},#${ref}`);
+    return add("IFCLOCALPLACEMENT", `${parent ? `#${parent}` : "$"},#${axis}`);
+  };
+  const sitePlacement = placement();
   const site = add("IFCSITE", `'${ifcGuid(2)}',#${history},'Design site',$,$,#${sitePlacement},$,$,.ELEMENT.,$,$,$,$,$`);
-  const building = add("IFCBUILDING", `'${ifcGuid(3)}',#${history},'Groundwork model',$,$,#${sitePlacement},$,$,.ELEMENT.,$,$,$`);
-  const storey = add("IFCBUILDINGSTOREY", `'${ifcGuid(4)}',#${history},'Coordination level',$,$,#${sitePlacement},$,$,.ELEMENT.,0.`);
-  const aggregate = (name: string, parent: number, children: number[]) => add("IFCRELAGGREGATES", `'${ifcGuid(rows.length + 10)}',#${history},${ifcText(name)},$,#${parent},(${children.map((id) => `#${id}`).join(",")})`);
+  const buildingPlacement = placement(0, 0, 0, 0, sitePlacement);
+  const building = add("IFCBUILDING", `'${ifcGuid(3)}',#${history},'Groundwork model',$,$,#${buildingPlacement},$,$,.ELEMENT.,$,$,$`);
+  const aggregate = (name: string, parent: number, children: number[]) => children.length && add("IFCRELAGGREGATES", `'${ifcGuid(rows.length + 10)}',#${history},${ifcText(name)},$,#${parent},(${children.map((id) => `#${id}`).join(",")})`);
   aggregate("Project site", project, [site]);
   aggregate("Building", site, [building]);
-  aggregate("Coordination level", building, [storey]);
 
+  const storeyIds = new Map<string, number>();
+  const storeyProducts = new Map<number, number[]>();
+  const ensureStorey = (key: string, name: string, elevation: number) => {
+    const existing = storeyIds.get(key);
+    if (existing) return existing;
+    const storeyPlacement = placement(0, 0, elevation, 0, buildingPlacement);
+    const id = add("IFCBUILDINGSTOREY", `'${ifcGuid(4 + storeyIds.size)}',#${history},${ifcText(name)},$,$,#${storeyPlacement},$,$,.ELEMENT.,${number(elevation).toFixed(3)}`);
+    storeyIds.set(key, id);
+    storeyProducts.set(id, []);
+    aggregate(name, building, [id]);
+    return id;
+  };
+  ensureStorey("default", "Coordination level", 0);
+  for (const level of design.community?.levels ?? []) ensureStorey(level.id, level.name, level.elevation);
+
+  const measure = (value: unknown) => Math.max(0, Number(value) || 0);
+  const dimensions = (item: ExchangeEntity) => {
+    const geometry = item.geometry ?? {};
+    const width = measure(geometry.widthM ?? geometry.wM);
+    const depth = measure(geometry.depthM ?? geometry.dM ?? geometry.heightM);
+    const height = measure(geometry.heightM ?? geometry.hM ?? geometry.widthM);
+    return { width, depth, height };
+  };
+  const boxShape = (dims: { width: number; depth: number; height: number }) => {
+    if (!dims.width || !dims.depth || !dims.height) return undefined;
+    const profilePoint = add("IFCCARTESIANPOINT", "(0.,0.)");
+    const profile = add("IFCRECTANGLEPROFILEDEF", `.AREA.,$,#${profilePoint},${number(dims.width).toFixed(3)},${number(dims.depth).toFixed(3)}`);
+    const solidPlacement = add("IFCAXIS2PLACEMENT3D", `#${origin},$,#${up}`);
+    const solid = add("IFCEXTRUDEDAREASOLID", `#${profile},#${solidPlacement},#${up},${number(dims.height).toFixed(3)}`);
+    const representation = add("IFCSHAPEREPRESENTATION", `#${context},'Body','SweptSolid',(#${solid})`);
+    return add("IFCPRODUCTDEFINITIONSHAPE", `$,$,(#${representation})`);
+  };
+  const pset = (product: number, item: ExchangeEntity, dims: { width: number; depth: number; height: number }) => {
+    const values = [
+      `IFCPROPERTYSINGLEVALUE('SourceId',$,IFCLABEL(${ifcText(item.id)}),$)`,
+      `IFCPROPERTYSINGLEVALUE('SourceType',$,IFCLABEL(${ifcText(item.type)}),$)`,
+      `IFCPROPERTYSINGLEVALUE('Approximation',$,IFCBOOLEAN(.T.),$)`,
+    ];
+    const propertyIds = values.map((value) => add("IFCPROPERTYSINGLEVALUE", value.slice(value.indexOf("(") + 1, -1)));
+    const definition = add("IFCPROPERTYSET", `'${ifcGuid(rows.length + 100)}',#${history},'Groundwork Source',$,(${propertyIds.map((id) => `#${id}`).join(",")})`);
+    add("IFCRELDEFINESBYPROPERTIES", `'${ifcGuid(rows.length + 100)}',#${history},'Source properties',$,(#${product}),#${definition}`);
+    if (dims.width && dims.depth && dims.height) {
+      const quantities = [
+        add("IFCQUANTITYLENGTH", `'Width',$,$,${number(dims.width).toFixed(3)},$`),
+        add("IFCQUANTITYLENGTH", `'Depth',$,$,${number(dims.depth).toFixed(3)},$`),
+        add("IFCQUANTITYLENGTH", `'Height',$,$,${number(dims.height).toFixed(3)},$`),
+        add("IFCQUANTITYVOLUME", `'GrossVolume',$,$,${number(dims.width * dims.depth * dims.height).toFixed(3)},$`),
+      ];
+      const quantitySet = add("IFCELEMENTQUANTITY", `'${ifcGuid(rows.length + 100)}',#${history},'Base quantities',$,$,(${quantities.map((id) => `#${id}`).join(",")})`);
+      add("IFCRELDEFINESBYPROPERTIES", `'${ifcGuid(rows.length + 100)}',#${history},'Base quantities',$,(#${product}),#${quantitySet}`);
+    }
+  };
+  const typedClass = (item: ExchangeEntity) => {
+    if (item.type === "WALL" || item.type === "FACADE_PANEL") return "IFCWALL";
+    if (item.type === "SLAB") return "IFCSLAB";
+    if (item.type === "SPACE") return "IFCSPACE";
+    if (item.type === "ROOF") return "IFCROOF";
+    if (item.type === "COLUMN") return "IFCCOLUMN";
+    if (item.type === "DOOR") return "IFCDOOR";
+    if (item.type === "WINDOW") return "IFCWINDOW";
+    if (item.type.startsWith("MEP_DUCT") || item.type.startsWith("MEP_PIPE") || item.type.startsWith("MEP_CABLE_TRAY")) return "IFCFLOWSEGMENT";
+    if (item.type === "MEP_EQUIPMENT") return "IFCUNITARYEQUIPMENT";
+    if (item.type === "MEP_FIXTURE") return "IFCFLOWTERMINAL";
+    if (item.type === "INFRA_FACILITY") return "IFCBUILDINGELEMENTPROXY";
+    return "IFCFURNISHINGELEMENT";
+  };
   const products = exchange.entities.map((item, index) => {
-    const point = add("IFCCARTESIANPOINT", `(${number(Number(item.geometry?.xM ?? 0)).toFixed(3)},${number(Number(item.geometry?.zM ?? 0)).toFixed(3)},0.)`);
-    const axis = add("IFCAXIS2PLACEMENT3D", `#${point},$,#${up}`);
-    const local = add("IFCLOCALPLACEMENT", `$,#${axis}`);
-    const geometryNote = item.geometry ? `Approximate ${item.type} intent: ${JSON.stringify(item.geometry).slice(0, 350)}` : `Approximate ${item.type} intent`;
-    return add("IFCBUILDINGELEMENTPROXY", `'${ifcGuid(100 + index)}',#${history},${ifcText(item.name || item.type)},${ifcText(`${geometryNote}. Not fabrication geometry.`)},$,#${local},$,$`);
+    const geometry = item.geometry ?? {};
+    const floor = Number(geometry.floor ?? item.properties?.floor ?? 0);
+    const key = item.levelId || (floor ? `tower-floor-${floor}` : "default");
+    const storey = storeyIds.get(key) ?? ensureStorey(key, key === "default" ? "Coordination level" : `Level ${floor}`, floor * measure(design.community?.towers[0]?.floorHeight));
+    const x = Number(geometry.xM ?? 0);
+    const y = Number(geometry.zM ?? 0);
+    const z = Number(geometry.yM ?? 0);
+    const local = placement(x, y, z, Number(geometry.rotationDeg ?? 0), storey ? (rows[storey - 1]?.includes("IFCBUILDINGSTOREY") ? storey : undefined) : undefined);
+    const dims = dimensions(item);
+    const shape = boxShape(dims);
+    const description = `${item.type} intent; geometry is an approximate exchange envelope, not fabrication geometry.`;
+    const type = typedClass(item);
+    const base = `'${ifcGuid(100 + index)}',#${history},${ifcText(item.name || item.type)},${ifcText(description)},$,#${local},${shape ? `#${shape}` : "$"},$`;
+    const suffix = type === "IFCSPACE" ? ",.ELEMENT."
+      : ["IFCWALL", "IFCSLAB", "IFCROOF", "IFCCOLUMN"].includes(type) ? ",.ELEMENT."
+      : ["IFCFLOWSEGMENT", "IFCUNITARYEQUIPMENT", "IFCFLOWTERMINAL"].includes(type) ? ",.NOTDEFINED."
+      : type === "IFCDOOR" || type === "IFCWINDOW" ? ",$,$,.NOTDEFINED."
+      : "";
+    const id = add(type, `${base}${suffix}`);
+    storeyProducts.get(storey)?.push(id);
+    pset(id, item, dims);
+    return id;
   });
-  aggregate("Model elements", storey, products);
+  void products;
+  for (const [storey, children] of storeyProducts) if (children.length) add("IFCRELCONTAINEDINSPATIALSTRUCTURE", `'${ifcGuid(rows.length + 10)}',#${history},'Storey contents',$,(${children.map((id) => `#${id}`).join(",")}),#${storey}`);
 
   return [
     "ISO-10303-21;",
     "HEADER;",
     "FILE_DESCRIPTION(('Groundwork coordination export'),'2;1');",
-    "FILE_NAME('groundwork.ifc','2026-01-01T00:00:00',('Groundwork'),('Groundwork'),'Groundwork Design Studio','Groundwork','');",
+    `FILE_NAME('groundwork.ifc','${new Date().toISOString()}',('Groundwork'),('Groundwork'),'Groundwork Design Studio','Groundwork','');`,
     "FILE_SCHEMA(('IFC4'));",
     "ENDSEC;",
     "DATA;",
