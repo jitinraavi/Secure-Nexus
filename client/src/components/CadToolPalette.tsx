@@ -42,7 +42,7 @@ const TOOLS: { id: CadTool; label: string; shortcut: string }[] = [
   { id: "array", label: "Array", shortcut: "AR" },
   { id: "extrude", label: "Extrude", shortcut: "EXT" },
   { id: "add-building", label: "Add building", shortcut: "B" },
-  { id: "add-feature", label: "Add feature", shortcut: "F" },
+  { id: "add-feature", label: "Amenities", shortcut: "AM" },
 ];
 
 export function CadToolPalette({

@@ -76,7 +76,7 @@ const STEPS: { id: StepId; label: string }[] = [
   { id: "levels", label: "Levels & grid" },
   { id: "drafting", label: "Drafting & structure" },
   { id: "analysis", label: "Preliminary analysis" },
-  { id: "amenities", label: "Ground floor amenities" },
+  { id: "amenities", label: "Amenities" },
   { id: "towers", label: "Towers & floors" },
   { id: "exterior", label: "Exterior" },
   { id: "interiors", label: "Interiors" },
