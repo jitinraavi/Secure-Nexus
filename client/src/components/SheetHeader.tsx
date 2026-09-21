@@ -9,7 +9,7 @@ export function SheetHeader({
 }: {
   eyebrow: string;
   title: ReactNode;
-  meta: string;
+  meta: ReactNode;
   tone?: "slate" | "emerald" | "cyan" | "amber";
 }) {
   return (
