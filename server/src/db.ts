@@ -96,6 +96,32 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS project_revisions (
+  id          TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  design_data TEXT NOT NULL,
+  project_type TEXT NOT NULL,
+  width_mm    INTEGER NOT NULL,
+  depth_mm    INTEGER NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_revisions_project ON project_revisions(project_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS project_share_links (
+  id          TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash  TEXT NOT NULL UNIQUE,
+  expires_at  INTEGER NOT NULL,
+  revoked_at  INTEGER,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_share_links_project ON project_share_links(project_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS payments (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

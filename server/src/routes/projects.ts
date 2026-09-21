@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import multer from "multer";
 import { logAudit } from "../audit.js";
-import { deriveVaultKey, decryptAesGcm, encryptAesGcm, randomId } from "../crypto.js";
+import { deriveVaultKey, decryptAesGcm, encryptAesGcm, randomId, randomToken, sha256Hex } from "../crypto.js";
 import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
 import { db, now } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
@@ -102,6 +102,20 @@ const projectMetaSchema = z.object({
 const designSchema = z.object({
   designData: z.string().min(2).max(4_000_000),
 });
+
+const revisionSchema = z.object({ name: z.string().trim().min(1).max(80), designData: z.string().min(2).max(4_000_000).optional() });
+const shareLinkSchema = z.object({ expiresInHours: z.number().int().min(1).max(24 * 30).default(24 * 7) });
+
+function projectForUser(projectId: string, userId: string) {
+  return db.prepare("SELECT id, name, project_type, design_data, width_mm, depth_mm FROM projects WHERE id = ? AND user_id = ?")
+    .get(projectId, userId) as {
+      id: string; name: string; project_type: string; design_data: string | null; width_mm: number; depth_mm: number;
+    } | undefined;
+}
+
+function revisionResponse(row: { id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number }) {
+  return { id: row.id, name: row.name, projectType: row.project_type, widthMm: row.width_mm, depthMm: row.depth_mm, createdAt: row.created_at };
+}
 
 /* GET /api/projects */
 router.get("/", (req: AuthedRequest, res) => {
@@ -283,6 +297,105 @@ router.patch(
     res.json({ ok: true });
   }),
 );
+
+/* GET /api/projects/:id/revisions */
+router.get("/:id/revisions", (req: AuthedRequest, res) => {
+  if (!projectForUser(req.params.id, req.user!.id)) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const rows = db.prepare(
+    "SELECT id, name, project_type, width_mm, depth_mm, created_at FROM project_revisions WHERE project_id = ? AND user_id = ? ORDER BY created_at DESC",
+  ).all(req.params.id, req.user!.id) as { id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number }[];
+  res.json({ revisions: rows.map(revisionResponse) });
+});
+
+/* POST /api/projects/:id/revisions — a named, encrypted snapshot of the current project */
+router.post("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
+  const parsed = revisionSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid snapshot name" });
+    return;
+  }
+  const project = projectForUser(req.params.id, req.user!.id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const revision = {
+    id: randomId(), name: parsed.data.name, project_type: project.project_type,
+    width_mm: project.width_mm, depth_mm: project.depth_mm, created_at: now(),
+  };
+  db.prepare(
+    "INSERT INTO project_revisions (id, project_id, user_id, name, design_data, project_type, width_mm, depth_mm, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(revision.id, project.id, req.user!.id, revision.name, encryptForUser(parsed.data.designData || project.design_data || "null", req.user!.id), revision.project_type, revision.width_mm, revision.depth_mm, revision.created_at);
+  logAudit(req.user!.id, "project.revision_created", { projectId: project.id, name: revision.name }, req);
+  res.status(201).json(revisionResponse(revision));
+}));
+
+/* POST /api/projects/:id/revisions/:revisionId/restore */
+router.post("/:id/revisions/:revisionId/restore", asyncHandler(async (req: AuthedRequest, res) => {
+  const project = projectForUser(req.params.id, req.user!.id);
+  const revision = db.prepare(
+    "SELECT * FROM project_revisions WHERE id = ? AND project_id = ? AND user_id = ?",
+  ).get(req.params.revisionId, req.params.id, req.user!.id) as {
+    id: string; name: string; design_data: string; project_type: string; width_mm: number; depth_mm: number;
+  } | undefined;
+  if (!project || !revision) {
+    res.status(404).json({ error: "Project or snapshot not found" });
+    return;
+  }
+  // Keep the encrypted payload intact; it remains bound to this user's vault AAD.
+  db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+    .run(revision.design_data, revision.project_type, revision.width_mm, revision.depth_mm, now(), project.id, req.user!.id);
+  logAudit(req.user!.id, "project.revision_restored", { projectId: project.id, revisionId: revision.id }, req);
+  res.json({ ok: true, name: revision.name, projectType: revision.project_type, widthMm: revision.width_mm, depthMm: revision.depth_mm, design: JSON.parse(decryptForUser(revision.design_data, req.user!.id)) });
+}));
+
+/* GET /api/projects/:id/share-links */
+router.get("/:id/share-links", (req: AuthedRequest, res) => {
+  if (!projectForUser(req.params.id, req.user!.id)) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const rows = db.prepare("SELECT id, expires_at, revoked_at, created_at FROM project_share_links WHERE project_id = ? AND user_id = ? ORDER BY created_at DESC")
+    .all(req.params.id, req.user!.id) as { id: string; expires_at: number; revoked_at: number | null; created_at: number }[];
+  res.json({ links: rows.map((row) => ({ id: row.id, expiresAt: row.expires_at, revokedAt: row.revoked_at, createdAt: row.created_at, active: !row.revoked_at && row.expires_at > now() })) });
+});
+
+/* POST /api/projects/:id/share-links */
+router.post("/:id/share-links", asyncHandler(async (req: AuthedRequest, res) => {
+  const parsed = shareLinkSchema.safeParse(req.body || {});
+  const project = projectForUser(req.params.id, req.user!.id);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Expiry must be between 1 hour and 30 days" });
+    return;
+  }
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const token = randomToken(32);
+  const id = randomId();
+  const createdAt = now();
+  const expiresAt = createdAt + parsed.data.expiresInHours * 3600;
+  db.prepare("INSERT INTO project_share_links (id, project_id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(id, project.id, req.user!.id, sha256Hex(token), expiresAt, createdAt);
+  logAudit(req.user!.id, "project.share_link_created", { projectId: project.id, expiresAt }, req);
+  res.status(201).json({ id, token, expiresAt, url: `/share/${token}` });
+}));
+
+/* DELETE /api/projects/:id/share-links/:linkId */
+router.delete("/:id/share-links/:linkId", asyncHandler(async (req: AuthedRequest, res) => {
+  const result = db.prepare("UPDATE project_share_links SET revoked_at = ? WHERE id = ? AND project_id = ? AND user_id = ? AND revoked_at IS NULL")
+    .run(now(), req.params.linkId, req.params.id, req.user!.id);
+  if (!result.changes) {
+    res.status(404).json({ error: "Share link not found" });
+    return;
+  }
+  logAudit(req.user!.id, "project.share_link_revoked", { projectId: req.params.id, linkId: req.params.linkId }, req);
+  res.json({ ok: true });
+}));
 
 /* POST /api/projects/:id/photo */
 router.post(

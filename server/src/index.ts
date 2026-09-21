@@ -15,6 +15,7 @@ import auditRoutes from "./routes/audit.js";
 import projectRoutes from "./routes/projects.js";
 import paymentRoutes from "./routes/payments.js";
 import assistantRoutes from "./routes/assistant.js";
+import shareRoutes from "./routes/share.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(__dirname, "../../client/dist");
@@ -66,6 +67,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/secrets", secretRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/projects", projectRoutes);
+app.use("/api/share", shareRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/assistant", assistantRoutes);
 

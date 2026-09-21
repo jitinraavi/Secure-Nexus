@@ -11,6 +11,10 @@ import type {
   AssistantPlanResponse,
   AssistantAction,
   AssistantPlan,
+  ProjectRevision,
+  ProjectShareLink,
+  Design,
+  SharedProject,
 } from "./types";
 
 export class ApiError extends Error {
@@ -328,6 +332,40 @@ export function recordExport(id: string, format: string) {
     method: "POST",
     body: JSON.stringify({ format }),
   });
+}
+
+/* ---------------------------- History / sharing --------------------------- */
+
+export async function listProjectRevisions(id: string): Promise<ProjectRevision[]> {
+  return (await request<{ revisions: ProjectRevision[] }>(`/api/projects/${id}/revisions`, { method: "GET" })).revisions;
+}
+
+export function createProjectRevision(id: string, name: string, designData?: string) {
+  return request<ProjectRevision>(`/api/projects/${id}/revisions`, { method: "POST", body: JSON.stringify({ name, designData }) });
+}
+
+export function restoreProjectRevision(id: string, revisionId: string) {
+  return request<{ ok: boolean; name: string; projectType: string; widthMm: number; depthMm: number; design: Design | null }>(
+    `/api/projects/${id}/revisions/${revisionId}/restore`, { method: "POST", body: "{}" },
+  );
+}
+
+export async function listProjectShareLinks(id: string): Promise<ProjectShareLink[]> {
+  return (await request<{ links: ProjectShareLink[] }>(`/api/projects/${id}/share-links`, { method: "GET" })).links;
+}
+
+export function createProjectShareLink(id: string, expiresInHours = 24 * 7) {
+  return request<{ id: string; token: string; expiresAt: number; url: string }>(`/api/projects/${id}/share-links`, {
+    method: "POST", body: JSON.stringify({ expiresInHours }),
+  });
+}
+
+export function revokeProjectShareLink(id: string, linkId: string) {
+  return request<{ ok: boolean }>(`/api/projects/${id}/share-links/${linkId}`, { method: "DELETE" });
+}
+
+export function getSharedProject(token: string): Promise<SharedProject> {
+  return request<SharedProject>(`/api/share/${encodeURIComponent(token)}`, { method: "GET" }, { skipCsrf: true });
 }
 
 /* ---------------------------------- Audit --------------------------------- */

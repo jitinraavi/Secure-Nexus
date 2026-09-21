@@ -12,6 +12,7 @@ import { Audit } from "./pages/Audit";
 import { Settings } from "./pages/Settings";
 import { Billing } from "./pages/Billing";
 import { Checkout } from "./pages/Checkout";
+import { SharedProject } from "./pages/SharedProject";
 import { Spinner } from "./components/ui";
 
 function FullScreenLoading() {
@@ -45,6 +46,7 @@ export default function App() {
       <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
       <Route path="/signup" element={<PublicOnly><Signup /></PublicOnly>} />
       <Route path="/verify-2fa" element={<PublicOnly><VerifyTwoFactor /></PublicOnly>} />
+      <Route path="/share/:token" element={<SharedProject />} />
 
       <Route element={<Protected><Layout /></Protected>}>
         <Route path="/dashboard" element={<Dashboard />} />

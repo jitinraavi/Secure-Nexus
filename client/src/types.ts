@@ -56,6 +56,28 @@ export interface ProjectDetail extends Project {
   design: Design | null;
 }
 
+export interface ProjectRevision {
+  id: string;
+  name: string;
+  projectType: ProjectType;
+  widthMm: number;
+  depthMm: number;
+  createdAt: number;
+}
+
+export interface ProjectShareLink {
+  id: string;
+  expiresAt: number;
+  revokedAt: number | null;
+  createdAt: number;
+  active: boolean;
+}
+
+export interface SharedProject extends ProjectDetail {
+  readOnly: true;
+  expiresAt: number;
+}
+
 export interface AuditEvent {
   id: number;
   action: string;

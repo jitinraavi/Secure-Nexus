@@ -24,6 +24,7 @@ import { CommunityEditor } from "./CommunityEditor";
 import { InfraEditor } from "./InfraEditor";
 import { MepPanel } from "../components/MepPanel";
 import { SheetHeader } from "../components/SheetHeader";
+import { ProjectHistory } from "../components/ProjectHistory";
 
 const SWATCHES = [
   "#7c8a99", "#a4714f", "#8a6a45", "#5d7b8a", "#6b5542", "#4c7a9c",
@@ -276,6 +277,13 @@ export function Editor() {
 
   const canUseCamera = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
+  const onHistoryRestore = (state: { design: Design | null; projectType: ProjectType; widthMm: number; depthMm: number }) => {
+    const restored = state.design ?? defaultDesign();
+    setDesign({ ...restored, room: { ...restored.room, widthMm: state.widthMm, depthMm: state.depthMm } });
+    setProjectType(state.projectType);
+    setLastSaved(Date.now());
+  };
+
   const catalogContent = (
     <>
       <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Furniture library</p>
@@ -437,7 +445,8 @@ export function Editor() {
             {landDimensionText(community)}
             {saving ? " · saving…" : lastSaved ? " · saved" : ""}
           </p>
-          <div className="flex-1" />
+           <div className="flex-1" />
+           <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
            <Badge tone={residentialProject ? "emerald" : "cyan"}>
             {PROJECT_TYPE_LABELS[projectType] ?? projectType}
           </Badge>
@@ -475,8 +484,9 @@ export function Editor() {
               : "No site located yet"}
             {saving ? " · saving…" : lastSaved ? " · saved" : ""}
           </p>
-          <div className="flex-1" />
-          <Badge tone="amber">{INFRA_LABELS[infraKind]}</Badge>
+           <div className="flex-1" />
+           <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
+           <Badge tone="amber">{INFRA_LABELS[infraKind]}</Badge>
         </div>
         <InfraEditor
           kind={infraKind}
@@ -504,7 +514,8 @@ export function Editor() {
           </p>
         </div>
 
-         <Badge tone="slate">{design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} items</Badge>
+          <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
+          <Badge tone="slate">{design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} items</Badge>
 
         <Button variant="secondary" size="sm" onClick={() => setCameraOpen(true)} disabled={!canUseCamera}>
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M9 3L7.3 5H4a2 2 0 00-2 2v11a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-3.3L15 3H9zm3 14a5 5 0 110-10 5 5 0 010 10zm0-8a3 3 0 100 6 3 3 0 000-6z" /></svg>
