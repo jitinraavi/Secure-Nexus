@@ -125,7 +125,7 @@ export function Editor() {
           setSaving(true);
           await patchProject(id!, {
             name,
-            projectType: model,
+            projectType,
             widthMm: d.room.widthMm,
             depthMm: d.room.depthMm,
             designData: JSON.stringify(d),
@@ -138,7 +138,7 @@ export function Editor() {
         }
       }, 1200);
     },
-    [id, name, toast, model],
+    [id, name, toast, projectType],
   );
 
   const changeDesign = useCallback(

@@ -138,6 +138,7 @@ export function Canvas3D({
   const controlsRef = useRef<OrbitControls | null>(null);
   const roomGroupRef = useRef<THREE.Group | null>(null);
   const curtainGroupRef = useRef<THREE.Group | null>(null);
+  const mepGroupRef = useRef<THREE.Group | null>(null);
   const photoGroupRef = useRef<THREE.Group | null>(null);
   const itemGroups = useRef(new Map<string, { group: THREE.Group; sig: string }>());
   const selectionRingRef = useRef<THREE.Mesh | null>(null);
@@ -423,12 +424,19 @@ export function Canvas3D({
     if (!scene) return;
     if (roomGroupRef.current) scene.remove(roomGroupRef.current);
     if (curtainGroupRef.current) scene.remove(curtainGroupRef.current);
+    if (mepGroupRef.current) {
+      scene.remove(mepGroupRef.current);
+      disposeGroup(mepGroupRef.current);
+      mepGroupRef.current = null;
+    }
 
     const room = buildRoomParts(design);
     addTechnicalEdges(room, "#334155", 0.7);
     scene.add(room);
     roomGroupRef.current = room;
-    scene.add(buildMepScene(design.mep));
+    const mep = buildMepScene(design.mep);
+    scene.add(mep);
+    mepGroupRef.current = mep;
 
     const curtain = buildCurtainParts(design);
     if (curtain) scene.add(curtain);
