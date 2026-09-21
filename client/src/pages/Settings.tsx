@@ -17,10 +17,12 @@ import { Badge, Button, Card, Input, Select, Spinner } from "../components/ui";
 import { useToast } from "../components/Toast";
 import { formatDate } from "../lib/format";
 import { cn } from "../lib/cn";
+import { useTheme, type ThemeMode } from "../theme";
 
 export function Settings() {
   const { user, refresh } = useAuth();
   const toast = useToast();
+  const { mode, setMode } = useTheme();
 
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -163,6 +165,18 @@ export function Settings() {
         <h1 className="text-2xl font-bold text-slate-50">Settings</h1>
         <p className="mt-1 text-sm text-slate-400">Security, sessions and preferences for your account.</p>
       </div>
+
+      <Card className="p-6">
+        <div>
+          <h2 className="font-semibold text-slate-100">Appearance</h2>
+          <p className="mt-1 text-sm text-slate-400">Choose the workspace theme for this browser.</p>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {(["light", "dark", "system"] as ThemeMode[]).map((option) => (
+            <button key={option} type="button" onClick={() => setMode(option)} className={cn("rounded-xl border px-3 py-3 text-sm font-semibold capitalize transition", mode === option ? "border-[#d6a84a] bg-[#d6a84a]/10 text-[#e5bd67]" : "border-slate-700 bg-slate-900/60 text-slate-400 hover:border-slate-500")}>{option}</button>
+          ))}
+        </div>
+      </Card>
 
       {/* Profile & billing details */}
       <Card className="p-6">
