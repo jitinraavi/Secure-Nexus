@@ -3,6 +3,7 @@ import type { MepDesign, MepElement, MepElementKind, MepPoint, MepPlanningInputs
 import { material, prismAt, uid } from "./modelcore";
 import { calculateMepPlan, validateMepInputs } from "./mep-calculations";
 import { engineeringProfile } from "./engineering";
+import { familyForMepKind, familyMetadata } from "./families";
 
 export const MEP_KINDS: { kind: MepElementKind; label: string; color: string }[] = [
   { kind: "duct", label: "Duct", color: "#f59e0b" },
@@ -120,7 +121,8 @@ export { calculateMepPlan, validateMepInputs };
 export function makeMepElement(kind: MepElementKind, index = 0): MepElement {
   const option = MEP_KINDS.find((item) => item.kind === kind) ?? MEP_KINDS[0];
   const route: MepPoint[] = [{ x: -2, y: kind === "fixture" ? 2.4 : 2.7, z: index * 0.8 }, { x: 2, y: kind === "fixture" ? 2.4 : 2.7, z: index * 0.8 }];
-  return { id: uid("mep"), kind, name: `${option.label} ${index + 1}`, route, width: kind === "duct" ? 0.45 : 0.2, height: kind === "duct" ? 0.3 : 0.2, diameter: 0.15, color: option.color, visible: true, system: legacySystem(kind), connectedTo: [] };
+  const family = familyForMepKind(kind)[0];
+  return { id: uid("mep"), kind, name: `${option.label} ${index + 1}`, route, width: kind === "duct" ? 0.45 : 0.2, height: kind === "duct" ? 0.3 : 0.2, diameter: 0.15, color: option.color, visible: true, system: legacySystem(kind), connectedTo: [], family: family ? familyMetadata(family) : undefined };
 }
 
 function bounds(element: MepElement) {

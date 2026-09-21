@@ -9,6 +9,7 @@ import { uid } from "../lib/modelcore";
 import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects";
 import { MepPanel } from "../components/MepPanel";
 import { buildMepScene } from "../lib/mep";
+import { familyMetadata, familyForId } from "../lib/families";
 
 /**
  * In-room furniture editor.
@@ -77,6 +78,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
       widthM: kind === "door" ? 1 : 1.5,
       heightM: kind === "door" ? 2.1 : 1.3,
       sillM: kind === "door" ? 0 : 0.9,
+      family: familyMetadata(familyForId(kind === "door" ? "door-single" : "window-basic")!),
     };
     onChange({ ...room, openings: [...(room.openings ?? []), opening] });
   };

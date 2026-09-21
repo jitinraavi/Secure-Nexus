@@ -183,6 +183,7 @@ export interface MepElement {
   zoneId?: string;
   connectedTo?: string[];
   supportSpacingM?: number;
+  family?: ParametricFamilyMetadata;
 }
 
 export interface MepPlanningInputs {
@@ -236,6 +237,7 @@ export interface RoomOpening {
   widthM: number;
   heightM: number;
   sillM: number;
+  family?: ParametricFamilyMetadata;
 }
 
 export interface CurtainConfig {
@@ -321,9 +323,15 @@ export type DraftGrip = "width-start" | "width-end" | "depth-start" | "depth-end
 
 /** Optional parametric intent. All fields are additive for older saved designs. */
 export interface ParametricFamilyMetadata {
+  libraryId?: string;
   family?: string;
   type?: string;
   instance?: string;
+  typeParameters?: Record<string, number | string | boolean>;
+  instanceParameters?: Record<string, number | string | boolean>;
+  hostId?: string;
+  levelId?: string;
+  metadata?: Record<string, string>;
 }
 
 export interface ParametricLocks {
