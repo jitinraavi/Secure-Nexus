@@ -122,6 +122,31 @@ CREATE TABLE IF NOT EXISTS project_share_links (
 
 CREATE INDEX IF NOT EXISTS idx_project_share_links_project ON project_share_links(project_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS project_collaboration_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  event_type  TEXT NOT NULL,
+  revision    INTEGER NOT NULL,
+  payload     TEXT NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_collaboration_events_project ON project_collaboration_events(project_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS project_collaboration_items (
+  id          TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'open',
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_collaboration_items_project ON project_collaboration_items(project_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS payments (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -183,6 +208,9 @@ raw.exec(
 const projectCols = (raw.prepare("PRAGMA table_info(projects)").all() as { name: string }[]).map((c) => c.name);
 if (!projectCols.includes("project_type")) {
   raw.exec("ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'house';");
+}
+if (!projectCols.includes("revision")) {
+  raw.exec("ALTER TABLE projects ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;");
 }
 
 export type Db = typeof raw;

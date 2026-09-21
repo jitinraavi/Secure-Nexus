@@ -5,6 +5,7 @@ import {
   patchProject,
   recordExport,
   uploadProjectPhoto,
+  type CollaborationEvent,
 } from "../api";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Modal, Select, Spinner, Toggle } from "../components/ui";
@@ -22,6 +23,7 @@ import { defaultCommunity } from "../lib/community";
 import { ensureInfraDesign, INFRA_LABELS } from "../lib/infra";
 import { CommunityEditor } from "./CommunityEditor";
 import { InfraEditor } from "./InfraEditor";
+import { CollaborationStatus } from "../components/CollaborationStatus";
 import { MepPanel } from "../components/MepPanel";
 import { SheetHeader } from "../components/SheetHeader";
 import { DesignExportMenu } from "../components/DesignExportMenu";
@@ -56,6 +58,8 @@ export function Editor() {
   const [api, setApi] = useState<EditorApi | null>(null);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [remoteRevision, setRemoteRevision] = useState<number | null>(null);
 
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [showPhoto, setShowPhoto] = useState(true);
@@ -78,6 +82,7 @@ export function Editor() {
     try {
       const project = await getProject(id!);
       setName(project.name);
+      setRevision(project.revision ?? 0);
       const pt = (project as { projectType?: ProjectType }).projectType ?? "house";
       setProjectType(pt);
       const base = project.design
@@ -125,13 +130,15 @@ export function Editor() {
       saveTimer.current = window.setTimeout(async () => {
         try {
           setSaving(true);
-          await patchProject(id!, {
+          const saved = await patchProject(id!, {
             name,
             projectType,
             widthMm: d.room.widthMm,
             depthMm: d.room.depthMm,
             designData: JSON.stringify(d),
+            baseRevision: revision,
           });
+          setRevision(saved.revision);
           setLastSaved(Date.now());
         } catch (err) {
           toast.push({ title: "Could not save design", description: err instanceof Error ? err.message : undefined, tone: "error" });
@@ -140,8 +147,12 @@ export function Editor() {
         }
       }, 1200);
     },
-    [id, name, toast, projectType],
+    [id, name, revision, toast, projectType],
   );
+
+  const onCollaborationEvent = useCallback((event: CollaborationEvent) => {
+    if (event.type === "design.updated" && event.revision > revision) setRemoteRevision(event.revision);
+  }, [revision]);
 
   const changeDesign = useCallback(
     (d: Design) => {
@@ -439,7 +450,7 @@ export function Editor() {
         <SheetHeader
           eyebrow="Project sheet"
           title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />}
-          meta={`${PROJECT_TYPE_LABELS[projectType] ?? projectType} · ${saving ? "Saving" : lastSaved ? "Saved" : "Draft"}`}
+          meta={<>{PROJECT_TYPE_LABELS[projectType] ?? projectType} · {saving ? "Saving" : lastSaved ? "Saved" : "Draft"} · <CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} />{remoteRevision ? " · Remote update available" : ""}</>}
         />
         <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
           <p className="text-xs text-slate-500">
@@ -470,7 +481,7 @@ export function Editor() {
   if (infraActive && infraKind && design.infra) {
     return (
       <div className="relative flex h-[calc(100vh-6rem)] flex-col lg:h-[calc(100vh-3rem)]">
-        <SheetHeader eyebrow="Project sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={`${INFRA_LABELS[infraKind]} · ${saving ? "Saving" : lastSaved ? "Saved" : "Draft"}`} tone="amber" />
+         <SheetHeader eyebrow="Project sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={<>{INFRA_LABELS[infraKind]} · {saving ? "Saving" : lastSaved ? "Saved" : "Draft"} · <CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} />{remoteRevision ? " · Remote update available" : ""}</>} tone="amber" />
         <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
           <input
             value={name}
@@ -506,7 +517,7 @@ export function Editor() {
 
   return (
     <div className="relative flex h-[calc(100vh-6rem)] flex-col lg:h-[calc(100vh-3rem)]">
-       <SheetHeader eyebrow="Interior sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={`${PROJECT_TYPE_LABELS[projectType] ?? projectType} · ${saving ? "Saving" : lastSaved ? "Saved" : "Draft"}`} />
+        <SheetHeader eyebrow="Interior sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={<>{PROJECT_TYPE_LABELS[projectType] ?? projectType} · {saving ? "Saving" : lastSaved ? "Saved" : "Draft"} · <CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} />{remoteRevision ? " · Remote update available" : ""}</>} />
        <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
          <div className="min-w-0 flex-1">
           <p className="mt-0.5 text-xs text-slate-500">

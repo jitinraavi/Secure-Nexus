@@ -15,6 +15,7 @@ import type {
   ProjectShareLink,
   Design,
   SharedProject,
+  CollaborationItem,
 } from "./types";
 
 export class ApiError extends Error {
@@ -325,12 +326,36 @@ export async function getProject(id: string): Promise<ProjectDetail> {
 
 export function patchProject(
   id: string,
-  patch: { name?: string; projectType?: string; widthMm?: number; depthMm?: number; designData?: string },
+  patch: { name?: string; projectType?: string; widthMm?: number; depthMm?: number; designData?: string; baseRevision?: number },
 ) {
-  return request<{ ok: boolean }>(`/api/projects/${id}`, {
+  return request<{ ok: boolean; revision: number }>(`/api/projects/${id}`, {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+export interface CollaborationEvent {
+  id: number;
+  projectId: string;
+  type: string;
+  revision: number;
+  createdAt: number;
+}
+
+export function subscribeToProject(id: string, onEvent: (event: CollaborationEvent) => void, onStatus: (status: "connected" | "disconnected") => void) {
+  const source = new EventSource(`/api/collaboration/${encodeURIComponent(id)}/events`);
+  source.addEventListener("ready", () => onStatus("connected"));
+  source.addEventListener("collaboration", (event) => onEvent(JSON.parse((event as MessageEvent).data) as CollaborationEvent));
+  source.onerror = () => onStatus("disconnected");
+  return () => source.close();
+}
+
+export async function listCollaborationItems(id: string): Promise<CollaborationItem[]> {
+  return (await request<{ items: CollaborationItem[] }>(`/api/collaboration/${id}/items`, { method: "GET" })).items;
+}
+
+export function createCollaborationItem(id: string, kind: "comment" | "issue", body: string) {
+  return request<CollaborationItem>(`/api/collaboration/${id}/items`, { method: "POST", body: JSON.stringify({ kind, body }) });
 }
 
 export async function uploadProjectPhoto(id: string, file: File) {
@@ -365,7 +390,7 @@ export function createProjectRevision(id: string, name: string, designData?: str
 }
 
 export function restoreProjectRevision(id: string, revisionId: string) {
-  return request<{ ok: boolean; name: string; projectType: string; widthMm: number; depthMm: number; design: Design | null }>(
+  return request<{ ok: boolean; revision: number; name: string; projectType: string; widthMm: number; depthMm: number; design: Design | null }>(
     `/api/projects/${id}/revisions/${revisionId}/restore`, { method: "POST", body: "{}" },
   );
 }

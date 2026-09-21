@@ -50,10 +50,19 @@ export interface Project {
   createdAt: number;
   updatedAt: number;
   hasPhoto: boolean;
+  revision: number;
 }
 
 export interface ProjectDetail extends Project {
   design: Design | null;
+}
+
+export interface CollaborationItem {
+  id: string;
+  kind: "comment" | "issue";
+  status: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface ProjectRevision {

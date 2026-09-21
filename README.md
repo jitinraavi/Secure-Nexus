@@ -8,6 +8,7 @@ A deployable, full-stack design studio for interior designers, architects and si
 - **Get paid** — subscription portal (Free / Pro ₹4,999·mo / Studio ₹11,999·yr) with UPI, card and PayPal; demo mode works with zero credentials.
 - **Design outside the box** — residential/commercial community builder and highway/airport/ports/dams infrastructure wizards anchored on a Google Maps site, with earth-distortion-free 3D scenes and takeoffs.
 - **Hardened by default** — scrypt password hashing, TOTP 2FA, encrypted-at-rest design data and photos (AES-256-GCM), CSRF, rate limiting, account lockout and a full audit log.
+- **Bounded live collaboration** — authenticated owner presence over reconnecting SSE, encrypted collaboration events, comments/issues, snapshots, and optimistic revision conflict checks.
 
 Stack: Node 22 · Express · SQLite (`node:sqlite`) · React 18 · Vite · Tailwind v4 · three.js.
 
@@ -25,6 +26,10 @@ npm run dev        # API on :4000, Vite app on :5173 (proxies /api)
 The first server boot generates a random `MASTER_KEY` in `server/.env` (used to derive the vault key that encrypts all project data and photos — keep it safe, it is your data's backstop).
 
 The API lives in `server/`, the client in `client/`.
+
+### Collaboration model
+
+The editor uses a server-authoritative revision protocol rather than a CRDT. Each design write includes the last revision observed by the client; a stale write receives `409 REVISION_CONFLICT` and is never applied. The client keeps local edits in place and surfaces that a remote update is available instead of replacing them blindly. Authenticated project owners can subscribe to `/api/collaboration/:projectId/events` via SSE and create encrypted comments/issues; expiring share links remain read-only and do not receive collaboration access. SSE event payloads intentionally contain metadata only, while project and item content remains encrypted at rest. This phase is single-server/in-memory for live fanout, so reconnecting clients recover state through the normal project/revision APIs and multi-instance deployments need a shared event broker for immediate fanout.
 
 ### Assistant configuration
 

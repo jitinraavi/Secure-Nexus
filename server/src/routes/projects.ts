@@ -6,6 +6,7 @@ import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
 import { db, now } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { z } from "zod";
+import { emitProjectEvent } from "../collaboration.js";
 
 const router = Router();
 const VAULT_KEY = deriveVaultKey(MASTER_KEY);
@@ -107,9 +108,9 @@ const revisionSchema = z.object({ name: z.string().trim().min(1).max(80), design
 const shareLinkSchema = z.object({ expiresInHours: z.number().int().min(1).max(24 * 30).default(24 * 7) });
 
 function projectForUser(projectId: string, userId: string) {
-  return db.prepare("SELECT id, name, project_type, design_data, width_mm, depth_mm FROM projects WHERE id = ? AND user_id = ?")
+  return db.prepare("SELECT id, name, project_type, design_data, width_mm, depth_mm, revision FROM projects WHERE id = ? AND user_id = ?")
     .get(projectId, userId) as {
-      id: string; name: string; project_type: string; design_data: string | null; width_mm: number; depth_mm: number;
+      id: string; name: string; project_type: string; design_data: string | null; width_mm: number; depth_mm: number; revision: number;
     } | undefined;
 }
 
@@ -121,7 +122,7 @@ function revisionResponse(row: { id: string; name: string; project_type: string;
 router.get("/", (req: AuthedRequest, res) => {
   const rows = db
     .prepare(
-      "SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id FROM projects p WHERE p.user_id = ? ORDER BY p.updated_at DESC",
+      "SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision FROM projects p WHERE p.user_id = ? ORDER BY p.updated_at DESC",
     )
     .all(req.user!.id) as {
     id: string;
@@ -132,6 +133,7 @@ router.get("/", (req: AuthedRequest, res) => {
     created_at: number;
     updated_at: number;
     photo_file_id: string | null;
+    revision: number;
   }[];
   res.json({
     projects: rows.map((p) => ({
@@ -143,6 +145,7 @@ router.get("/", (req: AuthedRequest, res) => {
       createdAt: p.created_at,
       updatedAt: p.updated_at,
       hasPhoto: Boolean(p.photo_file_id),
+      revision: p.revision,
     })),
   });
 });
@@ -171,6 +174,7 @@ router.post(
       depthMm: 4000,
       createdAt: t,
       updatedAt: t,
+      revision: 0,
     });
   }),
 );
@@ -190,6 +194,7 @@ router.get("/:id", (req: AuthedRequest, res) => {
         photo_file_id: string | null;
         created_at: number;
         updated_at: number;
+        revision: number;
       }
     | undefined;
   if (!row) {
@@ -216,6 +221,7 @@ router.get("/:id", (req: AuthedRequest, res) => {
     hasPhoto: Boolean(row.photo_file_id),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    revision: row.revision,
   });
 });
 
@@ -240,6 +246,12 @@ router.patch(
     }
 
     const hasDesign = typeof parsedBody.designData === "string";
+    const expectedRevision = typeof parsedBody.baseRevision === "number" ? parsedBody.baseRevision : null;
+    const current = db.prepare("SELECT revision FROM projects WHERE id = ? AND user_id = ?").get(req.params.id, req.user!.id) as { revision: number };
+    if (expectedRevision !== null && expectedRevision !== current.revision) {
+      res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: current.revision });
+      return;
+    }
     const meta = projectMetaSchema.partial().safeParse(parsedBody);
     if (!meta.success && !hasDesign) {
       res.status(400).json({ error: "Nothing to update" });
@@ -287,14 +299,22 @@ router.patch(
     values.push(req.params.id);
     values.push(req.user!.id);
 
-    db.prepare(
-      `UPDATE projects SET ${fields.join(", ")} WHERE id = ? AND user_id = ?`,
-    ).run(...values);
+    fields.push("revision = revision + 1");
+    const result = db.prepare(
+      `UPDATE projects SET ${fields.join(", ")} WHERE id = ? AND user_id = ?${expectedRevision !== null ? " AND revision = ?" : ""}`,
+    ).run(...values, ...(expectedRevision !== null ? [expectedRevision] : []));
+    if (!result.changes) {
+      const latest = db.prepare("SELECT revision FROM projects WHERE id = ? AND user_id = ?").get(req.params.id, req.user!.id) as { revision: number };
+      res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision });
+      return;
+    }
 
     if (designPayload !== null) {
       logAudit(req.user!.id, "project.updated", { name: row.name }, req);
     }
-    res.json({ ok: true });
+    const revision = current.revision + 1;
+    emitProjectEvent(req.params.id, req.user!.id, designPayload !== null ? "design.updated" : "snapshot.created", revision, { designChanged: designPayload !== null });
+    res.json({ ok: true, revision });
   }),
 );
 
@@ -329,6 +349,7 @@ router.post("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
   db.prepare(
     "INSERT INTO project_revisions (id, project_id, user_id, name, design_data, project_type, width_mm, depth_mm, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(revision.id, project.id, req.user!.id, revision.name, encryptForUser(parsed.data.designData || project.design_data || "null", req.user!.id), revision.project_type, revision.width_mm, revision.depth_mm, revision.created_at);
+  emitProjectEvent(project.id, req.user!.id, "snapshot.created", project.revision, { revisionId: revision.id, name: revision.name });
   logAudit(req.user!.id, "project.revision_created", { projectId: project.id, name: revision.name }, req);
   res.status(201).json(revisionResponse(revision));
 }));
@@ -346,10 +367,12 @@ router.post("/:id/revisions/:revisionId/restore", asyncHandler(async (req: Authe
     return;
   }
   // Keep the encrypted payload intact; it remains bound to this user's vault AAD.
-  db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+  db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND user_id = ?")
     .run(revision.design_data, revision.project_type, revision.width_mm, revision.depth_mm, now(), project.id, req.user!.id);
+  const nextRevision = project.revision + 1;
+  emitProjectEvent(project.id, req.user!.id, "design.updated", nextRevision, { restoredRevisionId: revision.id });
   logAudit(req.user!.id, "project.revision_restored", { projectId: project.id, revisionId: revision.id }, req);
-  res.json({ ok: true, name: revision.name, projectType: revision.project_type, widthMm: revision.width_mm, depthMm: revision.depth_mm, design: JSON.parse(decryptForUser(revision.design_data, req.user!.id)) });
+  res.json({ ok: true, revision: nextRevision, name: revision.name, projectType: revision.project_type, widthMm: revision.width_mm, depthMm: revision.depth_mm, design: JSON.parse(decryptForUser(revision.design_data, req.user!.id)) });
 }));
 
 /* GET /api/projects/:id/share-links */
