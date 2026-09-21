@@ -24,6 +24,7 @@ import { CommunityEditor } from "./CommunityEditor";
 import { InfraEditor } from "./InfraEditor";
 import { MepPanel } from "../components/MepPanel";
 import { SheetHeader } from "../components/SheetHeader";
+import { DesignExportMenu } from "../components/DesignExportMenu";
 import { ProjectHistory } from "../components/ProjectHistory";
 
 const SWATCHES = [
@@ -547,6 +548,7 @@ export function Editor() {
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v3h18v-3M7 8l5-5 5 5M12 3v11" /></svg>
           Export / ship to CAD
         </Button>
+        <DesignExportMenu design={design} projectName={name} />
       </div>
 
       <div className="flex min-h-0 flex-1 gap-3">
