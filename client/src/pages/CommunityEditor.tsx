@@ -33,7 +33,7 @@ import { computeTakeoff } from "../lib/takeoff";
 import { buildBoqCsv, buildNotesText, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
 import { communityReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
 import { applyDraftOperation, constrainedDraftPatch, constrainedDraftSize, duplicateDraftArray, draftingSettings, patchDraftGrip } from "../lib/drafting";
-import { analyzeCommunity, structuralSettings } from "../lib/structural";
+import { analyzeCommunity, buildStructuralReport, structuralSettings } from "../lib/structural";
 import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects";
 import { MepPanel } from "../components/MepPanel";
 import { DesignExportMenu } from "../components/DesignExportMenu";
@@ -701,9 +701,9 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
 
   const analysisPanel = (
     <Section title="Preliminary structural analysis">
-      <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200">
-        Planning-level estimates only. This is not certified engineering, a code check, or a substitute for a licensed structural engineer, geotechnical report, sealed drawings, or site-specific loads.
-      </p>
+       <div className="flex items-start justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3"><p className="text-xs leading-relaxed text-amber-200">
+         Planning-level estimates only. This is not certified engineering, a code check, or a substitute for a licensed structural engineer, geotechnical report, sealed drawings, or site-specific loads.
+       </p><Button size="sm" variant="secondary" onClick={() => { const blob = new Blob([buildStructuralReport(c)], { type: "text/plain;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "preliminary-structural-report.txt"; link.click(); URL.revokeObjectURL(url); }}>Report</Button></div>
       {(() => {
         const settings = structuralSettings(c.structural);
         const setStructural = (patch: Partial<typeof settings>) => update({ structural: { ...settings, ...patch } });
@@ -721,7 +721,12 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
             <Num label="Footing width" value={settings.footingWidthM} onChange={(v) => setStructural({ footingWidthM: Math.max(v, 0.5) })} step={0.1} unit=" m" />
             <Num label="Footing depth" value={settings.footingDepthM} onChange={(v) => setStructural({ footingDepthM: Math.max(v, 0.5) })} step={0.1} unit=" m" />
             <Num label="Wind pressure" value={settings.windPressureKPa ?? 1} onChange={(v) => setStructural({ windPressureKPa: Math.max(v, 0) })} step={0.1} unit=" kPa" />
-            <Num label="Seismic coefficient" value={settings.seismicCoefficient ?? 0.12} onChange={(v) => setStructural({ seismicCoefficient: Math.max(v, 0) })} step={0.01} unit=" g" />
+             <Num label="Seismic coefficient" value={settings.seismicCoefficient ?? 0.12} onChange={(v) => setStructural({ seismicCoefficient: Math.max(v, 0) })} step={0.01} unit=" g" />
+             <Select label="Material" value={settings.material ?? "reinforced-concrete"} onChange={(e) => setStructural({ material: e.target.value as typeof settings.material })}><option value="reinforced-concrete">Reinforced concrete</option><option value="steel">Steel (screen inputs still RCC-based)</option><option value="masonry">Masonry (screen inputs still RCC-based)</option></Select>
+             <Select label="Soil type" value={settings.soilType ?? "unknown"} onChange={(e) => setStructural({ soilType: e.target.value as typeof settings.soilType })}>{["unknown", "rock", "dense-sand", "stiff-soil", "soft-soil"].map((item) => <option key={item} value={item}>{item}</option>)}</Select>
+             <Select label="Wind exposure" value={settings.windExposure ?? "unknown"} onChange={(e) => setStructural({ windExposure: e.target.value as typeof settings.windExposure })}>{["unknown", "urban", "open", "coastal"].map((item) => <option key={item} value={item}>{item}</option>)}</Select>
+             <Select label="Seismic site class" value={settings.seismicSiteClass ?? "unknown"} onChange={(e) => setStructural({ seismicSiteClass: e.target.value as typeof settings.seismicSiteClass })}>{["unknown", "A", "B", "C", "D", "E", "F"].map((item) => <option key={item} value={item}>{item}</option>)}</Select>
+             <Select label="Occupancy" value={settings.occupancyCategory ?? "unknown"} onChange={(e) => setStructural({ occupancyCategory: e.target.value as typeof settings.occupancyCategory })}>{["unknown", "residential", "commercial", "assembly", "essential"].map((item) => <option key={item} value={item}>{item}</option>)}</Select>
           </div>
           <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
             <p className="text-xs font-semibold text-slate-300">Editable screening combinations</p>
@@ -743,7 +748,8 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
         {structuralAnalysis.results.map((result) => <div key={result.tower.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
           <p className="text-sm font-semibold text-slate-200">{result.tower.label}</p>
            <p className="mt-1 text-xs text-slate-400">{result.areaM2.toFixed(1)} m² footprint · {(result.areaM2 * Math.max(result.tower.floors, 1)).toFixed(1)} m² floor area · {result.heightM.toFixed(1)} m high · {result.estimatedLoadKN.toFixed(0)} kN gravity load</p>
-           <p className="mt-1 text-xs text-cyan-300">Governing screen: {result.governingCombination} at {result.governingLoadKN.toFixed(0)} kN · W {result.windBaseShearKN.toFixed(0)} kN · E {result.seismicBaseShearKN.toFixed(0)} kN</p>
+            <p className="mt-1 text-xs text-cyan-300">Governing screen: {result.governingCombination} at {result.governingLoadKN.toFixed(0)} kN · W {result.windBaseShearKN.toFixed(0)} kN · E {result.seismicBaseShearKN.toFixed(0)} kN</p>
+            <p className="mt-1 text-xs text-slate-400">Drift proxy {(result.driftRatio * 100).toFixed(2)}% · slenderness {result.slendernessRatio.toFixed(0)}x · load path {result.loadPath.join(" > ")}</p>
            <div className="mt-2 space-y-1">{result.checks.map((check) => <p key={check.text} className={`text-xs ${check.status === "warning" ? "text-amber-300" : "text-emerald-300"}`}>{check.status === "warning" ? "Warning" : "Screened"}: {check.text}</p>)}</div>
            <p className="mt-2 text-[11px] leading-relaxed text-amber-300">Reinforcement: {result.reinforcementWarning}</p>
            {result.connectionWarnings.map((warning) => <p key={warning} className="text-[11px] leading-relaxed text-amber-300">Connection: {warning}</p>)}

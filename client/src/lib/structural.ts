@@ -16,6 +16,12 @@ export const DEFAULT_STRUCTURAL_SETTINGS: StructuralSettings = {
   safetyFactor: 1.5,
   windPressureKPa: 1,
   seismicCoefficient: 0.12,
+  material: "reinforced-concrete",
+  soilType: "unknown",
+  windExposure: "unknown",
+  seismicSiteClass: "unknown",
+  occupancyCategory: "unknown",
+  driftLimitRatio: 1 / 500,
   loadCombinations: [
     { id: "gravity", label: "1.4D", deadFactor: 1.4, liveFactor: 0, windFactor: 0, seismicFactor: 0 },
     { id: "gravity-live", label: "1.2D + 1.6L", deadFactor: 1.2, liveFactor: 1.6, windFactor: 0, seismicFactor: 0 },
@@ -46,6 +52,12 @@ export function structuralSettings(value?: Partial<StructuralSettings>): Structu
     safetyFactor: Math.max(Number(next.safetyFactor) || 1.5, 1),
     windPressureKPa: Math.max(Number.isFinite(Number(next.windPressureKPa)) ? Number(next.windPressureKPa) : 1, 0),
     seismicCoefficient: Math.max(Number.isFinite(Number(next.seismicCoefficient)) ? Number(next.seismicCoefficient) : 0.12, 0),
+    material: next.material ?? "reinforced-concrete",
+    soilType: next.soilType ?? "unknown",
+    windExposure: next.windExposure ?? "unknown",
+    seismicSiteClass: next.seismicSiteClass ?? "unknown",
+    occupancyCategory: next.occupancyCategory ?? "unknown",
+    driftLimitRatio: Math.max(Number(next.driftLimitRatio) || 1 / 500, 1 / 1000),
     loadCombinations: (next.loadCombinations?.length ? next.loadCombinations : defaultLoadCombinations()).map((combination) => ({
       ...combination,
       deadFactor: Number(combination.deadFactor) || 0,
@@ -75,6 +87,9 @@ export interface TowerStructuralResult {
   governingCombination: string;
   governingLoadKN: number;
   lateralUtilization: number;
+  driftRatio: number;
+  slendernessRatio: number;
+  loadPath: string[];
   reinforcementWarning: string;
   connectionWarnings: string[];
   checks: StructuralCheck[];
@@ -89,6 +104,7 @@ export interface StructuralAnalysis {
   loadCombinations: StructuralLoadCombination[];
   results: TowerStructuralResult[];
   warnings: string[];
+  assumptions: string[];
 }
 
 export function analyzeCommunity(design: CommunityDesign): StructuralAnalysis {
@@ -103,6 +119,7 @@ export function analyzeCommunity(design: CommunityDesign): StructuralAnalysis {
       loadCombinations: settings.loadCombinations ?? [],
       results: [],
       warnings: ["Preliminary screening estimates are disabled.", "Enable screening estimates to calculate planning-level checks."],
+      assumptions: structuralAssumptions(settings),
     };
   }
 
@@ -139,6 +156,9 @@ export function analyzeCommunity(design: CommunityDesign): StructuralAnalysis {
     const lateralDemandKN = Math.max(windBaseShearKN, seismicBaseShearKN);
     const lateralCapacityKN = settings.concreteStrengthMPa * settings.columnWidthM * settings.columnDepthM * columnCount * 0.1 * 1000 / settings.safetyFactor;
     const lateralUtilization = lateralDemandKN / Math.max(lateralCapacityKN, 1);
+    const driftRatio = lateralDemandKN * Math.max(size.h, 1) / Math.max(lateralCapacityKN * 100, 1);
+    const slendernessRatio = size.h / Math.max(Math.min(settings.columnWidthM, settings.columnDepthM), 0.01);
+    const loadPath = ["floor area", "slab/beam diaphragm", "columns or walls", "footings", "soil"].slice(0, draftedElementCount ? 5 : 3);
     const connectionWarnings = [
       ...(design.structuralGrid?.length ? [] : ["Structural grid is not defined; collector and diaphragm connections cannot be coordinated."]),
       ...(draftedColumnCount ? [] : ["No drafted columns are available; column-to-beam and foundation connections are not represented."]),
@@ -149,8 +169,10 @@ export function analyzeCommunity(design: CommunityDesign): StructuralAnalysis {
       { status: beamUtilization <= 1 ? "pass" : "warning", text: `Beam screening utilization ${(beamUtilization * 100).toFixed(0)}%` },
       { status: foundationPressureKPa <= settings.soilBearingKPa ? "pass" : "warning", text: `Foundation pressure ${foundationPressureKPa.toFixed(0)} kPa vs ${settings.soilBearingKPa.toFixed(0)} kPa soil input` },
       { status: lateralUtilization <= 1 ? "pass" : "warning", text: `Lateral demand screen ${lateralUtilization.toFixed(2)}x (${lateralDemandKN.toFixed(0)} kN demand)` },
+      { status: driftRatio <= settings.driftLimitRatio! ? "pass" : "warning", text: `Drift proxy ${(driftRatio * 100).toFixed(2)}% vs ${(settings.driftLimitRatio! * 100).toFixed(2)}% limit` },
+      { status: slendernessRatio <= 40 ? "pass" : "warning", text: `Height/least-column dimension ratio ${slendernessRatio.toFixed(0)}x` },
     ];
-    return { tower, areaM2, heightM: size.h, estimatedLoadKN: loadKN, columnCount, draftedColumnCount, columnUtilization, beamSpanM, beamUtilization, foundationPressureKPa, footingAreaM2, windBaseShearKN, seismicBaseShearKN, governingCombination: governing.combination.label, governingLoadKN: governing.loadKN, lateralUtilization, reinforcementWarning: "Reinforcement quantities, anchorage, development, splice, confinement, and crack control are not designed by this screen.", connectionWarnings, checks };
+    return { tower, areaM2, heightM: size.h, estimatedLoadKN: loadKN, columnCount, draftedColumnCount, columnUtilization, beamSpanM, beamUtilization, foundationPressureKPa, footingAreaM2, windBaseShearKN, seismicBaseShearKN, governingCombination: governing.combination.label, governingLoadKN: governing.loadKN, lateralUtilization, driftRatio, slendernessRatio, loadPath, reinforcementWarning: "Reinforcement quantities, anchorage, development, splice, confinement, and crack control are not designed by this screen.", connectionWarnings, checks };
   });
   return {
     settings,
@@ -163,9 +185,36 @@ export function analyzeCommunity(design: CommunityDesign): StructuralAnalysis {
     warnings: [
       "Preliminary screening only: assumptions are simplified and do not represent a structural design.",
       "Wind and seismic results are demand screens, not code-level analysis; confirm hazard, exposure, ductility, irregularity, drift, torsion, and load paths with the engineer of record.",
+      ...(settings.soilType === "unknown" ? ["Soil type is unknown; bearing, settlement, liquefaction, lateral resistance, and foundation depth are not established."] : []),
+      ...(settings.windExposure === "unknown" ? ["Wind exposure is unknown; pressure is a user-entered planning value, not a site wind study."] : []),
       ...(design.towers.length === 0 ? ["Add at least one tower or block to produce checks."] : []),
       ...(design.structuralGrid?.length || draftedColumnCount ? [] : ["No structural grid or drafted columns are defined; default column count is used."]),
       ...(draftedElementCount ? [`${draftedElementCount} drafted structural element${draftedElementCount === 1 ? "" : "s"} included as coordination context.`] : ["No drafted structural elements are defined; column checks use the grid fallback."]),
     ],
+    assumptions: structuralAssumptions(settings),
   };
+}
+
+function structuralAssumptions(settings: StructuralSettings): string[] {
+  return [
+    `Material: ${settings.material ?? "reinforced-concrete"}; occupancy: ${settings.occupancyCategory ?? "unknown"}.`,
+    `Soil: ${settings.soilType ?? "unknown"}; allowable bearing input: ${settings.soilBearingKPa} kPa.`,
+    `Wind exposure: ${settings.windExposure ?? "unknown"}; entered pressure: ${settings.windPressureKPa ?? 1} kPa.`,
+    `Seismic site class: ${settings.seismicSiteClass ?? "unknown"}; entered coefficient: ${settings.seismicCoefficient ?? 0.12} g.`,
+    `Drift proxy limit: ${((settings.driftLimitRatio ?? 1 / 500) * 100).toFixed(2)}%; load path assumes floor diaphragm to vertical elements to isolated footings.`,
+  ];
+}
+
+export function buildStructuralReport(design: CommunityDesign): string {
+  const analysis = analyzeCommunity(design);
+  return [
+    "PRELIMINARY STRUCTURAL SCREENING REPORT",
+    "Not certified engineering, a code compliance check, or sealed design.",
+    `Inputs: ${analysis.settings.material}; ${analysis.settings.occupancyCategory} occupancy; ${analysis.settings.soilType} soil; ${analysis.settings.windExposure} wind exposure; seismic class ${analysis.settings.seismicSiteClass}.`,
+    `Outputs: ${analysis.results.length} tower(s); ${analysis.totalAreaM2.toFixed(2)} m² floor area; ${analysis.totalLoadKN.toFixed(1)} kN gravity; ${analysis.totalWindBaseShearKN.toFixed(1)} kN wind base shear; ${analysis.totalSeismicBaseShearKN.toFixed(1)} kN seismic base shear.`,
+    `Combinations: ${analysis.loadCombinations.map((item) => `${item.label} [D${item.deadFactor}/L${item.liveFactor}/W${item.windFactor}/E${item.seismicFactor}]`).join("; ")}`,
+    "Assumptions:", ...analysis.assumptions.map((item) => `- ${item}`),
+    "Tower results:", ...analysis.results.map((result) => `- ${result.tower.label}: governing ${result.governingCombination} ${result.governingLoadKN.toFixed(1)} kN; drift proxy ${(result.driftRatio * 100).toFixed(2)}%; slenderness ${result.slendernessRatio.toFixed(1)}; load path ${result.loadPath.join(" > ")}.`),
+    "Warnings:", ...analysis.warnings.map((warning) => `- ${warning}`),
+  ].join("\n");
 }

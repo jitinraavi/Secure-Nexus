@@ -149,6 +149,15 @@ export interface RoomConfig {
 }
 
 export type MepElementKind = "duct" | "pipe" | "cable-tray" | "equipment" | "fixture";
+export type MepSystemType = "hvac-supply" | "hvac-return" | "plumbing-supply" | "plumbing-drain" | "electrical-power" | "fire-protection" | "controls";
+
+export interface MepZone {
+  id: string;
+  name: string;
+  areaM2: number;
+  occupancy: number;
+  levelId?: string;
+}
 
 export interface MepPoint {
   x: number;
@@ -170,6 +179,10 @@ export interface MepElement {
   /** Optional planning input; absence preserves legacy elements. */
   ratedPowerKw?: number;
   levelId?: string;
+  system?: MepSystemType;
+  zoneId?: string;
+  connectedTo?: string[];
+  supportSpacingM?: number;
 }
 
 export interface MepPlanningInputs {
@@ -183,6 +196,8 @@ export interface MepPlanningInputs {
   plumbingFlowLps: number;
   minimumClearanceM: number;
   electricalDemandFactor: number;
+  designPressurePa?: number;
+  designVoltageV?: number;
 }
 
 export interface MepDesign {
@@ -190,6 +205,7 @@ export interface MepDesign {
   enabled: boolean;
   elements: MepElement[];
   planning?: MepPlanningInputs;
+  zones?: MepZone[];
 }
 
 export interface FurnitureItem {
@@ -426,6 +442,12 @@ export interface StructuralSettings {
   windPressureKPa?: number;
   seismicCoefficient?: number;
   loadCombinations?: StructuralLoadCombination[];
+  material?: "reinforced-concrete" | "steel" | "masonry";
+  soilType?: "unknown" | "rock" | "dense-sand" | "stiff-soil" | "soft-soil";
+  windExposure?: "unknown" | "urban" | "open" | "coastal";
+  seismicSiteClass?: "unknown" | "A" | "B" | "C" | "D" | "E" | "F";
+  occupancyCategory?: "residential" | "commercial" | "assembly" | "essential" | "unknown";
+  driftLimitRatio?: number;
 }
 
 export interface StructuralLoadCombination {
