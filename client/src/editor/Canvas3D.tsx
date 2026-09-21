@@ -141,6 +141,8 @@ export function Canvas3D({
   const mepGroupRef = useRef<THREE.Group | null>(null);
   const photoGroupRef = useRef<THREE.Group | null>(null);
   const itemGroups = useRef(new Map<string, { group: THREE.Group; sig: string }>());
+  const pendingItemPatches = useRef(new Map<string, Partial<FurnitureItem>>());
+  const pendingItemRaf = useRef(0);
   const selectionRingRef = useRef<THREE.Mesh | null>(null);
   const dragState = useRef<{
     id: string;
@@ -332,6 +334,7 @@ export function Canvas3D({
 
     const onPointerUp = () => {
       if (dragState.current) {
+        flushDesignItemPatches();
         dragState.current = null;
         controls.enabled = true;
       }
@@ -403,6 +406,7 @@ export function Canvas3D({
     });
 
     return () => {
+      cancelAnimationFrame(pendingItemRaf.current);
       cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener("pointermove", onPointerMove);
@@ -422,8 +426,16 @@ export function Canvas3D({
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
-    if (roomGroupRef.current) scene.remove(roomGroupRef.current);
-    if (curtainGroupRef.current) scene.remove(curtainGroupRef.current);
+    if (roomGroupRef.current) {
+      scene.remove(roomGroupRef.current);
+      disposeGroup(roomGroupRef.current);
+      roomGroupRef.current = null;
+    }
+    if (curtainGroupRef.current) {
+      scene.remove(curtainGroupRef.current);
+      disposeGroup(curtainGroupRef.current);
+      curtainGroupRef.current = null;
+    }
     if (mepGroupRef.current) {
       scene.remove(mepGroupRef.current);
       disposeGroup(mepGroupRef.current);
@@ -547,13 +559,25 @@ export function Canvas3D({
   }, [selectedId, design.furniture]);
 
   /* internal helper - updates a furniture item transform w/o rebuild */
-  const updateDesignItem = (id: string, patch: Partial<FurnitureItem>) => {
+  const flushDesignItemPatches = () => {
+    pendingItemRaf.current = 0;
+    if (!pendingItemPatches.current.size) return;
+    const patches = new Map(pendingItemPatches.current);
+    pendingItemPatches.current.clear();
     const d = designRef.current;
-    const next = {
+    onChangeRef.current({
       ...d,
-      furniture: d.furniture.map((f) => (f.id === id ? { ...f, ...patch } : f)),
-    };
-    onChangeRef.current(next);
+      furniture: d.furniture.map((f) => {
+        const patch = patches.get(f.id);
+        return patch ? { ...f, ...patch } : f;
+      }),
+    });
+  };
+
+  const updateDesignItem = (id: string, patch: Partial<FurnitureItem>) => {
+    const previous = pendingItemPatches.current.get(id);
+    pendingItemPatches.current.set(id, { ...previous, ...patch });
+    if (!pendingItemRaf.current) pendingItemRaf.current = requestAnimationFrame(flushDesignItemPatches);
   };
 
   return <div ref={containerRef} className="h-full w-full cursor-grab active:cursor-grabbing" />;
@@ -581,14 +605,20 @@ function groupSync(group: THREE.Group, item: FurnitureItem, sig: string, room: D
 }
 
 function disposeGroup(group: THREE.Group) {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
   group.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (mesh.isMesh) {
-      mesh.geometry?.dispose();
+      if (mesh.geometry) geometries.add(mesh.geometry);
       const m = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const ma of m) {
-        ma.dispose();
-      }
+      for (const ma of m) materials.add(ma);
     }
   });
+  for (const geometry of geometries) geometry.dispose();
+  for (const ma of materials) {
+    const texture = (ma as THREE.MeshStandardMaterial).map;
+    texture?.dispose();
+    ma.dispose();
+  }
 }

@@ -7,6 +7,7 @@ import type { CadTool } from "../components/CadToolPalette";
 import { buildInfraScene, infraExtent } from "../lib/infra";
 import { sectionClippingPlanes } from "../lib/section";
 import { constrainedDraftPatch } from "../lib/drafting";
+import { disposeObject3D } from "../lib/modelcore";
 
 /**
  * Infrastructure scene.
@@ -90,6 +91,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange }:
     groupRef.current = group;
 
     const rebuild = () => {
+      for (const child of [...group.children]) disposeObject3D(child, false);
       group.clear();
       renderer.clippingPlanes = sectionClippingPlanes(infraRef.current.section);
       group.add(buildInfraScene(infraRef.current));
@@ -200,6 +202,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange }:
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("pointercancel", onPointerUp);
       renderer.dispose();
+      for (const child of [...group.children]) disposeObject3D(child, false);
       group.clear();
       if (renderer.domElement.parentElement === container) container.removeChild(renderer.domElement);
     };

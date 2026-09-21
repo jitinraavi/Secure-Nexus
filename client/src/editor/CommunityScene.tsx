@@ -4,7 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { CadTool } from "../components/CadToolPalette";
 import type { AmenityData, BuildingLevel, CommunityDesign, DraftElement, DraftElementKind, ExteriorPanel, InteriorRoom, StructuralGridLine, TowerData, TowerOpening } from "../types";
-import { addTechnicalEdges, material, prism, prismAt } from "../lib/modelcore";
+import { addTechnicalEdges, disposeObject3D, material, prism, prismAt } from "../lib/modelcore";
 import { amenityKind, facadeOption, landMeters, levelsForDesign, towerMeters, undergroundDepth } from "../lib/community";
 import { pitFootprint } from "../lib/takeoff";
 import { buildMapGround } from "../lib/mapGround";
@@ -341,14 +341,17 @@ function windowGrid(w: number, h: number, rows: number, cols: number, color: str
   const cw = w / cols;
   const ch = h / rows;
   const m = material(color, { rough: 0.2 });
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const cell = new THREE.Mesh(new THREE.PlaneGeometry(cw * 0.7, ch * 0.6), m);
-      cell.position.set((c - (cols - 1) / 2) * cw, (r - (rows - 1) / 2) * ch, 0.01);
-      cell.userData.noSelect = true;
-      g.add(cell);
-    }
+  const count = rows * cols;
+  const cells = new THREE.InstancedMesh(new THREE.PlaneGeometry(cw * 0.7, ch * 0.6), m, count);
+  const matrix = new THREE.Matrix4();
+  let index = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    matrix.makeTranslation((c - (cols - 1) / 2) * cw, (r - (rows - 1) / 2) * ch, 0.01);
+    cells.setMatrixAt(index++, matrix);
   }
+  cells.instanceMatrix.needsUpdate = true;
+  cells.userData.noSelect = true;
+  g.add(cells);
   return g;
 }
 
@@ -493,14 +496,21 @@ function buildSite(design: CommunityDesign, selectedId?: string | null): THREE.G
     const bayW = 2.5;
     const bayD = 5;
     const perRow = 8;
+    const bayGeometry = new THREE.BoxGeometry(bayW * 0.8, 0.08, bayD * 0.9);
+    const bayMeshes = [
+      new THREE.InstancedMesh(bayGeometry, material("#90a4ae"), Math.ceil(bays / 2)),
+      new THREE.InstancedMesh(bayGeometry, material("#b0bec5"), Math.floor(bays / 2)),
+    ];
+    const matrix = new THREE.Matrix4();
+    let counts = [0, 0];
     for (let i = 0; i < bays; i++) {
       const row = Math.floor(i / perRow);
       const col = i % perRow;
-      const bay = prism(bayW * 0.8, 0.08, bayD * 0.9, material(i % 2 ? "#b0bec5" : "#90a4ae"));
-      bay.position.set(-halfW + 3 + col * (bayW + 0.6), 0.04, halfD - 3 - row * (bayD + 0.8));
-      bay.rotation.y = Math.PI / 2;
-      g.add(bay);
+      const type = i % 2;
+      matrix.compose(new THREE.Vector3(-halfW + 3 + col * (bayW + 0.6), 0.04, halfD - 3 - row * (bayD + 0.8)), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), new THREE.Vector3(1, 1, 1));
+      bayMeshes[type].setMatrixAt(counts[type]++, matrix);
     }
+    for (const baysMesh of bayMeshes) { baysMesh.instanceMatrix.needsUpdate = true; baysMesh.userData.noSelect = true; g.add(baysMesh); }
   }
 
   /* Amenities on the ground floor */
@@ -693,6 +703,20 @@ export function buildCommunityScene(design: CommunityDesign, selectedId?: string
   return g;
 }
 
+function updateCommunitySelection(root: THREE.Object3D, selectedId: string | null | undefined): void {
+  root.traverse((object) => {
+    if (object.userData.selectionRing) object.parent?.remove(object);
+  });
+  if (!selectedId) return;
+  const target = root.getObjectByProperty("selectId", selectedId);
+  if (!target) return;
+  const w = (target.userData.selW as number) ?? 10;
+  const d = (target.userData.selD as number) ?? 10;
+  const ring = selectionRing(w, d);
+  ring.userData.selectionRing = true;
+  target.add(ring);
+}
+
 /* --------------------------------- Component --------------------------------- */
 
 export interface SceneContextTarget {
@@ -807,9 +831,13 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     const group = new THREE.Group();
     const rebuild = () => {
       updateGrid();
-      group.clear();
+      if (group.children.length) {
+        for (const child of [...group.children]) disposeObject3D(child, false);
+        group.clear();
+      }
       renderer.clippingPlanes = sectionClippingPlanes(designRef.current.section);
-      const root = buildCommunityScene(designRef.current, selectedRef.current);
+      const root = buildCommunityScene(designRef.current);
+      updateCommunitySelection(root, selectedRef.current);
       group.add(root);
       if (!group.parent) scene.add(group);
       groupRef.current = group;
@@ -817,11 +845,13 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
       const token = ++mapToken.current;
       const slot = root.getObjectByName("map-ground");
       if (slot) {
+        for (const child of [...slot.children]) disposeObject3D(child, false);
         slot.clear();
         const loc = designRef.current.location;
         if (loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) {
           buildMapGround(loc, designRef.current.land).then((map) => {
             if (mapToken.current !== token) return;
+            for (const child of [...slot.children]) disposeObject3D(child, false);
             slot.clear();
             if (map.children.length) slot.add(map);
           }).catch(() => {});
@@ -1041,6 +1071,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
       scene.environment?.dispose();
       controls.dispose();
       renderer.dispose();
+       for (const child of [...group.children]) disposeObject3D(child, false);
       group.clear();
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement);
@@ -1049,10 +1080,15 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Rebuild the model when design or selection changes */
+  /* Rebuild geometry only when the design changes; selection is a cheap overlay update. */
   useEffect(() => {
     rebuildRef.current?.();
-  }, [design, selectedId]);
+  }, [design]);
+
+  useEffect(() => {
+    const root = groupRef.current?.children[0];
+    if (root) updateCommunitySelection(root, selectedId);
+  }, [selectedId]);
 
   return (
     <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: "none" }} data-scene="community" />

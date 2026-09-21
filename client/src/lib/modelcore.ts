@@ -73,3 +73,22 @@ export function addTechnicalEdges(root: THREE.Object3D, color = "#263746", opaci
   });
   for (const addition of additions) addition.parent.add(addition.edges);
 }
+
+/** Release per-build GPU resources while leaving the shared material cache valid. */
+export function disposeObject3D(root: THREE.Object3D, disposeMaterials = true): void {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  root.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (mesh.geometry) geometries.add(mesh.geometry);
+    const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const mat of list) {
+      materials.add(mat);
+      const texture = (mat as THREE.MeshStandardMaterial).map;
+      texture?.dispose();
+    }
+  });
+  for (const geometry of geometries) geometry.dispose();
+  if (disposeMaterials) for (const material of materials) material.dispose();
+}

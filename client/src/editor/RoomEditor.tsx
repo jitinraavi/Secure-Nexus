@@ -10,6 +10,7 @@ import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects
 import { MepPanel } from "../components/MepPanel";
 import { buildMepScene } from "../lib/mep";
 import { familyMetadata, familyForId } from "../lib/families";
+import { disposeObject3D } from "../lib/modelcore";
 
 /**
  * In-room furniture editor.
@@ -167,6 +168,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
 
     const buildRoom = () => {
       const r = roomRef.current;
+      for (const child of [...group.children]) disposeObject3D(child, false);
       group.clear();
 
       const floor = new THREE.Mesh(new THREE.BoxGeometry(r.w, 0.08, r.d), floorMat);
@@ -418,6 +420,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
       renderer.domElement.removeEventListener("contextmenu", onContextMenu);
       controls.dispose();
       renderer.dispose();
+      for (const child of [...group.children]) disposeObject3D(child, false);
       group.clear();
       if (renderer.domElement.parentElement === container) container.removeChild(renderer.domElement);
     };
