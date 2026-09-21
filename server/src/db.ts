@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS projects (
   photo_file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
+  ,revision   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id, updated_at DESC);
