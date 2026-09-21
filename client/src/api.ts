@@ -25,6 +25,26 @@ export class ApiError extends Error {
   }
 }
 
+export interface CadProviderStatus {
+  providerName: string;
+  licenseStatus: "licensed" | "unlicensed" | "unknown";
+  endpointConfigured: boolean;
+  sdkCapability: boolean;
+  supportedFormats: string[];
+  available: boolean;
+  message: string;
+}
+
+export interface CadExchangeStatusResponse {
+  providers: CadProviderStatus[];
+  openFallbacks: string[];
+  message: string;
+}
+
+export function getCadExchangeStatus(): Promise<CadExchangeStatusResponse> {
+  return request<CadExchangeStatusResponse>("/api/cad-exchange/status");
+}
+
 let csrfToken: string | null = null;
 
 export function setCsrfToken(token: string | null) {

@@ -198,6 +198,7 @@ export interface MepPlanningInputs {
   electricalDemandFactor: number;
   designPressurePa?: number;
   designVoltageV?: number;
+  codeProfileId?: string;
 }
 
 export interface MepDesign {
@@ -448,6 +449,7 @@ export interface StructuralSettings {
   seismicSiteClass?: "unknown" | "A" | "B" | "C" | "D" | "E" | "F";
   occupancyCategory?: "residential" | "commercial" | "assembly" | "essential" | "unknown";
   driftLimitRatio?: number;
+  codeProfileId?: string;
 }
 
 export interface StructuralLoadCombination {
@@ -457,6 +459,19 @@ export interface StructuralLoadCombination {
   liveFactor: number;
   windFactor: number;
   seismicFactor: number;
+}
+
+/** Configurable planning profile. This is not a code certification or permit basis. */
+export interface EngineeringCodeProfile {
+  id: string;
+  name: string;
+  unitSystem: "SI" | "imperial";
+  loadFactors: { dead: number; live: number; wind: number; seismic: number };
+  wind: { pressureKPa: number; importanceFactor: number; exposureFactor: number };
+  seismic: { coefficient: number; importanceFactor: number; responseFactor: number };
+  materials: { concreteMPa: number; steelMPa: number; masonryMPa: number; soilBearingKPa: number };
+  occupancy: { category: StructuralSettings["occupancyCategory"]; liveLoadKPa: number; peoplePerM2: number };
+  assumptions: { driftLimitRatio: number; safetyFactor: number; designAirVelocityMps: number; pipeVelocityMps: number; electricalDemandFactor: number };
 }
 
 export interface TowerData {

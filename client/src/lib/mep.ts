@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import type { MepDesign, MepElement, MepElementKind, MepPoint, MepPlanningInputs, MepSystemType } from "../types";
 import { material, prismAt, uid } from "./modelcore";
+import { calculateMepPlan, validateMepInputs } from "./mep-calculations";
+import { engineeringProfile } from "./engineering";
 
 export const MEP_KINDS: { kind: MepElementKind; label: string; color: string }[] = [
   { kind: "duct", label: "Duct", color: "#f59e0b" },
@@ -105,6 +107,15 @@ export function buildMepReport(value: MepDesign | undefined): string {
   const mep = normalizeMep(value); const p = mep.planning!; const s = mepPlanningSummary(mep);
   return ["PRELIMINARY MEP PLANNING REPORT", "Not code-compliant, for coordination only; verify with licensed discipline engineers.", "", `Inputs: ${p.areaM2} m² area | ${p.ceilingHeightM} m ceiling | ${p.occupancy} occupants | ${p.airChangesPerHour} ACH | ${p.designVoltageV ?? 230} V`, `HVAC: ${s.airflowM3h.toFixed(0)} m³/h (${s.airflowLps.toFixed(0)} L/s) airflow | ${s.coolingLoadKw.toFixed(2)} kW cooling screen`, `Ducts: ${s.ductLengthM.toFixed(1)} m modeled | ${s.ductAreaM2.toFixed(3)} m² section | ${s.ductCapacityM3h.toFixed(0)} m³/h capacity | ${s.pressureDropPa.toFixed(0)} Pa route loss`, `Pipes: ${s.pipeLengthM.toFixed(1)} m modeled | ${s.pipeCapacityLps.toFixed(1)} L/s capacity`, `Electrical: ${s.connectedLoadKw.toFixed(2)} kW connected | ${s.demandLoadKw.toFixed(2)} kW demand screen`, `Connectivity: ${s.connectedSystems} explicitly connected element(s) across ${(mep.zones ?? []).length} typed zone(s).`, "", "Warnings:", ...(s.warnings.length ? s.warnings.map((warning) => `- ${warning}`) : ["- None from these preliminary screens."]), ...s.connectivityWarnings.map((warning) => `- Connectivity: ${warning}`), "", "Clash envelopes use axis-aligned route bounds and conservative section sizes; they are approximations, not rotated segment solids or code clearances.", "Confirm equipment schedules, diversity, velocities, pressure loss, pipe sizing, voltage/drop, fault current, access, fire/life safety, supports, local codes, and construction clearances before use.",].join("\n");
 }
+
+/** Machine-readable companion to the legacy text report. */
+export function buildMepMachineReport(value: MepDesign | undefined) {
+  const mep = normalizeMep(value);
+  return { ...calculateMepPlan(mep, engineeringProfile()), reportType: "preliminary-mep" as const, professionalReviewRequired: true as const, validationErrors: validateMepInputs(mep) };
+}
+
+/** Pure planning calculation export for tests and non-UI consumers. */
+export { calculateMepPlan, validateMepInputs };
 
 export function makeMepElement(kind: MepElementKind, index = 0): MepElement {
   const option = MEP_KINDS.find((item) => item.kind === kind) ?? MEP_KINDS[0];

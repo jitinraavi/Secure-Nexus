@@ -1,5 +1,7 @@
 import type { CommunityDesign, StructuralLoadCombination, StructuralSettings, TowerData } from "../types";
 import { towerMeters } from "./community";
+import { profileFromStructuralSettings } from "./engineering";
+import { calculateStructuralScreen } from "./structural-calculations";
 
 export const DEFAULT_STRUCTURAL_SETTINGS: StructuralSettings = {
   enabled: true,
@@ -22,6 +24,7 @@ export const DEFAULT_STRUCTURAL_SETTINGS: StructuralSettings = {
   seismicSiteClass: "unknown",
   occupancyCategory: "unknown",
   driftLimitRatio: 1 / 500,
+  codeProfileId: "planning-si",
   loadCombinations: [
     { id: "gravity", label: "1.4D", deadFactor: 1.4, liveFactor: 0, windFactor: 0, seismicFactor: 0 },
     { id: "gravity-live", label: "1.2D + 1.6L", deadFactor: 1.2, liveFactor: 1.6, windFactor: 0, seismicFactor: 0 },
@@ -217,4 +220,17 @@ export function buildStructuralReport(design: CommunityDesign): string {
     "Tower results:", ...analysis.results.map((result) => `- ${result.tower.label}: governing ${result.governingCombination} ${result.governingLoadKN.toFixed(1)} kN; drift proxy ${(result.driftRatio * 100).toFixed(2)}%; slenderness ${result.slendernessRatio.toFixed(1)}; load path ${result.loadPath.join(" > ")}.`),
     "Warnings:", ...analysis.warnings.map((warning) => `- ${warning}`),
   ].join("\n");
+}
+
+/** Stable JSON-oriented report for validation, export, and downstream tooling. */
+export function buildStructuralMachineReport(design: CommunityDesign): StructuralAnalysis & { reportType: "preliminary-structural"; professionalReviewRequired: true } {
+  const analysis = analyzeCommunity(design);
+  return { ...analysis, reportType: "preliminary-structural", professionalReviewRequired: true };
+}
+
+/** Pure calculation entry point for callers that do not have a CommunityDesign. */
+export { calculateStructuralScreen };
+
+export function structuralProfile(design: CommunityDesign) {
+  return profileFromStructuralSettings(structuralSettings(design.structural));
 }

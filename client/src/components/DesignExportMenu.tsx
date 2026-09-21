@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Modal } from "./ui";
 import { useToast } from "./Toast";
 import { buildDxf } from "../lib/dxf";
@@ -6,11 +6,15 @@ import { buildIfcStep } from "../lib/bim";
 import { download, downloadBlob } from "../lib/download";
 import { buildSheetPdf } from "../lib/sheets";
 import type { Design } from "../types";
+import { getCadExchangeStatus, type CadExchangeStatusResponse } from "../api";
 
 export function DesignExportMenu({ design, projectName }: { design: Design; projectName?: string }) {
   const [open, setOpen] = useState(false);
+  const [cadStatus, setCadStatus] = useState<CadExchangeStatusResponse | null>(null);
   const toast = useToast();
   const stem = (projectName || "design").trim().replace(/[^\w-]+/g, "-").toLowerCase() || "design";
+  useEffect(() => { getCadExchangeStatus().then(setCadStatus).catch(() => setCadStatus(null)); }, []);
+  const dwgProvider = cadStatus?.providers[0];
   const exportFile = (format: "dxf" | "ifc") => {
     if (format === "dxf") download(`${stem}.dxf`, buildDxf(design), "application/dxf");
     else download(`${stem}.ifc`, buildIfcStep(design), "application/x-step");
@@ -31,10 +35,15 @@ export function DesignExportMenu({ design, projectName }: { design: Design; proj
           <p className="gw-kicker text-amber-300">Exchange summary</p>
           <p className="mt-1 text-sm leading-relaxed text-slate-300">{projectName || "Untitled project"} exports a 2D drafting projection and a minimal IFC4 coordination model.</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">Proxy geometry, section cuts, infrastructure forms, and BOQ quantities are approximate planning outputs. Confirm dimensions in authoring software.</p>
+          <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-950/40 p-2 text-xs text-slate-400">
+            <span className={dwgProvider?.available ? "text-emerald-300" : "text-amber-300"}>DWG: {dwgProvider?.available ? "licensed provider ready" : "unavailable"}</span>
+            <span className="ml-2">{dwgProvider?.message || "Provider status is loading."}</span>
+          </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <Button onClick={() => exportFile("dxf")}>Download DXF</Button>
           <Button variant="secondary" onClick={() => exportFile("ifc")}>Download IFC STEP</Button>
+          <Button className="sm:col-span-2" variant="outline" disabled={!dwgProvider?.available} title={dwgProvider?.message || "Licensed DWG provider unavailable"}>Download DWG (licensed provider)</Button>
           <Button className="sm:col-span-2" onClick={exportSheets}>Download multipage PDF sheet set</Button>
         </div>
       </Modal>
