@@ -12,6 +12,8 @@ import { sectionClippingPlanes } from "../lib/section";
 import { constrainDraftEnd, constrainedDraftPatch, constrainedDraftSize, draftingSettings, snapDraftPoint } from "../lib/drafting";
 import { buildTerrainVisualization } from "../lib/terrain";
 import { buildMepScene } from "../lib/mep";
+import { resolveDraft, resolveTowerOpening } from "../lib/parametric";
+import { familyMetadata, familyForId } from "../lib/families";
 
 /* ---------------------------------- Builder ---------------------------------- */
 
@@ -221,8 +223,9 @@ function buildAmenityMesh(a: AmenityData): THREE.Group {
   return g;
 }
 
-function buildDraftMesh(draft: DraftElement, selected = false): THREE.Group {
+function buildDraftMesh(draft: DraftElement, levels: BuildingLevel[] = [], selected = false): THREE.Group {
   const g = new THREE.Group();
+  const resolved = resolveDraft(draft, levels);
   const mat = new THREE.MeshBasicMaterial({ color: draft.color, transparent: true, opacity: 0.82, side: THREE.DoubleSide });
   if (draft.kind === "line") {
     const line = new THREE.Line(
@@ -260,12 +263,13 @@ function buildDraftMesh(draft: DraftElement, selected = false): THREE.Group {
     rectangle.position.y = 0.12;
     g.add(rectangle);
   } else {
-    const height = Math.max(draft.h ?? (draft.kind === "column" ? 3 : draft.kind === "wall" ? 2.7 : 0.25), 0.05);
+    const height = resolved.height;
     const body = new THREE.Mesh(
-      new THREE.BoxGeometry(draft.w, height, draft.d),
+      new THREE.BoxGeometry(resolved.width, height, resolved.depth),
       new THREE.MeshStandardMaterial({ color: draft.color, roughness: 0.78 }),
     );
-    body.position.y = height / 2;
+    body.position.y = resolved.elevation + height / 2;
+    if ((draft.kind === "slab" || draft.kind === "roof") && resolved.slope) body.rotation.x = Math.atan(resolved.slope / 100);
     body.castShadow = true;
     body.receiveShadow = true;
     g.add(body);
@@ -378,10 +382,11 @@ function buildExteriorPanel(p: ExteriorPanel, tower: TowerData): THREE.Group {
 function buildTowerOpening(opening: TowerOpening, tower: TowerData): THREE.Mesh {
   const { w, d } = towerMeters(tower);
   const isDoor = opening.kind === "door";
-  const width = Math.max(opening.width, 0.3);
-  const height = Math.max(opening.height, 0.3);
+  const resolved = resolveTowerOpening(opening, opening.face === "east" || opening.face === "west" ? d : w);
+  const width = Math.max(resolved.width, 0.3);
+  const height = Math.max(resolved.height, 0.3);
   const floor = Math.min(Math.max(Math.round(opening.floor), 1), Math.max(tower.floors, 1));
-  const sill = isDoor ? 0 : Math.max(opening.sill, 0);
+  const sill = isDoor ? 0 : resolved.sill;
   const openingMesh = prism(
     width,
     height,
@@ -389,7 +394,7 @@ function buildTowerOpening(opening: TowerOpening, tower: TowerData): THREE.Mesh 
     material(isDoor ? "#6d4c41" : "#183b4d", { rough: isDoor ? 0.65 : 0.2, metal: isDoor ? 0.05 : 0.15 }),
   );
   const y = (floor - 1) * tower.floorHeight + sill + height / 2;
-  const offset = opening.offset;
+  const offset = resolved.offset;
   const faces: Record<TowerOpening["face"], { x: number; z: number; ry: number }> = {
     north: { x: offset, z: -d / 2 - 0.08, ry: 0 },
     south: { x: offset, z: d / 2 + 0.08, ry: 0 },
@@ -524,7 +529,10 @@ function buildSite(design: CommunityDesign, selectedId?: string | null): THREE.G
     }
   }
 
-  if (layerVisible("drafting")) for (const draft of design.drafts ?? []) g.add(buildDraftMesh(draft, draft.id === selectedId));
+  if (layerVisible("drafting")) for (const draft of design.drafts ?? []) {
+    const node = buildDraftMesh(draft, levels, draft.id === selectedId);
+    g.add(node);
+  }
   if (layerVisible("mep")) g.add(buildMepScene(design.mep));
 
   if (activeLevel) {
@@ -1020,6 +1028,10 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
           h: draw.kind === "wall" ? 2.7 : draw.kind === "column" ? 3 : draw.kind === "slab" || draw.kind === "roof" ? 0.25 : undefined,
           rotationDeg: draw.kind === "line" || draw.kind === "dimension" ? constrained.rotationDeg : 0,
           color: "#d6a84a",
+          family: ["wall", "slab", "column", "roof"].includes(draw.kind) ? {
+            ...familyMetadata(familyForId(`${draw.kind}-basic`)!),
+            levelId: current.activeLevelId,
+          } : undefined,
         };
         draw = null;
         controls.enabled = true;

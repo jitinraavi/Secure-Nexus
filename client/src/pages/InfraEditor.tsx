@@ -17,6 +17,7 @@ import { download } from "../lib/download";
 import { buildBoqCsv, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
 import { infraReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
 import { applyDraftOperation, constrainedDraftPatch, duplicateDraftArray, patchDraftGrip } from "../lib/drafting";
+import { syncDraftFamilyParameters } from "../lib/parametric";
 import {
   INFRA_LABELS,
   buildInfraNotesText,
@@ -242,7 +243,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design }: Infr
     setReviewText("");
   };
   const patchDraft = (id: string, patch: Partial<DraftElement>) =>
-    update({ drafts: (infra.drafts ?? []).map((draft) => draft.id === id ? { ...draft, ...constrainedDraftPatch(draft, patch, infra.drafts ?? []) } : draft) });
+    update({ drafts: (infra.drafts ?? []).map((draft) => draft.id === id ? { ...draft, ...syncDraftFamilyParameters(draft, constrainedDraftPatch(draft, patch, infra.drafts ?? [])) } : draft) });
 
   const operateDraft = (operation: "trim" | "extend" | "offset" | "rotate" | "mirror") => {
     if (selectedDraft) patchDraft(selectedDraft.id, applyDraftOperation(selectedDraft, operation));

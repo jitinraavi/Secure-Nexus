@@ -33,6 +33,8 @@ import { computeTakeoff } from "../lib/takeoff";
 import { buildBoqCsv, buildNotesText, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
 import { communityReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
 import { applyDraftOperation, constrainedDraftPatch, constrainedDraftSize, duplicateDraftArray, draftingSettings, patchDraftGrip } from "../lib/drafting";
+import { familyForId, familyMetadata } from "../lib/families";
+import { syncDraftFamilyParameters } from "../lib/parametric";
 import { analyzeCommunity, buildStructuralReport, structuralSettings } from "../lib/structural";
 import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects";
 import { MepPanel } from "../components/MepPanel";
@@ -520,7 +522,8 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
     const drafts = c.drafts ?? [];
     const draft = drafts.find((item) => item.id === id);
     if (!draft) return;
-    update({ drafts: drafts.map((d) => (d.id === id ? { ...d, ...constrainedDraftPatch(draft, patch, drafts) } : d)) });
+    const constrained = constrainedDraftPatch(draft, patch, drafts);
+    update({ drafts: drafts.map((d) => (d.id === id ? { ...d, ...syncDraftFamilyParameters(d, constrained) } : d)) });
   };
 
   const operateDraft = (operation: "trim" | "extend" | "offset" | "rotate" | "mirror") => {
@@ -825,12 +828,21 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
       width: kind === "door" ? 1.1 : 2,
       height: kind === "door" ? 2.1 : 1.5,
       sill: kind === "door" ? 0 : 1,
+      family: { ...familyMetadata(familyForId(kind === "door" ? "door-single" : "window-basic")!), hostId: `${tower.id}-facade-${tower.doorFacing}` },
     };
     patchTower(tower.id, { openings: [...(tower.openings ?? []), opening] });
   };
 
   const patchOpening = (tower: TowerData, openingId: string, patch: Partial<TowerOpening>) => {
-    patchTower(tower.id, { openings: (tower.openings ?? []).map((o) => (o.id === openingId ? { ...o, ...patch } : o)) });
+    patchTower(tower.id, { openings: (tower.openings ?? []).map((o) => {
+      if (o.id !== openingId) return o;
+      const next = { ...o, ...patch };
+      const family = next.family ? { ...next.family, typeParameters: { ...(next.family.typeParameters ?? {}) }, instanceParameters: { ...(next.family.instanceParameters ?? {}) } } : undefined;
+      if (family && typeof patch.width === "number") family.typeParameters!.width = patch.width;
+      if (family && typeof patch.height === "number") family.typeParameters!.height = patch.height;
+      if (family && typeof patch.sill === "number") family.instanceParameters!.sill = patch.sill;
+      return { ...next, family: patch.face && family ? { ...family, hostId: `${tower.id}-facade-${patch.face}` } : family };
+    }) });
   };
 
   const towersPanel = (
@@ -927,6 +939,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
                         <Num label="Width" value={o.width} onChange={(v) => patchOpening(t, o.id, { width: Math.max(v || 0.3, 0.3) })} min={0.3} step={0.1} unit=" m" />
                         <Num label="Height" value={o.height} onChange={(v) => patchOpening(t, o.id, { height: Math.max(v || 0.3, 0.3) })} min={0.3} step={0.1} unit=" m" />
                         {o.kind === "window" && <Num label="Sill height" value={o.sill} onChange={(v) => patchOpening(t, o.id, { sill: Math.max(v || 0, 0) })} min={0} step={0.1} unit=" m" />}
+                        <div className="col-span-2"><ParametricControls family={o.family} targets={[]} onChange={(patch) => patchOpening(t, o.id, patch)} /></div>
                       </div>
                     </div>
                   ))}

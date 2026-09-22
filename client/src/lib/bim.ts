@@ -1,4 +1,6 @@
 import type { Design, MepElement, ReviewMarker } from "../types";
+import { resolveDraft, resolveRoomOpening, resolveTowerOpening, parametricIssues } from "./parametric";
+import { towerMeters } from "./community";
 
 export interface ExchangeEntity {
   id: string;
@@ -73,11 +75,14 @@ export function buildBimExchange(design: Design): string {
   for (const c of [design.community, design.infra]) {
     if (!c) continue;
     for (const draft of c.drafts ?? []) {
+      const resolved = resolveDraft(draft, "levels" in c ? c.levels ?? [] : []);
       entities.push(entity(draft.id, `DRAFT_${draft.kind.toUpperCase()}`, {
         name: draft.label,
-        geometry: { xM: draft.x, zM: draft.z, widthM: draft.w, depthM: draft.d, heightM: draft.h, rotationDeg: draft.rotationDeg },
-        properties: { color: draft.color, civilKind: draft.civilKind, elevationM: draft.elevationM, gradePct: draft.gradePct },
+        levelId: draft.family?.levelId,
+        geometry: { xM: draft.x, zM: draft.z, widthM: resolved.width, depthM: resolved.depth, heightM: resolved.height, rotationDeg: draft.rotationDeg, yM: resolved.elevation },
+        properties: { color: draft.color, civilKind: draft.civilKind, elevationM: resolved.elevation, gradePct: draft.gradePct, family: draft.family, hostId: draft.family?.hostId, slopePct: resolved.slope, overhangM: resolved.overhang },
       }));
+      for (const message of parametricIssues(draft, "levels" in c ? c.levels ?? [] : [])) entities.push(entity(`${draft.id}-validation-${message}`, "VALIDATION", { properties: { sourceId: draft.id, message } }));
     }
     if ("amenities" in c) {
       for (const amenity of c.amenities) {
@@ -95,21 +100,24 @@ export function buildBimExchange(design: Design): string {
           properties: { roomType: roomPlan.type, approximation: "Planning room envelope; openings and finishes are not fully exchanged." },
         }));
         for (const opening of roomPlan.openings ?? []) {
+          const resolved = resolveRoomOpening(opening, opening.wall === "east" || opening.wall === "west" ? roomPlan.d : roomPlan.w);
           entities.push(entity(opening.id, opening.kind === "door" ? "DOOR" : "WINDOW", {
             name: `${opening.kind} ${opening.wall}`,
             levelId: roomPlan.towerId,
-            geometry: { kind: "opening", xM: roomPlan.x + opening.offsetM, zM: roomPlan.z, widthM: opening.widthM, depthM: 0.1, heightM: opening.heightM, yM: opening.sillM },
-            properties: { wall: opening.wall, roomId: roomPlan.id, approximation: "Opening is exported as a typed element; host wall void and hardware are not modeled." },
+            geometry: { kind: "opening", xM: roomPlan.x + resolved.offset, zM: roomPlan.z, widthM: resolved.width, depthM: 0.1, heightM: resolved.height, yM: resolved.sill },
+            properties: { wall: opening.wall, roomId: roomPlan.id, hostId: opening.family?.hostId ?? `room-wall-${opening.wall}`, family: opening.family, approximation: "Opening is exported as a typed element; host wall void and hardware are not modeled." },
           }));
         }
       }
       for (const tower of c.towers) {
+        const towerSize = towerMeters(tower);
         for (const opening of tower.openings ?? []) {
+          const resolved = resolveTowerOpening(opening, opening.face === "east" || opening.face === "west" ? towerSize.d : towerSize.w);
           entities.push(entity(opening.id, opening.kind === "door" ? "DOOR" : "WINDOW", {
             name: `${opening.kind} ${opening.face}`,
             levelId: `${tower.id}-floor-${opening.floor}`,
-            geometry: { kind: "opening", xM: tower.x + opening.offset, zM: tower.z, widthM: opening.width, depthM: 0.1, heightM: opening.height, yM: opening.floor * tower.floorHeight + opening.sill, rotationDeg: tower.rotY ?? 0 },
-            properties: { towerId: tower.id, face: opening.face, approximation: "Parametric opening; host facade, frame and hardware are not modeled." },
+            geometry: { kind: "opening", xM: tower.x + resolved.offset, zM: tower.z, widthM: resolved.width, depthM: 0.1, heightM: resolved.height, yM: opening.floor * tower.floorHeight + resolved.sill, rotationDeg: tower.rotY ?? 0 },
+            properties: { towerId: tower.id, face: opening.face, hostId: opening.family?.hostId ?? `${tower.id}-facade-${opening.face}`, family: opening.family, approximation: "Parametric opening; host facade, frame and hardware are not modeled." },
           }));
         }
       }

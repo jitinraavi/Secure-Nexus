@@ -526,6 +526,7 @@ export interface TowerOpening {
   width: number;
   height: number;
   sill: number;
+  family?: ParametricFamilyMetadata;
 }
 
 export interface ExteriorPanel {

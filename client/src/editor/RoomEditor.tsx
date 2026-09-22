@@ -11,6 +11,8 @@ import { MepPanel } from "../components/MepPanel";
 import { buildMepScene } from "../lib/mep";
 import { familyMetadata, familyForId } from "../lib/families";
 import { disposeObject3D } from "../lib/modelcore";
+import { ParametricControls } from "../components/ParametricControls";
+import { resolveRoomOpening } from "../lib/parametric";
 
 /**
  * In-room furniture editor.
@@ -79,13 +81,21 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
       widthM: kind === "door" ? 1 : 1.5,
       heightM: kind === "door" ? 2.1 : 1.3,
       sillM: kind === "door" ? 0 : 0.9,
-      family: familyMetadata(familyForId(kind === "door" ? "door-single" : "window-basic")!),
+      family: { ...familyMetadata(familyForId(kind === "door" ? "door-single" : "window-basic")!), hostId: `room-wall-${room.doorFacing}` },
     };
     onChange({ ...room, openings: [...(room.openings ?? []), opening] });
   };
 
   const patchOpening = (id: string, patch: Partial<RoomOpening>) =>
-    onChange({ ...room, openings: (room.openings ?? []).map((o) => (o.id === id ? { ...o, ...patch } : o)) });
+    onChange({ ...room, openings: (room.openings ?? []).map((o) => {
+      if (o.id !== id) return o;
+      const next = { ...o, ...patch };
+      const family = next.family ? { ...next.family, typeParameters: { ...(next.family.typeParameters ?? {}) }, instanceParameters: { ...(next.family.instanceParameters ?? {}) } } : undefined;
+      if (family && typeof patch.widthM === "number") family.typeParameters!.width = patch.widthM;
+      if (family && typeof patch.heightM === "number") family.typeParameters!.height = patch.heightM;
+      if (family && typeof patch.sillM === "number") family.instanceParameters!.sill = patch.sillM;
+      return { ...next, family: patch.wall && family ? { ...family, hostId: `room-wall-${patch.wall}` } : family };
+    }) });
 
   const addFromText = (text: string): boolean => {
     const parsed = parseObjectQuery(text);
@@ -212,9 +222,10 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
          }
          group.add(marker);
        }
-       for (const opening of openings) {
-         const openingMesh = new THREE.Mesh(
-           new THREE.BoxGeometry(opening.widthM, opening.heightM, 0.06),
+        for (const opening of openings) {
+          const resolved = resolveRoomOpening(opening, opening.wall === "east" || opening.wall === "west" ? r.d : r.w);
+          const openingMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(resolved.width, resolved.height, 0.06),
            new THREE.MeshStandardMaterial({
              color: opening.kind === "door" ? "#7c4a2d" : "#5aa7c7",
              roughness: opening.kind === "door" ? 0.7 : 0.2,
@@ -223,15 +234,15 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
              opacity: opening.kind === "window" ? 0.72 : 1,
            }),
          );
-         const y = (opening.kind === "door" ? 0 : opening.sillM) + opening.heightM / 2;
-         if (opening.wall === "north") openingMesh.position.set(opening.offsetM, y, halfD - 0.08);
-         if (opening.wall === "south") openingMesh.position.set(opening.offsetM, y, -halfD + 0.08);
+          const y = (opening.kind === "door" ? 0 : resolved.sill) + resolved.height / 2;
+          if (opening.wall === "north") openingMesh.position.set(resolved.offset, y, halfD - 0.08);
+          if (opening.wall === "south") openingMesh.position.set(resolved.offset, y, -halfD + 0.08);
          if (opening.wall === "east") {
-           openingMesh.position.set(halfW - 0.08, y, opening.offsetM);
+            openingMesh.position.set(halfW - 0.08, y, resolved.offset);
            openingMesh.rotation.y = Math.PI / 2;
          }
          if (opening.wall === "west") {
-           openingMesh.position.set(-halfW + 0.08, y, opening.offsetM);
+            openingMesh.position.set(-halfW + 0.08, y, resolved.offset);
            openingMesh.rotation.y = Math.PI / 2;
          }
          openingMesh.userData.noSelect = true;
@@ -541,6 +552,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
                   <Input label="Width" type="number" min={0.3} step={0.1} value={opening.widthM} onChange={(e) => patchOpening(opening.id, { widthM: Math.max(Number(e.target.value) || 0.3, 0.3) })} />
                   <Input label="Height" type="number" min={0.3} step={0.1} value={opening.heightM} onChange={(e) => patchOpening(opening.id, { heightM: Math.max(Number(e.target.value) || 0.3, 0.3) })} />
                   {opening.kind === "window" && <Input label="Sill" type="number" min={0} step={0.1} value={opening.sillM} onChange={(e) => patchOpening(opening.id, { sillM: Math.max(Number(e.target.value) || 0, 0) })} />}
+                  <div className="col-span-2"><ParametricControls family={opening.family} targets={[]} onChange={(patch) => patchOpening(opening.id, patch)} /></div>
                 </div>
               </div>
             ))}
