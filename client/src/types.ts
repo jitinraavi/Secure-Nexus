@@ -573,6 +573,42 @@ export interface EngineeringCodeProfile {
   assumptions: { driftLimitRatio: number; safetyFactor: number; designAirVelocityMps: number; pipeVelocityMps: number; electricalDemandFactor: number };
 }
 
+export type ComplianceIssueSeverity = "error" | "warning" | "review";
+export type ComplianceCategory = "dimensions" | "life-safety" | "occupancy" | "floor-heights" | "structural" | "mep" | "site" | "documentation";
+
+/** Planning reference only. Profile names do not represent certification or a jurisdictional code basis. */
+export interface ComplianceProfile {
+  id: string;
+  name: string;
+  jurisdictionStyle: string;
+  edition: string;
+  scope: string;
+  disclaimer: string;
+  thresholds: {
+    minRoomWidthM: number;
+    minRoomDepthM: number;
+    minDoorWidthM: number;
+    minClearanceM: number;
+    minFloorHeightM: number;
+    maxSiteSlopePct: number;
+    peoplePerM2: number;
+  };
+}
+
+export interface ComplianceIssue {
+  id: string;
+  severity: ComplianceIssueSeverity;
+  category: ComplianceCategory;
+  message: string;
+  basis: string;
+}
+
+export interface ComplianceReport {
+  profile: ComplianceProfile;
+  issues: ComplianceIssue[];
+  generatedAt: string;
+}
+
 export interface TowerData {
   id: string;
   label: string;
@@ -793,6 +829,7 @@ export interface Design {
   infra?: InfraDesign;
   /** Optional Revit/Archicad-style documentation package; absent in legacy designs. */
   documentation?: DocumentationMetadata;
+  compliance?: { profileId: string };
   visualization?: VisualizationSettings;
 }
 

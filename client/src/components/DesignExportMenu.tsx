@@ -1,20 +1,23 @@
 import { useEffect, useState } from "react";
-import { Button, Input, Modal, Select } from "./ui";
+import { Badge, Button, Input, Modal, Select } from "./ui";
 import { useToast } from "./Toast";
 import { download, downloadBlob } from "../lib/download";
 import type { Design, DocumentationAnnotation, DocumentationRevision, DocumentationSchedule, DocumentationSheet, DocumentationView } from "../types";
 import { documentationFor } from "../lib/documentation";
 import { getCadExchangeStatus, type CadExchangeStatusResponse } from "../api";
+import { COMPLIANCE_PROFILES, validateDesign } from "../lib/compliance";
 
 export function DesignExportMenu({ design, projectName, onChange }: { design: Design; projectName?: string; onChange?: (design: Design) => void }) {
   const [open, setOpen] = useState(false);
   const [cadStatus, setCadStatus] = useState<CadExchangeStatusResponse | null>(null);
   const docs = documentationFor(design);
+  const compliance = validateDesign(design);
   const toast = useToast();
   const stem = (projectName || "design").trim().replace(/[^\w-]+/g, "-").toLowerCase() || "design";
   useEffect(() => { getCadExchangeStatus().then(setCadStatus).catch(() => setCadStatus(null)); }, []);
   const dwgProvider = cadStatus?.providers[0];
   const updateDocs = (patch: Partial<typeof docs>) => onChange?.({ ...design, documentation: { ...docs, ...patch } });
+  const updateProfile = (profileId: string) => onChange?.({ ...design, compliance: { profileId } });
   const update = <T extends { id: string }>(key: "views" | "sheets" | "annotations" | "schedules" | "revisions", id: string, patch: Partial<T>) => {
     updateDocs({ [key]: docs[key].map((item) => item.id === id ? { ...item, ...patch } : item) } as Partial<typeof docs>);
   };
@@ -60,6 +63,31 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           <p className="mt-2 text-xs text-slate-500">Changes are saved with the design and are used by the PDF sheet set.</p>
         </div>
         <DocumentationEditor docs={docs} add={add} update={update} remove={remove} />
+        <section className="mt-3 rounded-xl border border-slate-700 bg-slate-950/30 p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="gw-kicker">Standards screening</p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-400">Transparent planning checks only. Results are not a code determination or certification.</p>
+            </div>
+            <Select aria-label="Compliance profile" value={design.compliance?.profileId ?? COMPLIANCE_PROFILES[0].id} onChange={(e) => updateProfile(e.target.value)}>
+              {COMPLIANCE_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+            </Select>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">{compliance.profile.jurisdictionStyle} · {compliance.profile.edition}</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            {(["error", "warning", "review"] as const).map((severity) => {
+              const count = compliance.issues.filter((item) => item.severity === severity).length;
+              return <Badge key={severity} tone={severity === "error" ? "rose" : severity === "warning" ? "amber" : "cyan"}>{count} {severity}</Badge>;
+            })}
+          </div>
+          <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
+            {compliance.issues.map((item) => <div key={item.id} className="rounded-lg border border-slate-800 p-2">
+              <div className="flex items-center gap-2"><Badge tone={item.severity === "error" ? "rose" : item.severity === "warning" ? "amber" : "cyan"}>{item.severity}</Badge><span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.category}</span></div>
+              <p className="mt-1 text-xs text-slate-300">{item.message}</p><p className="mt-1 text-[11px] text-slate-500">Basis: {item.basis}</p>
+            </div>)}
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-amber-300/80">{compliance.profile.disclaimer}</p>
+        </section>
         <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
           <p className="gw-kicker text-amber-300">Exchange summary</p>
           <p className="mt-1 text-sm leading-relaxed text-slate-300">{projectName || "Untitled project"} exports a 2D drafting projection and a minimal IFC4 coordination model.</p>
@@ -73,7 +101,7 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           <Button onClick={() => void exportFile("dxf")}>Download DXF</Button>
           <Button variant="secondary" onClick={() => void exportFile("ifc")}>Download IFC STEP</Button>
           <Button className="sm:col-span-2" variant="outline" disabled={!dwgProvider?.available} title={dwgProvider?.message || "Licensed DWG provider unavailable"}>Download DWG (licensed provider)</Button>
-          <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download multipage PDF sheet set</Button>
+           <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download sheet set with screening report</Button>
         </div>
       </Modal>
     </>

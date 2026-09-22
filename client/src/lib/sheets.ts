@@ -4,6 +4,7 @@ import { computeInfraTakeoff, INFRA_LABELS, type InfraTakeoffItem } from "./infr
 import { landMeters, towerMeters } from "./community";
 import { documentationFor } from "./documentation";
 import type { DocumentationMetadata } from "../types";
+import { validateDesign } from "./compliance";
 
 type PdfPage = string[];
 const W = 792;
@@ -143,6 +144,7 @@ function infraPages(page: PdfPage, infra: InfraDesign, sheet: string) {
 
 function buildPages(projectName: string, design: Design): PdfPage[] {
   const docs = documentationFor(design);
+  const compliance = validateDesign(design);
   const pages: PdfPage[] = [];
   const page = (sheet: DocumentationMetadata["sheets"][number]) => { const p: PdfPage = []; titleBlock(p, projectName, sheet.name, sheet.number, docs); heading(p, sheet.name); pages.push(p); return p; };
   const community = design.community;
@@ -178,16 +180,18 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
   docs.sheets.forEach((sheet) => {
     const p = page(sheet);
     if (sheet.number === "G-001") {
-      text(p, safe(projectName).toUpperCase(), 90, 385, 25, true); text(p, "PRELIMINARY SHEET PRODUCTION SET", 90, 355, 13); text(p, `Generated ${new Date().toISOString().slice(0, 10)}`, 90, 320, 9);
-      bulletList(p, docs.sheets.map((item) => `${item.number} ${item.name}`), 90, 275, 440); text(p, `Status: ${docs.status.toUpperCase()} | ${docs.revisions.length} revision(s)`, 90, 145, 11, true); text(p, `Views: ${docs.views.filter((view) => view.visible).length} | Schedules: ${docs.schedules.length} | Tags: ${docs.annotations.length}`, 90, 128, 8);
+       text(p, safe(projectName).toUpperCase(), 90, 385, 25, true); text(p, "PRELIMINARY SHEET PRODUCTION SET", 90, 355, 13); text(p, `Generated ${new Date().toISOString().slice(0, 10)}`, 90, 320, 9);
+       bulletList(p, docs.sheets.map((item) => `${item.number} ${item.name}`), 90, 275, 440); text(p, `Status: ${docs.status.toUpperCase()} | ${docs.revisions.length} revision(s)`, 90, 145, 11, true); text(p, `Views: ${docs.views.filter((view) => view.visible).length} | Schedules: ${docs.schedules.length} | Tags: ${docs.annotations.length}`, 90, 128, 8);
+       text(p, `SCREENING PROFILE: ${compliance.profile.name}`, 90, 105, 8, true); text(p, `Issues: ${compliance.issues.filter((i) => i.severity === "error").length} errors | ${compliance.issues.filter((i) => i.severity === "warning").length} warnings | ${compliance.issues.filter((i) => i.severity === "review").length} professional-review notes`, 90, 91, 7);
     } else if (sheet.number === "Q-501") {
       text(p, takeoff.summary.join("  |  "), 70, 445, 8, true); rows(p, takeoff.items.map((item) => ({ label: item.label, value: `${item.qty} ${item.unit}`, basis: item.basis })), 70, 415, 650, 20);
     } else {
       const view = sheet.viewIds.map((viewId) => docs.views.find((item) => item.id === viewId)).find(Boolean);
       if (view && !view.visible) { text(p, `VIEW HIDDEN: ${view.name}`, 90, 430, 9); } else if (view?.kind === "plan") renderPlan(p); else if (view?.kind === "elevation") renderElevation(p); else if (view?.kind === "section") renderSection(p); else if (view?.kind === "schedule" || sheet.number === "S-401") {
-        const configuredSchedules = docs.schedules.map((schedule) => ({ label: schedule.name, value: schedule.fields.join(", "), basis: `${schedule.category} schedule` }));
-        rows(p, [...configuredSchedules, ...scheduleItems], 70, 445, 650); text(p, "ANNOTATIONS / REVIEW MARKUPS", 70, 210, 9, true);
-        const annotations = docs.annotations.map((a) => `${a.tag ? `[${a.tag}] ` : ""}${a.text}`); bulletList(p, [...review.map((m) => `${m.severity.toUpperCase()}: ${m.text} (${m.status})`), ...annotations, ...(review.length || annotations.length ? [] : ["No saved annotations."])], 70, 185, 620);
+         const configuredSchedules = docs.schedules.map((schedule) => ({ label: schedule.name, value: schedule.fields.join(", "), basis: `${schedule.category} schedule` }));
+         const complianceRows = compliance.issues.map((item) => ({ label: `${item.severity.toUpperCase()} · ${item.category}`, value: item.message, basis: item.basis }));
+         rows(p, [...configuredSchedules, ...scheduleItems, ...complianceRows], 70, 445, 650); text(p, "ANNOTATIONS / REVIEW MARKUPS", 70, 210, 9, true);
+         const annotations = docs.annotations.map((a) => `${a.tag ? `[${a.tag}] ` : ""}${a.text}`); bulletList(p, [...review.map((m) => `${m.severity.toUpperCase()}: ${m.text} (${m.status})`), ...annotations, ...(review.length || annotations.length ? [] : ["No saved annotations."])], 70, 185, 620);
       } else { text(p, "DOCUMENTATION VIEW", 90, 465, 9, true); text(p, `${view?.name ?? sheet.name} | ${view?.scale ?? ""} ${view?.orientation ?? ""}`, 90, 430, 9); }
     }
     if (docs.revisions.length) text(p, `Latest revision ${docs.revisions[docs.revisions.length - 1].number}: ${docs.revisions[docs.revisions.length - 1].description}`, 70, 82, 7);
