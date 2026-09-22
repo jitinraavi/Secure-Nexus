@@ -557,9 +557,25 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
   /* Towers */
   if (layerVisible("buildings")) {
     for (const t of design.towers) {
-       const node = buildTowerMesh(t, design.exteriors);
-       node.visible = phaseVisible(t.phaseId ?? "structure", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
-       g.add(node);
+        const detailed = buildTowerMesh(t, design.exteriors);
+        const { w, h, d } = towerMeters(t);
+        const node = new THREE.LOD();
+        node.addLevel(detailed, 0);
+        // Keep distant communities cheap while retaining the detailed node for picking up close.
+        const proxy = new THREE.Mesh(
+          new THREE.BoxGeometry(w, h, d),
+          material(facadeOption(t.facadeMaterial ?? "glass").color, { rough: 0.9 }),
+        );
+        proxy.position.y = h / 2;
+        proxy.userData.selectId = t.id;
+        proxy.userData.selectKind = "tower";
+        node.addLevel(proxy, Math.max(60, Math.max(w, d) * 4));
+        node.userData.selectId = t.id;
+        node.userData.selectKind = "tower";
+        node.userData.selW = w;
+        node.userData.selD = d;
+        node.visible = phaseVisible(t.phaseId ?? "structure", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+        g.add(node);
     }
   }
 
@@ -783,7 +799,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.localClippingEnabled = true;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, container.clientWidth < 900 ? 1.5 : 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -891,8 +907,10 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     renderer.domElement.addEventListener("pointerdown", onSkip, { once: true });
     renderer.domElement.addEventListener("wheel", onSkip, { once: true });
 
+     let raf = 0;
      const animate = () => {
-       requestAnimationFrame(animate);
+       raf = requestAnimationFrame(animate);
+       if (document.hidden) return;
        if (visualizationRef.current?.walkthrough) {
          const t = (visualizationRef.current.time / 100) * Math.PI * 2;
          camera.position.set(Math.cos(t) * 220, 110, Math.sin(t) * 220);
@@ -1093,6 +1111,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
 
     return () => {
       window.removeEventListener("resize", onResize);
+      cancelAnimationFrame(raf);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);

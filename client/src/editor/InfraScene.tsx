@@ -37,7 +37,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.localClippingEnabled = true;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, container.clientWidth < 900 ? 1.5 : 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -179,8 +179,10 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointercancel", onPointerUp);
 
+    let raf = 0;
     const animate = () => {
-      requestAnimationFrame(animate);
+      raf = requestAnimationFrame(animate);
+      if (document.hidden) return;
       if (visualizationRef.current?.walkthrough) {
         const t = (visualizationRef.current.time / 100) * Math.PI * 2;
         camera.position.set(Math.cos(t) * span * 0.9, span * 0.35, Math.sin(t) * span * 0.9);
@@ -202,6 +204,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
 
     return () => {
       window.removeEventListener("resize", onResize);
+      cancelAnimationFrame(raf);
       scene.environment?.dispose();
       controls.dispose();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);

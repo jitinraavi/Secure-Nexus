@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Input, Modal, Select } from "./ui";
 import { useToast } from "./Toast";
-import { buildDxf } from "../lib/dxf";
-import { buildIfcStep } from "../lib/bim";
 import { download, downloadBlob } from "../lib/download";
-import { buildSheetPdf } from "../lib/sheets";
 import type { Design, DocumentationAnnotation, DocumentationRevision, DocumentationSchedule, DocumentationSheet, DocumentationView } from "../types";
 import { documentationFor } from "../lib/documentation";
 import { getCadExchangeStatus, type CadExchangeStatusResponse } from "../api";
@@ -26,13 +23,19 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
     ...(key === "views" ? { sheets: docs.sheets.map((sheet) => ({ ...sheet, viewIds: sheet.viewIds.filter((viewId) => viewId !== id) })) } : {}),
   } as Partial<typeof docs>);
   const add = (key: "views" | "sheets" | "annotations" | "schedules" | "revisions", value: DocumentationView | DocumentationSheet | DocumentationAnnotation | DocumentationSchedule | DocumentationRevision) => updateDocs({ [key]: [...docs[key], value] } as Partial<typeof docs>);
-  const exportFile = (format: "dxf" | "ifc") => {
-    if (format === "dxf") download(`${stem}.dxf`, buildDxf(design), "application/dxf");
-    else download(`${stem}.ifc`, buildIfcStep(design), "application/x-step");
+  const exportFile = async (format: "dxf" | "ifc") => {
+    if (format === "dxf") {
+      const { buildDxf } = await import("../lib/dxf");
+      download(`${stem}.dxf`, buildDxf(design), "application/dxf");
+    } else {
+      const { buildIfcStep } = await import("../lib/bim");
+      download(`${stem}.ifc`, buildIfcStep(design), "application/x-step");
+    }
     toast.push({ title: `${format.toUpperCase()} downloaded`, description: "Planning and coordination geometry is marked as approximate.", tone: "success" });
     setOpen(false);
   };
-  const exportSheets = () => {
+  const exportSheets = async () => {
+    const { buildSheetPdf } = await import("../lib/sheets");
     const blob = new Blob([buildSheetPdf(projectName || "Untitled project", design)], { type: "application/pdf" });
     downloadBlob(`${stem}-sheets.pdf`, blob);
     toast.push({ title: "PDF sheet set downloaded", description: "Documentation metadata, views, annotations, schedules, and planning geometry included.", tone: "success" });
@@ -67,10 +70,10 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
-          <Button onClick={() => exportFile("dxf")}>Download DXF</Button>
-          <Button variant="secondary" onClick={() => exportFile("ifc")}>Download IFC STEP</Button>
+          <Button onClick={() => void exportFile("dxf")}>Download DXF</Button>
+          <Button variant="secondary" onClick={() => void exportFile("ifc")}>Download IFC STEP</Button>
           <Button className="sm:col-span-2" variant="outline" disabled={!dwgProvider?.available} title={dwgProvider?.message || "Licensed DWG provider unavailable"}>Download DWG (licensed provider)</Button>
-          <Button className="sm:col-span-2" onClick={exportSheets}>Download multipage PDF sheet set</Button>
+          <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download multipage PDF sheet set</Button>
         </div>
       </Modal>
     </>

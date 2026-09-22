@@ -177,7 +177,7 @@ export function Canvas3D({
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, container.clientWidth < 900 ? 1.5 : 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -358,6 +358,7 @@ export function Canvas3D({
     let raf = 0;
     const loop = () => {
       raf = requestAnimationFrame(loop);
+      if (document.hidden) return;
       controls.update();
       renderer.render(scene, camera);
     };

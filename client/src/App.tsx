@@ -1,19 +1,21 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth";
 import { Layout } from "./components/Layout";
 import { SplashScreen } from "./components/SplashScreen";
-import { Landing } from "./pages/Landing";
-import { Login } from "./pages/Login";
-import { Signup } from "./pages/Signup";
-import { VerifyTwoFactor } from "./pages/VerifyTwoFactor";
-import { Dashboard } from "./pages/Dashboard";
-import { Editor } from "./pages/Editor";
-import { Audit } from "./pages/Audit";
-import { Settings } from "./pages/Settings";
-import { Billing } from "./pages/Billing";
-import { Checkout } from "./pages/Checkout";
-import { SharedProject } from "./pages/SharedProject";
 import { Spinner } from "./components/ui";
+
+const Landing = lazy(() => import("./pages/Landing").then((m) => ({ default: m.Landing })));
+const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
+const Signup = lazy(() => import("./pages/Signup").then((m) => ({ default: m.Signup })));
+const VerifyTwoFactor = lazy(() => import("./pages/VerifyTwoFactor").then((m) => ({ default: m.VerifyTwoFactor })));
+const Dashboard = lazy(() => import("./pages/Dashboard").then((m) => ({ default: m.Dashboard })));
+const Editor = lazy(() => import("./pages/Editor").then((m) => ({ default: m.Editor })));
+const Audit = lazy(() => import("./pages/Audit").then((m) => ({ default: m.Audit })));
+const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
+const Billing = lazy(() => import("./pages/Billing").then((m) => ({ default: m.Billing })));
+const Checkout = lazy(() => import("./pages/Checkout").then((m) => ({ default: m.Checkout })));
+const SharedProject = lazy(() => import("./pages/SharedProject").then((m) => ({ default: m.SharedProject })));
 
 function FullScreenLoading() {
   return (
@@ -41,6 +43,7 @@ export default function App() {
   return (
     <>
       <SplashScreen />
+      <Suspense fallback={<FullScreenLoading />}>
       <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
@@ -59,6 +62,7 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
     </>
   );
 }

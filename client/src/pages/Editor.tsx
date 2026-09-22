@@ -11,9 +11,6 @@ import { useToast } from "../components/Toast";
 import { Badge, Button, Modal, Select, Spinner, Toggle } from "../components/ui";
 import { Canvas3D, type EditorApi } from "../editor/Canvas3D";
 import { CATALOG, catalogEntry, furnitureMount } from "../lib/catalog";
-import { buildDxf } from "../lib/dxf";
-import { buildBillOfMaterials, buildObjMtl } from "../lib/obj";
-import { buildBimExchange, buildBimScheduleCsv, buildIfcStep } from "../lib/bim";
 import { download, downloadBlob, zipFiles } from "../lib/download";
 import type { Design, FurnitureItem, InfraKind, ProjectType } from "../types";
 import { defaultDesign, PROJECT_TYPE_LABELS } from "../types";
@@ -247,8 +244,10 @@ export function Editor() {
     try {
       const stem = name.trim().replace(/[^\w-]+/g, "-").toLowerCase() || "design";
       if (format === "dxf") {
+        const { buildDxf } = await import("../lib/dxf");
         download(`${stem}.dxf`, buildDxf(design), "application/dxf");
       } else if (format === "obj") {
+        const { buildObjMtl } = await import("../lib/obj");
         const { obj, mtl } = buildObjMtl(design);
         const blob = await zipFiles([{ name: `${stem}.obj`, content: obj }, { name: `${stem}.mtl`, content: mtl }]);
         downloadBlob(`${stem}-blender.zip`, blob);
@@ -256,8 +255,14 @@ export function Editor() {
         const blob = await api.exportGlb();
         downloadBlob(`${stem}.glb`, blob);
       } else if (format === "csv") {
+        const { buildBillOfMaterials } = await import("../lib/obj");
         download(`${stem}-bom.csv`, buildBillOfMaterials(design), "text/csv");
       } else if (format === "bim") {
+        const [{ buildObjMtl }, { buildBimExchange, buildBimScheduleCsv, buildIfcStep }, { buildDxf }] = await Promise.all([
+          import("../lib/obj"),
+          import("../lib/bim"),
+          import("../lib/dxf"),
+        ]);
         const { obj, mtl } = buildObjMtl(design);
         const entries: { name: string; content: string | Blob }[] = [
           { name: `${stem}.ifc`, content: buildIfcStep(design) },
@@ -276,6 +281,7 @@ export function Editor() {
       } else if (format === "png") {
         /* handled separately */
       } else if (format === "ifc") {
+        const { buildIfcStep } = await import("../lib/bim");
         download(`${stem}.ifc`, buildIfcStep(design), "application/x-step");
       }
       await recordExport(id!, format);

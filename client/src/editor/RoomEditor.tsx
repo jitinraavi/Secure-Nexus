@@ -132,7 +132,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
     if (!container) return;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, container.clientWidth < 900 ? 1.5 : 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.setSize(container.clientWidth, container.clientHeight);
@@ -296,8 +296,10 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
     rebuildRef.current = buildRoom;
     buildRoom();
 
+    let raf = 0;
     const animate = () => {
-      requestAnimationFrame(animate);
+      raf = requestAnimationFrame(animate);
+      if (document.hidden) return;
       controls.update();
       renderer.render(scene, camera);
     };
@@ -424,6 +426,7 @@ export function RoomEditor({ room, title, onClose, onChange }: RoomEditorProps) 
 
     return () => {
       window.removeEventListener("resize", onResize);
+      cancelAnimationFrame(raf);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
