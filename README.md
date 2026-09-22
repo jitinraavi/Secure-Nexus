@@ -63,10 +63,10 @@ Option B — manual web service settings:
 | Start command | `npm start` |
 | Health check path | `/api/health` |
 | Env: `NODE_ENV` | `production` |
-| Env: `MASTER_KEY` | **Generate value** (must never change after first deploy) |
-| Env: `GROUNDWORK_DATA_DIR` | e.g. `/var/data` with a persistent disk (see below) |
+| Env: `MASTER_KEY` | **Required stable base64 32-byte secret** (must never change) |
+| Env: `GROUNDWORK_DATA_DIR` | `/var/data` on the required persistent disk |
 
-**Persistence:** on the free tier the SQLite database lives in the ephemeral filesystem and is wiped on every redeploy/restart. For real use, add a persistent disk (paid plans) mounted at `/var/data` and set `GROUNDWORK_DATA_DIR=/var/data` — the server will create the SQLite file there. DB path override: `DB_PATH=/var/data/app.db`.
+**Persistence:** production refuses to start without `MASTER_KEY` and `GROUNDWORK_DATA_DIR`. The Render blueprint uses a paid persistent disk mounted at `/var/data`; do not deploy on ephemeral storage or change `MASTER_KEY`, or encrypted data becomes unreadable. `DB_PATH` is an optional directory override and the database filename remains `groundwork.db`.
 
 **Going live with payments:** set `PAYMENTS_MODE=live` and add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` (register the webhook URL `https://<your-app>/api/payments/webhook` for the `payment_link.paid` event) and `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` (set `PAYPAL_MODE=live` for production). In demo mode a "Confirm demo payment" button completes any checkout — never enable that with real credentials.
 

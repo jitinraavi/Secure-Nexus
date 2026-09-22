@@ -26,6 +26,10 @@ export const AI = {
   baseUrl: (process.env.AI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, ""),
 };
 
+if (IS_PROD && !process.env.GROUNDWORK_DATA_DIR) {
+  throw new Error("GROUNDWORK_DATA_DIR is required in production; configure persistent storage before starting");
+}
+
 export const DATA_DIR = process.env.GROUNDWORK_DATA_DIR
   ? path.resolve(process.env.GROUNDWORK_DATA_DIR)
   : path.join(SERVER_ROOT, "data");
@@ -37,7 +41,11 @@ export const DB_PATH = process.env.DB_PATH
 function loadOrCreateMasterKey(): Buffer {
   const envKey = process.env.MASTER_KEY;
   if (envKey && /^[A-Za-z0-9+/]{40,}={0,2}$/.test(envKey)) {
-    return Buffer.from(envKey, "base64");
+    const key = Buffer.from(envKey, "base64");
+    if (key.length === 32) return key;
+  }
+  if (IS_PROD) {
+    throw new Error("MASTER_KEY must be a stable base64-encoded 32-byte secret in production");
   }
   const key = crypto.randomBytes(32);
   const b64 = key.toString("base64");

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, now } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
-import { collaborationItemId, emitProjectEvent, subscribeProject } from "../collaboration.js";
+import { collaborationItemId, emitProjectEvent, replayProjectEvents, subscribeProject } from "../collaboration.js";
 
 const router = Router();
 router.use((req: AuthedRequest, res, next) => {
@@ -30,6 +30,8 @@ router.get("/:projectId/events", (req: AuthedRequest, res) => {
   res.flushHeaders();
   res.write(`event: ready\ndata: ${JSON.stringify({ projectId: req.params.projectId })}\n\n`);
   const unsubscribe = subscribeProject(req.params.projectId, res);
+  const requestedId = Number(req.get("Last-Event-ID") || req.query.after || 0);
+  replayProjectEvents(req.params.projectId, res, Number.isFinite(requestedId) ? requestedId : 0);
   const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 20_000);
   req.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
 });

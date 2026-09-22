@@ -8,8 +8,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<ThemeMode>(() => (localStorage.getItem("groundwork-theme") as ThemeMode | null) ?? "dark");
   useEffect(() => {
     localStorage.setItem("groundwork-theme", mode);
-    const resolved = mode === "system" ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : mode;
-    document.documentElement.dataset.theme = resolved;
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const apply = () => {
+      document.documentElement.dataset.theme = mode === "system" ? (media.matches ? "light" : "dark") : mode;
+    };
+    apply();
+    if (mode === "system") {
+      media.addEventListener("change", apply);
+      return () => media.removeEventListener("change", apply);
+    }
   }, [mode]);
   const value = useMemo(() => ({ mode, setMode }), [mode]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

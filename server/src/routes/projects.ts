@@ -346,9 +346,15 @@ router.post("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
     id: randomId(), name: parsed.data.name, project_type: project.project_type,
     width_mm: project.width_mm, depth_mm: project.depth_mm, created_at: now(),
   };
+  const snapshotData = parsed.data.designData
+    ? encryptForUser(parsed.data.designData, req.user!.id)
+    : encryptForUser(
+        project.design_data ? decryptForUser(project.design_data, req.user!.id) : "null",
+        req.user!.id,
+      );
   db.prepare(
     "INSERT INTO project_revisions (id, project_id, user_id, name, design_data, project_type, width_mm, depth_mm, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(revision.id, project.id, req.user!.id, revision.name, encryptForUser(parsed.data.designData || project.design_data || "null", req.user!.id), revision.project_type, revision.width_mm, revision.depth_mm, revision.created_at);
+  ).run(revision.id, project.id, req.user!.id, revision.name, snapshotData, revision.project_type, revision.width_mm, revision.depth_mm, revision.created_at);
   emitProjectEvent(project.id, req.user!.id, "snapshot.created", project.revision, { revisionId: revision.id, name: revision.name });
   logAudit(req.user!.id, "project.revision_created", { projectId: project.id, name: revision.name }, req);
   res.status(201).json(revisionResponse(revision));

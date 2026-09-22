@@ -17,7 +17,7 @@ export function emitProjectEvent(projectId: string, userId: string, type: Collab
     "INSERT INTO project_collaboration_events (project_id, user_id, event_type, revision, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(projectId, userId, type, revision, encrypt(userId, payload), now()).lastInsertRowid;
   const event = JSON.stringify({ id: Number(id), projectId, type, revision, createdAt: now() });
-  for (const response of connections.get(projectId) ?? []) response.write(`event: collaboration\ndata: ${event}\n\n`);
+  for (const response of connections.get(projectId) ?? []) response.write(`id: ${Number(id)}\nevent: collaboration\ndata: ${event}\n\n`);
 }
 
 export function subscribeProject(projectId: string, response: Response) {
@@ -31,6 +31,16 @@ export function subscribeProject(projectId: string, response: Response) {
     set?.delete(response);
     if (set && set.size === 0) connections.delete(projectId);
   };
+}
+
+export function replayProjectEvents(projectId: string, response: Response, afterId: number) {
+  const rows = db.prepare(
+    "SELECT id, event_type, revision, created_at FROM project_collaboration_events WHERE project_id = ? AND id > ? ORDER BY id ASC",
+  ).all(projectId, afterId) as { id: number; event_type: string; revision: number; created_at: number }[];
+  for (const row of rows) {
+    const event = JSON.stringify({ id: row.id, projectId, type: row.event_type, revision: row.revision, createdAt: row.created_at });
+    response.write(`id: ${row.id}\nevent: collaboration\ndata: ${event}\n\n`);
+  }
 }
 
 export function collaborationItemId() {

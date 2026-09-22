@@ -211,10 +211,14 @@ router.post(
       return;
     }
 
-    /* Already verified (e.g. double click): just sign in */
+    /* A repeated verification request cannot be used as a login. */
     if (user.email_verified) {
-      const { csrfToken } = createSession(res, user.id);
-      res.json({ user: publicUser(user), csrfToken, alreadyVerified: true });
+      const session = resolveSession(req);
+      if (!session || session.status !== "active" || session.user_id !== user.id) {
+        res.status(401).json({ error: "This email is already verified. Sign in to continue." });
+        return;
+      }
+      res.json({ user: publicUser(user), csrfToken: session.csrf_token, alreadyVerified: true });
       return;
     }
 
@@ -384,8 +388,8 @@ router.post(
     logAudit(user.id, "auth.login", "Passwordless OTP login succeeded", req);
 
     if (user.totp_enabled) {
-      createSession(res, user.id, { isPending: true });
-      res.json({ needsTwoFactor: true });
+      const { csrfToken } = createSession(res, user.id, { isPending: true });
+      res.json({ needsTwoFactor: true, csrfToken });
       return;
     }
 
@@ -453,8 +457,8 @@ router.post(
     logAudit(user.id, "auth.login", "Login succeeded", req);
 
     if (user.totp_enabled) {
-      createSession(res, user.id, { isPending: true });
-      res.json({ needsTwoFactor: true });
+      const { csrfToken } = createSession(res, user.id, { isPending: true });
+      res.json({ needsTwoFactor: true, csrfToken });
       return;
     }
 

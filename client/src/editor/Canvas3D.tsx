@@ -379,8 +379,10 @@ export function Canvas3D({
       async exportGlb() {
         const ring = selectionRingRef.current;
         const gridVisible = grid.visible;
+        const photoParent = photoGroupRef.current?.parent;
         if (ring) ring.visible = false;
         grid.visible = false;
+        if (photoParent && photoGroupRef.current) photoParent.remove(photoGroupRef.current);
         try {
           const blob = await new Promise<Blob>((resolve, reject) => {
             const exporter = new GLTFExporter();
@@ -401,6 +403,7 @@ export function Canvas3D({
         } finally {
           if (ring) ring.visible = true;
           grid.visible = gridVisible;
+          if (photoParent && photoGroupRef.current) photoParent.add(photoGroupRef.current);
         }
       },
     });
@@ -413,6 +416,7 @@ export function Canvas3D({
       window.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       scene.environment?.dispose();
+      disposeGroup(scene);
       controls.dispose();
       renderer.dispose();
       if (renderer.domElement.parentElement === container) {
@@ -476,9 +480,9 @@ export function Canvas3D({
     plane.position.y = 0.012;
     plane.userData.noSelect = true;
     plane.receiveShadow = false;
-    scene.add(plane);
     photoGroupRef.current = new THREE.Group();
     photoGroupRef.current.add(plane);
+    scene.add(photoGroupRef.current);
   }, [photoUrl, showPhoto, photoOpacity, design.room.widthMm, design.room.depthMm]);
 
   /* Furniture sync */
@@ -604,7 +608,7 @@ function groupSync(group: THREE.Group, item: FurnitureItem, sig: string, room: D
   group.userData.sig = sig;
 }
 
-function disposeGroup(group: THREE.Group) {
+function disposeGroup(group: THREE.Object3D) {
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();
   group.traverse((o) => {

@@ -4,7 +4,7 @@ services:
   - type: web
     name: groundwork-design-studio
     runtime: node
-    plan: free
+    plan: starter
     region: oregon
     buildCommand: npm ci && npm run build
     startCommand: npm start
@@ -13,9 +13,11 @@ services:
       - key: NODE_ENV
         value: production
       # Since MASTER_KEY encrypts every project/photo, it must never change.
-      # "Generate value" creates a one-time random value during first deploy.
+      # Set once in Render and keep this value unchanged.
       - key: MASTER_KEY
-        generateValue: true
+        sync: false
+      - key: GROUNDWORK_DATA_DIR
+        value: /var/data
       - key: PORT
         value: 10000
       # Payments default to DEMO mode (no credentials needed, fake checkout).
@@ -25,11 +27,7 @@ services:
       - key: PAYMENTS_MODE
         value: demo
         sync: false
-    # Recommended (paid plans): persistent disk so user data survives redeploys.
-    # On the FREE tier the SQLite file lives in the ephemeral filesystem and is
-    # reset on every deploy/restart. Add a disk and set:
-    #   env: GROUNDWORK_DATA_DIR=/var/data
-    # disk:
-    #   name: data
-    #   mountPath: /var/data
-    #   sizeGB: 1
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
