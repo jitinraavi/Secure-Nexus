@@ -40,9 +40,11 @@ import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects
 import { MepPanel } from "../components/MepPanel";
 import { DesignExportMenu } from "../components/DesignExportMenu";
 import { DesignAssistantPanel, type AssistantMessage } from "../components/DesignAssistantPanel";
+import { VisualizationControls } from "../components/VisualizationControls";
 import { requestAssistantPlan } from "../api";
 import { applyCommunityAssistantActions, isAssistantActionPreviewOnly, previewAssistantActions } from "../lib/assistant";
 import type { AssistantPlan } from "../types";
+import { visualizationSettings } from "../lib/visualization";
 import {
   AMENITIES,
   DOOR_FACING_LABELS,
@@ -93,6 +95,7 @@ interface CommunityEditorProps {
   onChange: (c: CommunityDesign) => void;
   projectName?: string;
   design?: import("../types").Design;
+  onVisualizationChange?: (design: import("../types").Design) => void;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -171,7 +174,7 @@ function UndergroundForm({
   );
 }
 
-export function CommunityEditor({ branch, community, onChange, projectName, design }: CommunityEditorProps) {
+export function CommunityEditor({ branch, community, onChange, projectName, design, onVisualizationChange }: CommunityEditorProps) {
   const toast = useToast();
   const [step, setStep] = useState<StepId>("land");
   const [focusMode, setFocusMode] = useState(false);
@@ -192,6 +195,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const [reviewText, setReviewText] = useState("");
   const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
   const c = community;
+  const visualization = visualizationSettings(design?.visualization);
   const levels = levelsForDesign(c);
   const activeLevelId = c.activeLevelId && levels.some((level) => level.id === c.activeLevelId) ? c.activeLevelId : levels[0]?.id;
   const historyRef = useRef<{ past: CommunityDesign[]; future: CommunityDesign[] }>({ past: [], future: [] });
@@ -1422,17 +1426,19 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
 
         {/* Right: 3D scene */}
         <div className="relative min-h-[420px] flex-1">
-          <CommunityScene
+           <CommunityScene
             design={c}
             selectedId={selectedId}
             onSelect={setSelectedId}
              onChange={commitDesign}
              activeTool={activeTool}
+             visualization={visualization}
             onContextTarget={(t) => {
               setSelectedId(t.id ?? null);
               setContext(t);
             }}
-          />
+           />
+           {design && <div className="absolute bottom-3 left-3 z-10"><VisualizationControls design={design} onChange={(next) => onVisualizationChange?.(next)} /></div>}
           <div className="pointer-events-none absolute left-3 top-3 rounded-xl bg-slate-950/80 px-3 py-2 text-xs text-slate-300 backdrop-blur">
             {branch === "residential" ? "Residential community" : "Commercial complex"} · drag objects to move · right-click for actions
           </div>

@@ -468,6 +468,7 @@ export function Editor() {
           community={community}
            projectName={name}
            design={design}
+           onVisualizationChange={changeDesign}
           onChange={(c) => {
             const next = { ...design, community: c };
             setDesign(next);
@@ -504,7 +505,8 @@ export function Editor() {
           kind={infraKind}
           infra={design.infra}
           projectName={name}
-          design={design}
+           design={design}
+           onVisualizationChange={changeDesign}
           onChange={(next) => {
             const updated = { ...design, infra: next };
             setDesign(updated);

@@ -57,6 +57,24 @@ export interface ProjectDetail extends Project {
   design: Design | null;
 }
 
+/** Planning milestones used only to filter and animate the current model. */
+export interface ConstructionPhase {
+  id: string;
+  name: string;
+  start: number;
+  end: number;
+  color?: string;
+}
+
+/** Presentation state for 4D review; this is not a construction schedule. */
+export interface VisualizationSettings {
+  enabled: boolean;
+  time: number;
+  playing: boolean;
+  walkthrough: boolean;
+  phases: ConstructionPhase[];
+}
+
 export interface CollaborationItem {
   id: string;
   kind: "comment" | "issue";
@@ -193,6 +211,7 @@ export interface MepElement {
   connectedTo?: string[];
   supportSpacingM?: number;
   family?: ParametricFamilyMetadata;
+  phaseId?: string;
 }
 
 export interface MepPlanningInputs {
@@ -231,6 +250,7 @@ export interface FurnitureItem {
   mount?: FurnitureMount;
   mountWall?: RoomWall;
   mountHeightM?: number;
+  phaseId?: string;
 }
 
 export type FurnitureMount = "unassigned" | "floor" | "wall" | "ceiling";
@@ -322,6 +342,7 @@ export interface AmenityData {
   label?: string;
   color?: string;
   shape?: string;
+  phaseId?: string;
 }
 
 export type DraftElementKind = "line" | "rectangle" | "circle" | "dimension" | "wall" | "slab" | "column" | "roof";
@@ -379,6 +400,7 @@ export interface DraftElement {
   family?: ParametricFamilyMetadata;
   locks?: ParametricLocks;
   constraints?: ParametricConstraint[];
+  phaseId?: string;
 }
 
 export interface DraftingSettings {
@@ -572,6 +594,7 @@ export interface TowerData {
   family?: ParametricFamilyMetadata;
   locks?: ParametricLocks;
   constraints?: ParametricConstraint[];
+  phaseId?: string;
 }
 
 export type TowerOpeningKind = "window" | "door";
@@ -618,6 +641,7 @@ export interface InteriorRoom {
   family?: ParametricFamilyMetadata;
   locks?: ParametricLocks;
   constraints?: ParametricConstraint[];
+  phaseId?: string;
 }
 
 export interface SiteLocation {
@@ -652,6 +676,7 @@ export interface InfraFacility {
   lengthM: number;
   widthM: number;
   heightM: number;
+  phaseId?: string;
 }
 
 export interface HighwayDesign {
@@ -768,6 +793,7 @@ export interface Design {
   infra?: InfraDesign;
   /** Optional Revit/Archicad-style documentation package; absent in legacy designs. */
   documentation?: DocumentationMetadata;
+  visualization?: VisualizationSettings;
 }
 
 /* AI plans are proposals only. Applying them remains a client/editor decision. */

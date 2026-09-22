@@ -8,6 +8,7 @@ import { SiteLocator, type LocatorMode } from "../editor/SiteLocator";
 import { useToast } from "../components/Toast";
 import { requestAssistantPlan } from "../api";
 import { DesignAssistantPanel, type AssistantMessage } from "../components/DesignAssistantPanel";
+import { VisualizationControls } from "../components/VisualizationControls";
 import { cn } from "../lib/cn";
 import { MepPanel } from "../components/MepPanel";
 import { DesignExportMenu } from "../components/DesignExportMenu";
@@ -26,6 +27,7 @@ import {
   infraExtent,
 } from "../lib/infra";
 import { applyInfrastructureAssistantActions, isInfrastructureActionPreviewOnly, previewInfrastructureAssistantActions } from "../lib/assistant";
+import { visualizationSettings } from "../lib/visualization";
 
 type StepId = "location" | "design" | "takeoff" | "review";
 
@@ -95,6 +97,7 @@ interface InfraEditorProps {
   onChange: (infra: InfraDesign) => void;
   projectName?: string;
   design?: import("../types").Design;
+  onVisualizationChange?: (design: import("../types").Design) => void;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -141,7 +144,7 @@ function Num({
   );
 }
 
-export function InfraEditor({ kind, infra, onChange, projectName, design }: InfraEditorProps) {
+export function InfraEditor({ kind, infra, onChange, projectName, design, onVisualizationChange }: InfraEditorProps) {
   const toast = useToast();
   const [step, setStep] = useState<StepId>("location");
   const [facilityKind, setFacilityKind] = useState(FACILITY_OPTIONS[kind][0].kind);
@@ -155,6 +158,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design }: Infr
   const [assistantPlan, setAssistantPlan] = useState<AssistantPlan | null>(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantPreviewOpen, setAssistantPreviewOpen] = useState(false);
+  const visualization = visualizationSettings(design?.visualization);
 
   useEffect(() => {
     setFacilityKind(FACILITY_OPTIONS[kind][0].kind);
@@ -698,7 +702,8 @@ export function InfraEditor({ kind, infra, onChange, projectName, design }: Infr
         </div>
 
         <div className="relative min-h-[420px] flex-1">
-           <InfraScene infra={infra} activeTool={activeTool} onSelect={setSelectedId} onChange={commitInfra} />
+           <InfraScene infra={infra} activeTool={activeTool} onSelect={setSelectedId} onChange={commitInfra} visualization={visualization} />
+           {design && <div className="pointer-events-auto absolute bottom-3 left-3 z-10"><VisualizationControls design={design} onChange={(next) => onVisualizationChange?.(next)} /></div>}
            <div className="pointer-events-none absolute left-3 top-3 rounded-xl bg-slate-950/80 px-3 py-2 text-xs text-slate-300 backdrop-blur">
              {INFRA_LABELS[kind]} · {infra.section?.enabled ? `Section ${infra.section.axis.toUpperCase()} / ${infra.section.depth} m` : "Full model"}
           </div>

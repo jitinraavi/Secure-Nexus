@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import type { DraftElement, DraftElementKind, InfraDesign } from "../types";
+import type { DraftElement, DraftElementKind, InfraDesign, VisualizationSettings } from "../types";
 import type { CadTool } from "../components/CadToolPalette";
 import { buildInfraScene, infraExtent } from "../lib/infra";
 import { sectionClippingPlanes } from "../lib/section";
@@ -16,7 +16,7 @@ import { disposeObject3D } from "../lib/modelcore";
  * a shared orbit view. Rebuilt whenever the design changes; the camera is
  * framed from the site extents on mount.
  */
-export function InfraScene({ infra, activeTool = "select", onSelect, onChange }: { infra: InfraDesign; activeTool?: CadTool; onSelect?: (id: string | null) => void; onChange?: (next: InfraDesign) => void }) {
+export function InfraScene({ infra, activeTool = "select", onSelect, onChange, visualization }: { infra: InfraDesign; activeTool?: CadTool; onSelect?: (id: string | null) => void; onChange?: (next: InfraDesign) => void; visualization?: VisualizationSettings }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
@@ -25,9 +25,11 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange }:
   const infraRef = useRef(infra);
   const toolRef = useRef(activeTool);
   const handlersRef = useRef({ onSelect, onChange });
+  const visualizationRef = useRef(visualization);
   infraRef.current = infra;
   toolRef.current = activeTool;
   handlersRef.current = { onSelect, onChange };
+  visualizationRef.current = visualization;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -94,7 +96,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange }:
       for (const child of [...group.children]) disposeObject3D(child, false);
       group.clear();
       renderer.clippingPlanes = sectionClippingPlanes(infraRef.current.section);
-      group.add(buildInfraScene(infraRef.current));
+       group.add(buildInfraScene(infraRef.current, visualizationRef.current));
     };
     rebuildRef.current = rebuild;
     rebuild();
@@ -179,6 +181,11 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange }:
 
     const animate = () => {
       requestAnimationFrame(animate);
+      if (visualizationRef.current?.walkthrough) {
+        const t = (visualizationRef.current.time / 100) * Math.PI * 2;
+        camera.position.set(Math.cos(t) * span * 0.9, span * 0.35, Math.sin(t) * span * 0.9);
+        controls.target.set(0, 0, 0);
+      }
       controls.update();
       renderer.render(scene, camera);
     };
@@ -211,7 +218,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange }:
 
   useEffect(() => {
     rebuildRef.current?.();
-  }, [infra]);
+  }, [infra, visualization]);
 
   return <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: "none" }} data-scene="infra" />;
 }

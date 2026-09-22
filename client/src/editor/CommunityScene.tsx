@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { CadTool } from "../components/CadToolPalette";
-import type { AmenityData, BuildingLevel, CommunityDesign, DraftElement, DraftElementKind, ExteriorPanel, InteriorRoom, StructuralGridLine, TowerData, TowerOpening } from "../types";
+import type { AmenityData, BuildingLevel, CommunityDesign, DraftElement, DraftElementKind, ExteriorPanel, InteriorRoom, StructuralGridLine, TowerData, TowerOpening, VisualizationSettings } from "../types";
 import { addTechnicalEdges, disposeObject3D, material, prism, prismAt } from "../lib/modelcore";
 import { amenityKind, facadeOption, landMeters, levelsForDesign, towerMeters, undergroundDepth } from "../lib/community";
 import { pitFootprint } from "../lib/takeoff";
@@ -14,6 +14,7 @@ import { buildTerrainVisualization } from "../lib/terrain";
 import { buildMepScene } from "../lib/mep";
 import { resolveDraft, resolveTowerOpening } from "../lib/parametric";
 import { familyMetadata, familyForId } from "../lib/families";
+import { phaseVisible } from "../lib/visualization";
 
 /* ---------------------------------- Builder ---------------------------------- */
 
@@ -463,7 +464,7 @@ function buildTowerMesh(t: TowerData, panels: ExteriorPanel[]): THREE.Group {
   return g;
 }
 
-function buildSite(design: CommunityDesign, selectedId?: string | null): THREE.Group {
+function buildSite(design: CommunityDesign, selectedId?: string | null, visualization?: VisualizationSettings): THREE.Group {
   const g = new THREE.Group();
   const layerVisible = (id: string) => design.layers?.find((layer) => layer.id === id)?.visible !== false;
   const { w: W, d: D } = landMeters(design.land);
@@ -521,8 +522,10 @@ function buildSite(design: CommunityDesign, selectedId?: string | null): THREE.G
   /* Amenities on the ground floor */
   if (layerVisible("site")) {
     for (const a of design.amenities) {
-      try {
-        g.add(buildAmenityMesh(a));
+       try {
+         const node = buildAmenityMesh(a);
+         node.visible = phaseVisible(a.phaseId ?? "fitout", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+         g.add(node);
       } catch {
         /* skip */
       }
@@ -531,6 +534,7 @@ function buildSite(design: CommunityDesign, selectedId?: string | null): THREE.G
 
   if (layerVisible("drafting")) for (const draft of design.drafts ?? []) {
     const node = buildDraftMesh(draft, levels, draft.id === selectedId);
+    node.visible = phaseVisible(draft.phaseId ?? "site", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
     g.add(node);
   }
   if (layerVisible("mep")) g.add(buildMepScene(design.mep));
@@ -542,14 +546,20 @@ function buildSite(design: CommunityDesign, selectedId?: string | null): THREE.G
   if (layerVisible("interiors")) {
     for (const room of design.interiors) {
       const tower = design.towers.find((candidate) => candidate.id === room.towerId);
-      if (tower && room.floor === activeLevelIndex) g.add(buildRoomPlanMesh(room, tower, activeLevel));
+       if (tower && room.floor === activeLevelIndex) {
+         const node = buildRoomPlanMesh(room, tower, activeLevel);
+         node.visible = phaseVisible(room.phaseId ?? "fitout", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+         g.add(node);
+       }
     }
   }
 
   /* Towers */
   if (layerVisible("buildings")) {
     for (const t of design.towers) {
-      g.add(buildTowerMesh(t, design.exteriors));
+       const node = buildTowerMesh(t, design.exteriors);
+       node.visible = phaseVisible(t.phaseId ?? "structure", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+       g.add(node);
     }
   }
 
@@ -697,8 +707,8 @@ function selectionRing(w: number, d: number): THREE.Mesh {
   return ring;
 }
 
-export function buildCommunityScene(design: CommunityDesign, selectedId?: string | null): THREE.Group {
-  const g = buildSite(design, selectedId);
+export function buildCommunityScene(design: CommunityDesign, selectedId?: string | null, visualization?: VisualizationSettings): THREE.Group {
+  const g = buildSite(design, selectedId, visualization);
   addTechnicalEdges(g, "#263746", 0.58);
   if (selectedId) {
     const target = g.children.find((c) => c.userData?.selectId === selectedId);
@@ -743,9 +753,10 @@ interface CommunitySceneProps {
   onChange?: (next: CommunityDesign) => void;
   onContextTarget?: (target: SceneContextTarget) => void;
   activeTool?: CadTool;
+  visualization?: VisualizationSettings;
 }
 
-export function CommunityScene({ design, selectedId, onSelect, onChange, onContextTarget, activeTool = "select" }: CommunitySceneProps) {
+export function CommunityScene({ design, selectedId, onSelect, onChange, onContextTarget, activeTool = "select", visualization }: CommunitySceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -758,11 +769,13 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
   const selectedRef = useRef<string | null>(selectedId ?? null);
   const handlersRef = useRef({ onSelect, onChange, onContextTarget });
   const toolRef = useRef(activeTool);
+  const visualizationRef = useRef(visualization);
   const mapToken = useRef(0);
   designRef.current = design;
   selectedRef.current = selectedId ?? null;
   handlersRef.current = { onSelect, onChange, onContextTarget };
   toolRef.current = activeTool;
+  visualizationRef.current = visualization;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -844,7 +857,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
         group.clear();
       }
       renderer.clippingPlanes = sectionClippingPlanes(designRef.current.section);
-      const root = buildCommunityScene(designRef.current);
+       const root = buildCommunityScene(designRef.current, undefined, visualizationRef.current);
       updateCommunitySelection(root, selectedRef.current);
       group.add(root);
       if (!group.parent) scene.add(group);
@@ -878,8 +891,13 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     renderer.domElement.addEventListener("pointerdown", onSkip, { once: true });
     renderer.domElement.addEventListener("wheel", onSkip, { once: true });
 
-    const animate = () => {
-      requestAnimationFrame(animate);
+     const animate = () => {
+       requestAnimationFrame(animate);
+       if (visualizationRef.current?.walkthrough) {
+         const t = (visualizationRef.current.time / 100) * Math.PI * 2;
+         camera.position.set(Math.cos(t) * 220, 110, Math.sin(t) * 220);
+         controls.target.set(0, 20, 0);
+       }
       if (!introDone) {
         const t = Math.min((performance.now() - introStart) / introDur, 1);
         const ease = 1 - Math.pow(1 - t, 3);
@@ -1095,7 +1113,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
   /* Rebuild geometry only when the design changes; selection is a cheap overlay update. */
   useEffect(() => {
     rebuildRef.current?.();
-  }, [design]);
+  }, [design, visualization]);
 
   useEffect(() => {
     const root = groupRef.current?.children[0];

@@ -8,11 +8,13 @@ import type {
   InfraKind,
   PortDesign,
   DraftElement,
+  VisualizationSettings,
 } from "../types";
 import { addTechnicalEdges, material, prismAt } from "./modelcore";
 import { infraReviewFindings } from "./review";
 import { buildTerrainVisualization, defaultTerrain } from "./terrain";
 import { buildMepScene } from "./mep";
+import { phaseVisible } from "./visualization";
 
 /**
  * Guided infrastructure models.
@@ -132,7 +134,7 @@ export function normalizeInfra(infra: InfraDesign | undefined, kind: InfraKind):
   };
 }
 
-function addFacilities(g: THREE.Group, infra: InfraDesign, ext: InfraExtent): void {
+function addFacilities(g: THREE.Group, infra: InfraDesign, ext: InfraExtent, visualization?: VisualizationSettings): void {
   const facilities = infra.facilities ?? [];
   const colors: Record<string, string> = {
     lounge: "#8e9cc4",
@@ -146,6 +148,7 @@ function addFacilities(g: THREE.Group, infra: InfraDesign, ext: InfraExtent): vo
   };
   let serial = 0;
   for (const facility of facilities) {
+    if (!phaseVisible(facility.phaseId ?? "envelope", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] })) continue;
     const count = Math.min(Math.max(Math.round(facility.count), 0), 100);
     for (let i = 0; i < count; i++) {
       const length = Math.max(facility.lengthM, 0.5);
@@ -585,7 +588,7 @@ function buildDam(d: DamDesign, ext: InfraExtent): THREE.Group {
 
 /* --------------------------------- Assembly --------------------------------- */
 
-export function buildInfraScene(infra: InfraDesign): THREE.Group {
+export function buildInfraScene(infra: InfraDesign, visualization?: VisualizationSettings): THREE.Group {
   const ext = infraExtent(infra);
   const layerVisible = (id: string) => infra.layers?.find((layer) => layer.id === id)?.visible !== false;
   if (infra.modelReady === false) {
@@ -602,8 +605,8 @@ export function buildInfraScene(infra: InfraDesign): THREE.Group {
         ? buildPort(infra.ports!, ext)
         : buildDam(infra.dams!, ext);
   scene.add(buildTerrainVisualization(ext.w, ext.d, infra.terrain));
-  if (layerVisible("facilities")) addFacilities(scene, infra, ext);
-  if (layerVisible("drafting")) for (const draft of infra.drafts ?? []) scene.add(buildCivilDraft(draft));
+  if (layerVisible("facilities")) addFacilities(scene, infra, ext, visualization);
+  if (layerVisible("drafting")) for (const draft of infra.drafts ?? []) if (phaseVisible(draft.phaseId ?? "site", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] })) scene.add(buildCivilDraft(draft));
   if (layerVisible("mep")) scene.add(buildMepScene(infra.mep));
   addTechnicalEdges(scene, "#253746", 0.5);
   return scene;
