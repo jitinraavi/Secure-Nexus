@@ -1317,7 +1317,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
          <span className="hidden px-2 text-xs font-semibold uppercase tracking-wide text-slate-500 sm:inline">
            Workspace
          </span>
-         {design && <DesignExportMenu design={design} projectName={projectName} />}
+         {design && <DesignExportMenu design={design} projectName={projectName} onChange={(next) => onChange(next.community ?? community)} />}
         {focusMode && (
           <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto" aria-label="Workspace tools">
             {STEPS.map((s, i) => (

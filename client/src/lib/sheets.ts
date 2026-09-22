@@ -30,7 +30,7 @@ function titleBlock(page: PdfPage, projectName: string, sheet: string, number: s
   const view = definition?.viewIds.map((id) => docs.views.find((item) => item.id === id)).find(Boolean);
   box(page, margin, margin, W - margin * 2, H - margin * 2, 0.15);
   line(page, margin, 58, W - margin, 58, 0.15);
-  text(page, docs.titleBlock || "GROUNDWORK DESIGN STUDIO", margin + 8, 42, 8, true);
+  text(page, definition?.titleBlock || docs.titleBlock || "GROUNDWORK DESIGN STUDIO", margin + 8, 42, 8, true);
   text(page, safe(projectName).toUpperCase(), 250, 42, 8, true);
   text(page, `${number}  |  ${sheet}`, W - 205, 42, 8, true);
   text(page, `${docs.projectNumber} | ${docs.client || "UNASSIGNED CLIENT"} | ${docs.issueDate} | ${view ? `${view.scale} ${view.orientation.toUpperCase()}` : ""}`, margin + 8, 67, 7, true);
@@ -144,31 +144,19 @@ function infraPages(page: PdfPage, infra: InfraDesign, sheet: string) {
 function buildPages(projectName: string, design: Design): PdfPage[] {
   const docs = documentationFor(design);
   const pages: PdfPage[] = [];
-  const page = (sheet: string, number: string) => { const p: PdfPage = []; titleBlock(p, projectName, sheet, number, docs); heading(p, sheet); pages.push(p); return p; };
-  const cover = page("COVER / ISSUE INDEX", "G-001");
-  text(cover, safe(projectName).toUpperCase(), 90, 385, 25, true);
-  text(cover, "PRELIMINARY SHEET PRODUCTION SET", 90, 355, 13);
-  text(cover, `Generated ${new Date().toISOString().slice(0, 10)}`, 90, 320, 9);
-  bulletList(cover, docs.sheets.map((sheet) => `${sheet.number} ${sheet.name}`), 90, 275, 440);
-  text(cover, `Status: ${docs.status.toUpperCase()} | ${docs.revisions.length} revision(s)`, 90, 145, 11, true);
-  text(cover, `Views: ${docs.views.filter((view) => view.visible).length} | Schedules: ${docs.schedules.length} | Tags: ${docs.annotations.length}`, 90, 128, 8);
-  text(cover, "No sheet is stamped, code-checked, construction-ready or a substitute for a licensed authoring workflow.", 90, 125, 8);
-
+  const page = (sheet: DocumentationMetadata["sheets"][number]) => { const p: PdfPage = []; titleBlock(p, projectName, sheet.name, sheet.number, docs); heading(p, sheet.name); pages.push(p); return p; };
   const community = design.community;
   const infra = design.infra;
-  const plan = page("PLAN / ARRANGEMENT", "A-101");
-  if (community) communityPages(plan, community, "plan"); else if (infra) infraPages(plan, infra, "plan"); else {
-    const roomW = design.room.widthMm / 1000; const roomD = design.room.depthMm / 1000;
-    box(plan, 120, 155, roomW * 45, roomD * 45, 0.25); text(plan, `ROOM PLAN  ${roomW.toFixed(2)} x ${roomD.toFixed(2)} m`, 120, 135, 9, true);
-    design.furniture.forEach((item, i) => { const x = 120 + (item.x / 1000 + roomW / 2) * 45; const y = 155 + (item.z / 1000 + roomD / 2) * 45; box(plan, x, y, 22, 16, 0.45); text(plan, `${i + 1}`, x + 7, y + 5, 7); });
-    text(plan, "Furniture plan from stored room and catalog coordinates.", 120, 115, 8);
-  }
-  const elevation = page("ELEVATION / PROFILE", "A-201");
-  if (community) communityPages(elevation, community, "elevation"); else if (infra) infraPages(elevation, infra, "elevation"); else { text(elevation, "INTERIOR WALL ELEVATION - SCHEMATIC", 90, 465, 9, true); box(elevation, 130, 120, 500, 250, 0.25); text(elevation, `${design.room.wallHeightMm / 1000} m wall height`, 130, 100, 8); }
-  const section = page("SECTION / CROSS SECTION", "A-301");
-  if (community) communityPages(section, community, "section"); else if (infra) infraPages(section, infra, "section"); else { text(section, "INTERIOR ROOM SECTION - SCHEMATIC", 90, 465, 9, true); box(section, 130, 120, 500, design.room.wallHeightMm / 12, 0.25); text(section, "Room envelope is derived from saved dimensions; assemblies are not specified.", 130, 100, 8); }
-
-  const schedule = page("SCHEDULES / ANNOTATIONS", "S-401");
+  const renderPlan = (p: PdfPage) => {
+    if (community) communityPages(p, community, "plan"); else if (infra) infraPages(p, infra, "plan"); else {
+      const roomW = design.room.widthMm / 1000; const roomD = design.room.depthMm / 1000;
+      box(p, 120, 155, roomW * 45, roomD * 45, 0.25); text(p, `ROOM PLAN  ${roomW.toFixed(2)} x ${roomD.toFixed(2)} m`, 120, 135, 9, true);
+      design.furniture.forEach((item, i) => { const x = 120 + (item.x / 1000 + roomW / 2) * 45; const y = 155 + (item.z / 1000 + roomD / 2) * 45; box(p, x, y, 22, 16, 0.45); text(p, `${i + 1}`, x + 7, y + 5, 7); });
+      text(p, "Furniture plan from stored room and catalog coordinates.", 120, 115, 8);
+    }
+  };
+  const renderElevation = (p: PdfPage) => { if (community) communityPages(p, community, "elevation"); else if (infra) infraPages(p, infra, "elevation"); else { text(p, "INTERIOR WALL ELEVATION - SCHEMATIC", 90, 465, 9, true); box(p, 130, 120, 500, 250, 0.25); text(p, `${design.room.wallHeightMm / 1000} m wall height`, 130, 100, 8); } };
+  const renderSection = (p: PdfPage) => { if (community) communityPages(p, community, "section"); else if (infra) infraPages(p, infra, "section"); else { text(p, "INTERIOR ROOM SECTION - SCHEMATIC", 90, 465, 9, true); box(p, 130, 120, 500, design.room.wallHeightMm / 12, 0.25); text(p, "Room envelope is derived from saved dimensions; assemblies are not specified.", 130, 100, 8); } };
   const review = community?.review?.markers ?? infra?.review?.markers ?? [];
   const scheduleItems = community ? [
     { label: "Towers", value: `${community.towers.length}`, basis: "Persisted tower schedule" },
@@ -183,20 +171,27 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
     { label: "MEP routes", value: `${infra.mep?.elements.length ?? 0}`, basis: "Preliminary coordination" },
     { label: "Review markups", value: `${review.length}`, basis: "Open/resolved coordination notes" },
   ] : [{ label: "Furniture", value: `${design.furniture.length}`, basis: "Stored catalog objects" }, { label: "MEP routes", value: `${design.mep?.elements.length ?? 0}`, basis: "Preliminary coordination" }];
-  rows(schedule, scheduleItems, 70, 445, 650);
-  text(schedule, "ANNOTATIONS / REVIEW MARKUPS", 70, 210, 9, true);
-  const annotations = docs.annotations.map((a) => `${a.tag ? `[${a.tag}] ` : ""}${a.text}`);
-  bulletList(schedule, [...(review.length ? review.map((m) => `${m.severity.toUpperCase()}: ${m.text} (${m.status})`) : []), ...annotations, ...(review.length || annotations.length ? [] : ["No saved annotations."])], 70, 185, 620);
-  if (docs.revisions.length) text(schedule, `Latest revision ${docs.revisions[docs.revisions.length - 1].number}: ${docs.revisions[docs.revisions.length - 1].description}`, 70, 82, 7);
-
-  const boq = page("PLANNING BOQ / TAKEOFF", "Q-501");
   const takeoff: { items: (TakeoffItem | InfraTakeoffItem)[]; summary: string[] } = community
     ? { items: computeTakeoff(community).items, summary: [`Site ${computeTakeoff(community).summary.siteAreaM2} m2`, `Built-up ${computeTakeoff(community).summary.builtUpM2} m2`, `Concrete ${computeTakeoff(community).summary.concreteM3} m3`, `Steel ${computeTakeoff(community).summary.steelT} t`] }
     : infra ? { items: computeInfraTakeoff(infra).items, summary: computeInfraTakeoff(infra).summary.map((s) => `${s.label}: ${s.value}`) }
     : { items: design.furniture.map((f) => ({ key: f.id, group: "Furniture", label: f.name, qty: 1, unit: "nos", basis: "Stored catalog item" })), summary: [`Room ${design.room.widthMm / 1000} x ${design.room.depthMm / 1000} m`] };
-  text(boq, takeoff.summary.join("  |  "), 70, 445, 8, true);
-  rows(boq, takeoff.items.map((item) => ({ label: item.label, value: `${item.qty} ${item.unit}`, basis: item.basis })), 70, 415, 650, 20);
-  text(boq, "Quantities are planning estimates from stored inputs and conventional allowances. Verify with coordinated drawings and a certified BOQ.", 70, 82, 7);
+  docs.sheets.forEach((sheet) => {
+    const p = page(sheet);
+    if (sheet.number === "G-001") {
+      text(p, safe(projectName).toUpperCase(), 90, 385, 25, true); text(p, "PRELIMINARY SHEET PRODUCTION SET", 90, 355, 13); text(p, `Generated ${new Date().toISOString().slice(0, 10)}`, 90, 320, 9);
+      bulletList(p, docs.sheets.map((item) => `${item.number} ${item.name}`), 90, 275, 440); text(p, `Status: ${docs.status.toUpperCase()} | ${docs.revisions.length} revision(s)`, 90, 145, 11, true); text(p, `Views: ${docs.views.filter((view) => view.visible).length} | Schedules: ${docs.schedules.length} | Tags: ${docs.annotations.length}`, 90, 128, 8);
+    } else if (sheet.number === "Q-501") {
+      text(p, takeoff.summary.join("  |  "), 70, 445, 8, true); rows(p, takeoff.items.map((item) => ({ label: item.label, value: `${item.qty} ${item.unit}`, basis: item.basis })), 70, 415, 650, 20);
+    } else {
+      const view = sheet.viewIds.map((viewId) => docs.views.find((item) => item.id === viewId)).find(Boolean);
+      if (view && !view.visible) { text(p, `VIEW HIDDEN: ${view.name}`, 90, 430, 9); } else if (view?.kind === "plan") renderPlan(p); else if (view?.kind === "elevation") renderElevation(p); else if (view?.kind === "section") renderSection(p); else if (view?.kind === "schedule" || sheet.number === "S-401") {
+        const configuredSchedules = docs.schedules.map((schedule) => ({ label: schedule.name, value: schedule.fields.join(", "), basis: `${schedule.category} schedule` }));
+        rows(p, [...configuredSchedules, ...scheduleItems], 70, 445, 650); text(p, "ANNOTATIONS / REVIEW MARKUPS", 70, 210, 9, true);
+        const annotations = docs.annotations.map((a) => `${a.tag ? `[${a.tag}] ` : ""}${a.text}`); bulletList(p, [...review.map((m) => `${m.severity.toUpperCase()}: ${m.text} (${m.status})`), ...annotations, ...(review.length || annotations.length ? [] : ["No saved annotations."])], 70, 185, 620);
+      } else { text(p, "DOCUMENTATION VIEW", 90, 465, 9, true); text(p, `${view?.name ?? sheet.name} | ${view?.scale ?? ""} ${view?.orientation ?? ""}`, 90, 430, 9); }
+    }
+    if (docs.revisions.length) text(p, `Latest revision ${docs.revisions[docs.revisions.length - 1].number}: ${docs.revisions[docs.revisions.length - 1].description}`, 70, 82, 7);
+  });
   return pages;
 }
 

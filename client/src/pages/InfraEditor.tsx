@@ -655,7 +655,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design }: Infr
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="gw-sheet-toolbar relative mb-2 mt-2 flex min-h-10 items-center gap-2 overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/80 px-2 py-1.5 backdrop-blur">
          <span className="hidden px-2 text-[10px] font-bold uppercase tracking-[.16em] text-slate-500 sm:inline">CAD tools</span>
-         {design && <DesignExportMenu design={design} projectName={projectName} />}
+         {design && <DesignExportMenu design={design} projectName={projectName} onChange={(next) => onChange(next.infra ?? infra)} />}
          <CadToolPalette active={activeTool} onChange={(tool) => { setActiveTool(tool); if (selectedDraft && ["trim", "extend", "offset", "rotate", "mirror"].includes(tool)) operateDraft(tool as "trim" | "extend" | "offset" | "rotate" | "mirror"); if (selectedDraft && tool === "array") arrayDraft(); }} compact tools={["select", "move", "measure", "rotate", "offset", "trim", "extend", "mirror", "array", "line", "rectangle", "circle", "dimension"]} />
         <Button variant="ghost" size="sm" onClick={() => setLayersOpen((open) => !open)}>Layers</Button>
         <Button variant="ghost" size="sm" onClick={undo} disabled={historyRef.current.past.length === 0}>Undo</Button>

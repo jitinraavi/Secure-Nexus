@@ -19,6 +19,7 @@ export const defaultDocumentation = (): DocumentationMetadata => ({
     { id: "sheet-elevation", number: "A-201", name: "Elevation / profile", viewIds: ["view-elevation"] },
     { id: "sheet-section", number: "A-301", name: "Section / cross section", viewIds: ["view-section"] },
     { id: "sheet-schedule", number: "S-401", name: "Schedules / annotations", viewIds: [] },
+    { id: "sheet-boq", number: "Q-501", name: "Planning BOQ / takeoff", viewIds: [] },
   ],
   annotations: [],
   schedules: [
