@@ -7,6 +7,7 @@ import type { Design, FurnitureItem } from "../types";
 import { addTechnicalEdges } from "../lib/modelcore";
 import { buildFurniture, catalogEntry, furnitureMount } from "../lib/catalog";
 import { buildMepScene } from "../lib/mep";
+import { phaseVisible, visualizationSettings } from "../lib/visualization";
 
 const MM = 0.001;
 const WALL_THICKNESS = 120;
@@ -15,6 +16,9 @@ export interface EditorApi {
   resetView(): void;
   topView(): void;
   frontView(): void;
+  detailView(): void;
+  toggleSection(): boolean;
+  capturePng(): Promise<Blob>;
   exportGlb(): Promise<Blob>;
 }
 
@@ -140,6 +144,8 @@ export function Canvas3D({
   const curtainGroupRef = useRef<THREE.Group | null>(null);
   const mepGroupRef = useRef<THREE.Group | null>(null);
   const photoGroupRef = useRef<THREE.Group | null>(null);
+  const sectionRef = useRef(false);
+  const transitionRef = useRef<{ position: THREE.Vector3; target: THREE.Vector3 } | null>(null);
   const itemGroups = useRef(new Map<string, { group: THREE.Group; sig: string }>());
   const pendingItemPatches = useRef(new Map<string, Partial<FurnitureItem>>());
   const pendingItemRaf = useRef(0);
@@ -175,8 +181,11 @@ export function Canvas3D({
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.localClippingEnabled = true;
     renderer.setSize(width, height);
+    renderer.domElement.tabIndex = 0;
+    renderer.domElement.setAttribute("aria-label", "Interactive 3D design viewport. Use mouse to orbit or focus and use W A S D to walk.");
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, container.clientWidth < 900 ? 1.5 : 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
@@ -198,6 +207,17 @@ export function Canvas3D({
     controls.minDistance = 1.5;
     controls.maxDistance = 25;
     controlsRef.current = controls;
+    const keys = new Set<string>();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (document.activeElement !== renderer.domElement) return;
+      if (["w", "a", "s", "d", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+        keys.add(event.key);
+        event.preventDefault();
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => keys.delete(event.key);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
 
     scene.add(new THREE.HemisphereLight("#dfe8ff", "#3a2f25", 1.05));
     const sun = new THREE.DirectionalLight("#fff4e0", 2.4);
@@ -209,6 +229,18 @@ export function Canvas3D({
     sun.shadow.camera.top = 8;
     sun.shadow.camera.bottom = -8;
     scene.add(sun);
+
+    // A large, very soft receiver gives furniture a grounded contact cue without
+    // adding another expensive shadow pass or texture dependency.
+    const contact = new THREE.Mesh(
+      new THREE.CircleGeometry(8, 48),
+      new THREE.MeshBasicMaterial({ color: "#05070a", transparent: true, opacity: 0.16, depthWrite: false }),
+    );
+    contact.rotation.x = -Math.PI / 2;
+    contact.position.y = 0.006;
+    contact.scale.set(1, 0.58, 1);
+    contact.userData.noSelect = true;
+    scene.add(contact);
 
     const grid = new THREE.GridHelper(14, 14, 0x2b3444, 0x1c2432);
     (grid.material as THREE.Material).transparent = true;
@@ -359,6 +391,28 @@ export function Canvas3D({
     const loop = () => {
       raf = requestAnimationFrame(loop);
       if (document.hidden) return;
+      const transition = transitionRef.current;
+      if (transition) {
+        camera.position.lerp(transition.position, 0.09);
+        controls.target.lerp(transition.target, 0.09);
+        if (camera.position.distanceTo(transition.position) < 0.02 && controls.target.distanceTo(transition.target) < 0.02) transitionRef.current = null;
+      }
+      const walkthrough = Boolean(designRef.current.visualization?.walkthrough);
+      controls.enabled = !walkthrough;
+      if (walkthrough && keys.size) {
+        const direction = new THREE.Vector3();
+        camera.getWorldDirection(direction);
+        direction.y = 0;
+        direction.normalize();
+        const right = new THREE.Vector3(-direction.z, 0, direction.x);
+        const speed = 0.045;
+        if (keys.has("w") || keys.has("ArrowUp")) camera.position.addScaledVector(direction, speed);
+        if (keys.has("s") || keys.has("ArrowDown")) camera.position.addScaledVector(direction, -speed);
+        if (keys.has("a") || keys.has("ArrowLeft")) camera.position.addScaledVector(right, -speed);
+        if (keys.has("d") || keys.has("ArrowRight")) camera.position.addScaledVector(right, speed);
+        camera.position.y = 1.65;
+        controls.target.copy(camera.position).addScaledVector(direction, 1.4);
+      }
       controls.update();
       renderer.render(scene, camera);
     };
@@ -374,8 +428,22 @@ export function Canvas3D({
         controls.target.set(0, 0, 0);
       },
       frontView() {
-        camera.position.set(0, 2.2, 9.5);
-        controls.target.set(0, 1.2, 0);
+        transitionRef.current = { position: new THREE.Vector3(0, 2.2, 9.5), target: new THREE.Vector3(0, 1.2, 0) };
+      },
+      detailView() {
+        transitionRef.current = { position: new THREE.Vector3(3.2, 2.25, 3.4), target: new THREE.Vector3(0, 1.15, 0) };
+      },
+      toggleSection() {
+        sectionRef.current = !sectionRef.current;
+        const room = roomGroupRef.current;
+        if (room) room.children.forEach((child) => {
+          if (child.userData.sectionWall) child.visible = !sectionRef.current;
+        });
+        return sectionRef.current;
+      },
+      async capturePng() {
+        renderer.render(scene, camera);
+        return new Promise((resolve, reject) => renderer.domElement.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not capture the viewport")), "image/png"));
       },
       async exportGlb() {
         const ring = selectionRingRef.current;
@@ -415,6 +483,8 @@ export function Canvas3D({
       ro.disconnect();
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       scene.environment?.dispose();
       disposeGroup(scene);
@@ -448,9 +518,12 @@ export function Canvas3D({
     }
 
     const room = buildRoomParts(design);
+    const sectionWall = room.children[1];
+    if (sectionWall) sectionWall.userData.sectionWall = true;
     addTechnicalEdges(room, "#334155", 0.7);
     scene.add(room);
     roomGroupRef.current = room;
+    if (sectionRef.current && sectionWall) sectionWall.visible = false;
     const mep = buildMepScene(design.mep);
     scene.add(mep);
     mepGroupRef.current = mep;
@@ -459,6 +532,18 @@ export function Canvas3D({
     if (curtain) scene.add(curtain);
     curtainGroupRef.current = curtain;
   }, [design.room, design.curtains, design.mep]);
+
+  /* Presentation state is applied without rebuilding geometry. */
+  useEffect(() => {
+    const settings = visualizationSettings(design.visualization);
+    for (const [id, rec] of itemGroups.current) {
+      const item = design.furniture.find((candidate) => candidate.id === id);
+      rec.group.visible = !item || phaseVisible(item.phaseId, settings);
+    }
+    if (mepGroupRef.current) mepGroupRef.current.traverse((node) => {
+      if (node.userData.phaseId) node.visible = phaseVisible(node.userData.phaseId as string, settings);
+    });
+  }, [design.visualization, design.furniture]);
 
   /* Photo overlay */
   useEffect(() => {

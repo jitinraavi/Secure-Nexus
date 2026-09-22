@@ -26,6 +26,7 @@ import { SheetHeader } from "../components/SheetHeader";
 import { DesignExportMenu } from "../components/DesignExportMenu";
 import { ProjectHistory } from "../components/ProjectHistory";
 import { validateIfcRoundTrip } from "../lib/bim";
+import { VisualizationControls } from "../components/VisualizationControls";
 
 const SWATCHES = [
   "#7c8a99", "#a4714f", "#8a6a45", "#5d7b8a", "#6b5542", "#4c7a9c",
@@ -283,7 +284,8 @@ export function Editor() {
         }
         downloadBlob(`${stem}-coordination.zip`, await zipFiles(entries));
       } else if (format === "png") {
-        /* handled separately */
+        const blob = await api.capturePng();
+        downloadBlob(`${stem}-presentation.png`, blob);
       } else if (format === "ifc") {
         const [{ buildIfcStep }, ifcReport] = await Promise.all([import("../lib/bim"), Promise.resolve(validateIfcRoundTrip(design))]);
         if (!ifcReport.valid) throw new Error("IFC validation failed; resolve the reported errors before downloading the model.");
@@ -562,11 +564,13 @@ export function Editor() {
           }}
         />
 
-        <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
-          <Button variant="ghost" size="sm" onClick={() => api?.topView()} title="Top view">Top</Button>
-          <Button variant="ghost" size="sm" onClick={() => api?.frontView()} title="Front view">Front</Button>
-          <Button variant="ghost" size="sm" onClick={() => api?.resetView()} title="Reset view">Home</Button>
-        </div>
+         <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
+           <Button variant="ghost" size="sm" onClick={() => api?.topView()} title="Top view">Top</Button>
+           <Button variant="ghost" size="sm" onClick={() => api?.frontView()} title="Front view">Front</Button>
+           <Button variant="ghost" size="sm" onClick={() => api?.detailView()} title="Presentation detail view">Detail</Button>
+           <Button variant="ghost" size="sm" onClick={() => api?.toggleSection()} title="Toggle cutaway section">Cutaway</Button>
+           <Button variant="ghost" size="sm" onClick={() => api?.resetView()} title="Reset view">Home</Button>
+         </div>
 
         <Button size="sm" onClick={() => setExportOpen(true)}>
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v3h18v-3M7 8l5-5 5 5M12 3v11" /></svg>
@@ -599,11 +603,14 @@ export function Editor() {
               onApiReady={setApi}
             />
           )}
-          {!photoUrl && !uploading && (
+           {!photoUrl && !uploading && (
             <div className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full border border-slate-700 bg-slate-950/80 px-3 py-1 text-[11px] text-slate-400 backdrop-blur">
               Drop a photo here or paste (Ctrl/Cmd+V) to trace the site
             </div>
-          )}
+           )}
+           <div className="pointer-events-auto absolute bottom-3 right-3 z-10 max-w-full">
+             <VisualizationControls design={design} onChange={changeDesign} />
+           </div>
           {uploading && (
             <div className="pointer-events-none absolute left-1/2 top-4 flex -translate-x-1/2 items-center gap-2 rounded-full border border-emerald-500/40 bg-slate-950/90 px-3 py-1.5 text-[11px] text-emerald-300 backdrop-blur">
               <Spinner className="h-3 w-3" /> Uploading photo…
@@ -695,14 +702,22 @@ export function Editor() {
             busy={exporting === "obj"}
             onClick={() => void exportTo("obj")}
           />
-          <ConnectorCard
-            name="Universal 3D"
+           <ConnectorCard
+             name="Universal 3D"
             detail="glTF Binary scene, works in most viewers and engines"
             format="GLB"
             icon="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2zm0 2.3L6 7.5v7l6 3.4 6-3.4v-7l-6-3.2z"
             busy={exporting === "glb"}
-            onClick={() => void exportTo("glb")}
-          />
+             onClick={() => void exportTo("glb")}
+           />
+           <ConnectorCard
+             name="Presentation capture"
+             detail="Viewport PNG with ACES color management, lighting and technical edges"
+             format="PNG"
+             icon="M4 5h16v14H4V5zm3 10l2.5-3 2 2 2.5-3 3 4H7z"
+             busy={exporting === "png"}
+             onClick={() => void exportTo("png")}
+           />
           <ConnectorCard
             name="Bill of Materials"
             detail="Furniture quantities, sizes and colours as CSV for quoting"
@@ -727,7 +742,11 @@ export function Editor() {
             busy={exporting === "bim"}
             onClick={() => void exportTo("bim")}
           />
-        </div>
+         </div>
+         <div className="mt-4 grid gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs text-slate-400 sm:grid-cols-2">
+           <div><p className="font-semibold text-cyan-200">WebXR / AR handoff boundary</p><p className="mt-1">GLB export preserves scene hierarchy and PBR-ready materials for a WebXR or native viewer.</p></div>
+           <div className="sm:text-right"><Badge tone="emerald">Scene export ready</Badge><p className="mt-1">Runtime headset tracking is intentionally outside the editor.</p></div>
+         </div>
         <p className="mt-4 flex items-center gap-2 text-xs text-slate-500">
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" /></svg>
            DXF is open-format and opens directly in AutoCAD. IFC is a minimal IFC4 coordination export with proxy/approximate geometry. DWG/SKP are proprietary — use Autodesk Platform Services or a converter for those.
