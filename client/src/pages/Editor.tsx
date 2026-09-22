@@ -25,6 +25,7 @@ import { MepPanel } from "../components/MepPanel";
 import { SheetHeader } from "../components/SheetHeader";
 import { DesignExportMenu } from "../components/DesignExportMenu";
 import { ProjectHistory } from "../components/ProjectHistory";
+import { validateIfcRoundTrip } from "../lib/bim";
 
 const SWATCHES = [
   "#7c8a99", "#a4714f", "#8a6a45", "#5d7b8a", "#6b5542", "#4c7a9c",
@@ -263,10 +264,13 @@ export function Editor() {
           import("../lib/bim"),
           import("../lib/dxf"),
         ]);
+        const ifcReport = validateIfcRoundTrip(design);
+        if (!ifcReport.valid) throw new Error("IFC validation failed; resolve the reported errors before exporting the coordination package.");
         const { obj, mtl } = buildObjMtl(design);
         const entries: { name: string; content: string | Blob }[] = [
           { name: `${stem}.ifc`, content: buildIfcStep(design) },
           { name: `${stem}.ifc.json`, content: buildBimExchange(design) },
+          { name: `${stem}.ifc.validation.json`, content: JSON.stringify(ifcReport, null, 2) + "\n" },
           { name: `${stem}-coordination.csv`, content: buildBimScheduleCsv(design) },
           { name: `${stem}.dxf`, content: buildDxf(design) },
           { name: `${stem}.obj`, content: obj },
@@ -281,7 +285,8 @@ export function Editor() {
       } else if (format === "png") {
         /* handled separately */
       } else if (format === "ifc") {
-        const { buildIfcStep } = await import("../lib/bim");
+        const [{ buildIfcStep }, ifcReport] = await Promise.all([import("../lib/bim"), Promise.resolve(validateIfcRoundTrip(design))]);
+        if (!ifcReport.valid) throw new Error("IFC validation failed; resolve the reported errors before downloading the model.");
         download(`${stem}.ifc`, buildIfcStep(design), "application/x-step");
       }
       await recordExport(id!, format);

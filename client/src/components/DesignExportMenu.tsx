@@ -6,12 +6,14 @@ import type { Design, DocumentationAnnotation, DocumentationRevision, Documentat
 import { documentationFor } from "../lib/documentation";
 import { getCadExchangeStatus, type CadExchangeStatusResponse } from "../api";
 import { COMPLIANCE_PROFILES, validateDesign } from "../lib/compliance";
+import { buildIfcStep, validateIfcRoundTrip } from "../lib/bim";
 
 export function DesignExportMenu({ design, projectName, onChange }: { design: Design; projectName?: string; onChange?: (design: Design) => void }) {
   const [open, setOpen] = useState(false);
   const [cadStatus, setCadStatus] = useState<CadExchangeStatusResponse | null>(null);
   const docs = documentationFor(design);
   const compliance = validateDesign(design);
+  const ifcReport = validateIfcRoundTrip(design);
   const toast = useToast();
   const stem = (projectName || "design").trim().replace(/[^\w-]+/g, "-").toLowerCase() || "design";
   useEffect(() => { getCadExchangeStatus().then(setCadStatus).catch(() => setCadStatus(null)); }, []);
@@ -31,7 +33,10 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
       const { buildDxf } = await import("../lib/dxf");
       download(`${stem}.dxf`, buildDxf(design), "application/dxf");
     } else {
-      const { buildIfcStep } = await import("../lib/bim");
+      if (!ifcReport.valid) {
+        toast.push({ title: "IFC export blocked", description: "Resolve IFC validation errors before downloading the model.", tone: "error" });
+        return;
+      }
       download(`${stem}.ifc`, buildIfcStep(design), "application/x-step");
     }
     toast.push({ title: `${format.toUpperCase()} downloaded`, description: "Planning and coordination geometry is marked as approximate.", tone: "success" });
@@ -88,18 +93,22 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-amber-300/80">{compliance.profile.disclaimer}</p>
         </section>
-        <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+         <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
           <p className="gw-kicker text-amber-300">Exchange summary</p>
           <p className="mt-1 text-sm leading-relaxed text-slate-300">{projectName || "Untitled project"} exports a 2D drafting projection and a minimal IFC4 coordination model.</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">Proxy geometry, section cuts, infrastructure forms, and BOQ quantities are approximate planning outputs. Confirm dimensions in authoring software.</p>
           <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-950/40 p-2 text-xs text-slate-400">
             <span className={dwgProvider?.available ? "text-emerald-300" : "text-amber-300"}>DWG: {dwgProvider?.available ? "licensed provider ready" : "unavailable"}</span>
             <span className="ml-2">{dwgProvider?.message || "Provider status is loading."}</span>
-          </div>
+           </div>
+           <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-950/40 p-2 text-xs">
+             <div className="flex flex-wrap items-center gap-2"><Badge tone={ifcReport.valid ? "emerald" : "rose"}>{ifcReport.valid ? "IFC validation passed" : "IFC validation blocked"}</Badge><span className="text-slate-500">{ifcReport.parsedEntities} entities · {ifcReport.guidCount} GUIDs · round-trip {ifcReport.normalized ? "stable" : "changed"}</span></div>
+             {ifcReport.issues.length > 0 && <div className="mt-2 max-h-28 space-y-1 overflow-y-auto text-slate-400">{ifcReport.issues.map((issue, index) => <p key={`${issue.code}-${issue.entityId ?? "model"}-${index}`}><span className={issue.severity === "error" ? "text-rose-300" : "text-amber-300"}>{issue.severity}</span> {issue.message}</p>)}</div>}
+           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <Button onClick={() => void exportFile("dxf")}>Download DXF</Button>
-          <Button variant="secondary" onClick={() => void exportFile("ifc")}>Download IFC STEP</Button>
+           <Button variant="secondary" disabled={!ifcReport.valid} title={ifcReport.valid ? "" : "Resolve IFC validation errors first"} onClick={() => void exportFile("ifc")}>Download IFC STEP</Button>
           <Button className="sm:col-span-2" variant="outline" disabled={!dwgProvider?.available} title={dwgProvider?.message || "Licensed DWG provider unavailable"}>Download DWG (licensed provider)</Button>
            <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download sheet set with screening report</Button>
         </div>
