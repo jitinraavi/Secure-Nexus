@@ -2,6 +2,8 @@ import type { Design, InfraDesign, CommunityDesign } from "../types";
 import { computeTakeoff, type TakeoffItem } from "./takeoff";
 import { computeInfraTakeoff, INFRA_LABELS, type InfraTakeoffItem } from "./infra";
 import { landMeters, towerMeters } from "./community";
+import { documentationFor } from "./documentation";
+import type { DocumentationMetadata } from "../types";
 
 type PdfPage = string[];
 const W = 792;
@@ -23,14 +25,16 @@ function box(page: PdfPage, x: number, y: number, w: number, h: number, gray = 0
 function fill(page: PdfPage, x: number, y: number, w: number, h: number, gray = 0.96) {
   page.push(`${gray} g ${num(x)} ${num(y)} ${num(w)} ${num(h)} re f 0 G`);
 }
-function titleBlock(page: PdfPage, projectName: string, sheet: string, number: string, status = "PRELIMINARY") {
+function titleBlock(page: PdfPage, projectName: string, sheet: string, number: string, docs: DocumentationMetadata) {
+  const definition = docs.sheets.find((item) => item.number === number);
+  const view = definition?.viewIds.map((id) => docs.views.find((item) => item.id === id)).find(Boolean);
   box(page, margin, margin, W - margin * 2, H - margin * 2, 0.15);
   line(page, margin, 58, W - margin, 58, 0.15);
-  text(page, "GROUNDWORK DESIGN STUDIO", margin + 8, 42, 8, true);
+  text(page, docs.titleBlock || "GROUNDWORK DESIGN STUDIO", margin + 8, 42, 8, true);
   text(page, safe(projectName).toUpperCase(), 250, 42, 8, true);
   text(page, `${number}  |  ${sheet}`, W - 205, 42, 8, true);
-  text(page, "APPROXIMATE PLANNING SHEET - NOT FOR CONSTRUCTION, PERMIT OR FABRICATION", margin + 8, 67, 7, true);
-  text(page, status, W - 115, 67, 7, true);
+  text(page, `${docs.projectNumber} | ${docs.client || "UNASSIGNED CLIENT"} | ${docs.issueDate} | ${view ? `${view.scale} ${view.orientation.toUpperCase()}` : ""}`, margin + 8, 67, 7, true);
+  text(page, docs.status.toUpperCase(), W - 115, 67, 7, true);
 }
 function heading(page: PdfPage, value: string) {
   text(page, value.toUpperCase(), margin + 18, H - 72, 15, true);
@@ -138,14 +142,16 @@ function infraPages(page: PdfPage, infra: InfraDesign, sheet: string) {
 }
 
 function buildPages(projectName: string, design: Design): PdfPage[] {
+  const docs = documentationFor(design);
   const pages: PdfPage[] = [];
-  const page = (sheet: string, number: string) => { const p: PdfPage = []; titleBlock(p, projectName, sheet, number); heading(p, sheet); pages.push(p); return p; };
+  const page = (sheet: string, number: string) => { const p: PdfPage = []; titleBlock(p, projectName, sheet, number, docs); heading(p, sheet); pages.push(p); return p; };
   const cover = page("COVER / ISSUE INDEX", "G-001");
   text(cover, safe(projectName).toUpperCase(), 90, 385, 25, true);
   text(cover, "PRELIMINARY SHEET PRODUCTION SET", 90, 355, 13);
   text(cover, `Generated ${new Date().toISOString().slice(0, 10)}`, 90, 320, 9);
-  bulletList(cover, ["G-001 Cover / issue index", "A-101 Plan / arrangement", "A-201 Elevation / profile", "A-301 Section / cross section", "S-401 Schedules and annotations", "Q-501 Planning BOQ"], 90, 275, 440);
-  text(cover, "Status: APPROXIMATE PLANNING OUTPUT", 90, 145, 11, true);
+  bulletList(cover, docs.sheets.map((sheet) => `${sheet.number} ${sheet.name}`), 90, 275, 440);
+  text(cover, `Status: ${docs.status.toUpperCase()} | ${docs.revisions.length} revision(s)`, 90, 145, 11, true);
+  text(cover, `Views: ${docs.views.filter((view) => view.visible).length} | Schedules: ${docs.schedules.length} | Tags: ${docs.annotations.length}`, 90, 128, 8);
   text(cover, "No sheet is stamped, code-checked, construction-ready or a substitute for a licensed authoring workflow.", 90, 125, 8);
 
   const community = design.community;
@@ -179,7 +185,9 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
   ] : [{ label: "Furniture", value: `${design.furniture.length}`, basis: "Stored catalog objects" }, { label: "MEP routes", value: `${design.mep?.elements.length ?? 0}`, basis: "Preliminary coordination" }];
   rows(schedule, scheduleItems, 70, 445, 650);
   text(schedule, "ANNOTATIONS / REVIEW MARKUPS", 70, 210, 9, true);
-  bulletList(schedule, review.length ? review.map((m) => `${m.severity.toUpperCase()}: ${m.text} (${m.status})`) : ["No saved review markups."], 70, 185, 620);
+  const annotations = docs.annotations.map((a) => `${a.tag ? `[${a.tag}] ` : ""}${a.text}`);
+  bulletList(schedule, [...(review.length ? review.map((m) => `${m.severity.toUpperCase()}: ${m.text} (${m.status})`) : []), ...annotations, ...(review.length || annotations.length ? [] : ["No saved annotations."])], 70, 185, 620);
+  if (docs.revisions.length) text(schedule, `Latest revision ${docs.revisions[docs.revisions.length - 1].number}: ${docs.revisions[docs.revisions.length - 1].description}`, 70, 82, 7);
 
   const boq = page("PLANNING BOQ / TAKEOFF", "Q-501");
   const takeoff: { items: (TakeoffItem | InfraTakeoffItem)[]; summary: string[] } = community

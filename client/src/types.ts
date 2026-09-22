@@ -425,6 +425,66 @@ export interface DesignReview {
   markers: ReviewMarker[];
 }
 
+export type DocumentationViewKind = "plan" | "elevation" | "section" | "detail" | "schedule";
+export type DocumentationOrientation = "north" | "east" | "south" | "west" | "custom";
+
+export interface DocumentationView {
+  id: string;
+  name: string;
+  kind: DocumentationViewKind;
+  scale: string;
+  orientation: DocumentationOrientation;
+  levelId?: string;
+  visible: boolean;
+}
+
+export interface DocumentationSheet {
+  id: string;
+  number: string;
+  name: string;
+  viewIds: string[];
+  titleBlock?: string;
+}
+
+export interface DocumentationRevision {
+  id: string;
+  number: string;
+  date: string;
+  description: string;
+  author: string;
+}
+
+export interface DocumentationAnnotation {
+  id: string;
+  text: string;
+  tag?: string;
+  viewId?: string;
+  x?: number;
+  z?: number;
+}
+
+export interface DocumentationSchedule {
+  id: string;
+  name: string;
+  fields: string[];
+  category: "rooms" | "furniture" | "levels" | "mep" | "objects";
+}
+
+export interface DocumentationMetadata {
+  version: 1;
+  projectNumber: string;
+  client: string;
+  author: string;
+  status: "draft" | "review" | "issued";
+  issueDate: string;
+  titleBlock: string;
+  views: DocumentationView[];
+  sheets: DocumentationSheet[];
+  annotations: DocumentationAnnotation[];
+  schedules: DocumentationSchedule[];
+  revisions: DocumentationRevision[];
+}
+
 export interface BuildingLevel {
   id: string;
   name: string;
@@ -706,6 +766,8 @@ export interface Design {
   mep?: MepDesign;
   community?: CommunityDesign;
   infra?: InfraDesign;
+  /** Optional Revit/Archicad-style documentation package; absent in legacy designs. */
+  documentation?: DocumentationMetadata;
 }
 
 /* AI plans are proposals only. Applying them remains a client/editor decision. */
