@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useParams } from "react-router-dom";
 import {
   getProject,
@@ -9,7 +9,7 @@ import {
 } from "../api";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Modal, Select, Spinner, Toggle } from "../components/ui";
-import { Canvas3D, type EditorApi } from "../editor/Canvas3D";
+import type { EditorApi } from "../editor/Canvas3D";
 import { CATALOG, catalogEntry, furnitureMount } from "../lib/catalog";
 import { download, downloadBlob, zipFiles } from "../lib/download";
 import type { Design, FurnitureItem, InfraKind, ProjectType } from "../types";
@@ -18,15 +18,16 @@ import { cn } from "../lib/cn";
 import { isInfraType, resolveModelType } from "../lib/modules";
 import { defaultCommunity } from "../lib/community";
 import { ensureInfraDesign, INFRA_LABELS } from "../lib/infra";
-import { CommunityEditor } from "./CommunityEditor";
-import { InfraEditor } from "./InfraEditor";
 import { CollaborationStatus } from "../components/CollaborationStatus";
-import { MepPanel } from "../components/MepPanel";
 import { SheetHeader } from "../components/SheetHeader";
-import { DesignExportMenu } from "../components/DesignExportMenu";
 import { ProjectHistory } from "../components/ProjectHistory";
-import { validateIfcRoundTrip } from "../lib/bim";
 import { VisualizationControls } from "../components/VisualizationControls";
+
+const Canvas3D = lazy(() => import("../editor/Canvas3D").then((module) => ({ default: module.Canvas3D })));
+const CommunityEditor = lazy(() => import("./CommunityEditor").then((module) => ({ default: module.CommunityEditor })));
+const InfraEditor = lazy(() => import("./InfraEditor").then((module) => ({ default: module.InfraEditor })));
+const MepPanel = lazy(() => import("../components/MepPanel").then((module) => ({ default: module.MepPanel })));
+const DesignExportMenu = lazy(() => import("../components/DesignExportMenu").then((module) => ({ default: module.DesignExportMenu })));
 
 const SWATCHES = [
   "#7c8a99", "#a4714f", "#8a6a45", "#5d7b8a", "#6b5542", "#4c7a9c",
@@ -266,6 +267,7 @@ export function Editor() {
           import("../lib/bim"),
           import("../lib/dxf"),
         ]);
+        const { validateIfcRoundTrip } = await import("../lib/bim");
         const ifcReport = validateIfcRoundTrip(design);
         if (!ifcReport.valid) throw new Error("IFC validation failed; resolve the reported errors before exporting the coordination package.");
         const { obj, mtl } = buildObjMtl(design);
@@ -288,7 +290,8 @@ export function Editor() {
         const blob = await api.capturePng();
         downloadBlob(`${stem}-presentation.png`, blob);
       } else if (format === "ifc") {
-        const [{ buildIfcStep }, ifcReport] = await Promise.all([import("../lib/bim"), Promise.resolve(validateIfcRoundTrip(design))]);
+        const { buildIfcStep, validateIfcRoundTrip } = await import("../lib/bim");
+        const ifcReport = validateIfcRoundTrip(design);
         if (!ifcReport.valid) throw new Error("IFC validation failed; resolve the reported errors before downloading the model.");
         download(`${stem}.ifc`, buildIfcStep(design), "application/x-step");
       }
@@ -447,7 +450,7 @@ export function Editor() {
         </div>
       )}
 
-      {panelTab === "mep" && <div className="flex-1 space-y-4 overflow-y-auto"><MepPanel value={design.mep} onChange={(mep) => changeDesign({ ...design, mep })} /></div>}
+      {panelTab === "mep" && <div className="flex-1 space-y-4 overflow-y-auto"><Suspense fallback={<Spinner className="h-5 w-5" />}><MepPanel value={design.mep} onChange={(mep) => changeDesign({ ...design, mep })} /></Suspense></div>}
     </>
   );
 
@@ -477,6 +480,7 @@ export function Editor() {
             {PROJECT_TYPE_LABELS[projectType] ?? projectType}
           </Badge>
         </div>
+        <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner className="h-6 w-6 text-amber-300" /></div>}>
         <CommunityEditor
            branch={residentialProject ? "residential" : "commercial"}
           community={community}
@@ -489,6 +493,7 @@ export function Editor() {
             scheduleSave(next);
           }}
         />
+        </Suspense>
       </div>
     );
   }
@@ -515,6 +520,7 @@ export function Editor() {
            <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
            <Badge tone="amber">{INFRA_LABELS[infraKind]}</Badge>
         </div>
+        <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner className="h-6 w-6 text-amber-300" /></div>}>
         <InfraEditor
           kind={infraKind}
           infra={design.infra}
@@ -527,6 +533,7 @@ export function Editor() {
             scheduleSave(updated);
           }}
         />
+        </Suspense>
       </div>
     );
   }
@@ -578,7 +585,7 @@ export function Editor() {
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v3h18v-3M7 8l5-5 5 5M12 3v11" /></svg>
           Export / ship to CAD
         </Button>
-        <DesignExportMenu design={design} projectName={name} onChange={changeDesign} />
+         <Suspense fallback={null}><DesignExportMenu design={design} projectName={name} onChange={changeDesign} /></Suspense>
       </div>
 
       <div className="flex min-h-0 flex-1 gap-3">
@@ -594,6 +601,7 @@ export function Editor() {
           onDrop={onCanvasDrop}
         >
           {loaded && (
+            <Suspense fallback={<div className="absolute inset-0 flex items-center justify-center"><Spinner className="h-8 w-8 text-amber-300" /></div>}>
             <Canvas3D
               design={design}
               photoUrl={photoUrl}
@@ -604,6 +612,7 @@ export function Editor() {
               onSelect={setSelectedId}
               onApiReady={setApi}
             />
+            </Suspense>
           )}
            {!photoUrl && !uploading && (
             <div className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full border border-slate-700 bg-slate-950/80 px-3 py-1 text-[11px] text-slate-400 backdrop-blur">
