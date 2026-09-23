@@ -625,6 +625,10 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
               <Num label="D" value={a.d} onChange={(v) => patchAmenity(a.id, { d: Math.max(v || 1, 1) })} step={0.5} unit=" m" />
               <Num label="H" value={a.h} onChange={(v) => patchAmenity(a.id, { h: Math.max(v || 0.1, 0.1) })} min={0.1} step={0.1} unit=" m" />
             </div>
+            <Select label="Construction phase" value={a.phaseId ?? ""} onChange={(e) => patchAmenity(a.id, { phaseId: e.target.value || undefined })}>
+              <option value="">Unassigned / always visible</option>
+              {visualization.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+            </Select>
           </div>
         ))}
       </div>
@@ -667,6 +671,10 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
             <option value="contour">Contour reference</option>
             <option value="alignment">Alignment</option>
             <option value="grade">Grade annotation</option>
+           </Select>
+           <Select label="Construction phase" value={selectedDraft.phaseId ?? ""} onChange={(e) => patchDraft(selectedDraft.id, { phaseId: e.target.value || undefined })}>
+             <option value="">Unassigned / always visible</option>
+             {visualization.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
            </Select>
            <ParametricControls
              family={selectedDraft.family}
@@ -893,6 +901,10 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
                {(Object.keys(DOOR_FACING_LABELS) as DoorFacing[]).map((f) => <option key={f} value={f}>{DOOR_FACING_LABELS[f]}</option>)}
                </Select>
              </div>
+             <Select label="Construction phase" value={t.phaseId ?? ""} onChange={(e) => patchTower(t.id, { phaseId: e.target.value || undefined })}>
+               <option value="">Unassigned / always visible</option>
+               {visualization.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+             </Select>
              <div className="mt-3">
                <ParametricControls
                  family={t.family}

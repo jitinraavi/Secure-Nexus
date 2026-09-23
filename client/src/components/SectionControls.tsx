@@ -30,6 +30,10 @@ export function SectionControls({ value, onChange }: { value?: SectionSettings; 
         <span className="text-sm font-medium text-slate-300">Visible depth / height (m)</span>
         <input type="number" min="0.1" step="0.5" value={section.depth} onChange={(e) => patch({ depth: Math.max(Number(e.target.value) || 0.1, 0.1) })} className="w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 outline-none focus:border-amber-300" />
       </label>
+      {section.axis !== "y" && <label className="block space-y-1.5">
+        <span className="text-sm font-medium text-slate-300">Cut angle (degrees)</span>
+        <input type="number" step="5" value={section.rotationDeg ?? 0} onChange={(e) => patch({ rotationDeg: Number(e.target.value) || 0 })} className="w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 outline-none focus:border-amber-300" />
+      </label>}
     </div>
   );
 }
