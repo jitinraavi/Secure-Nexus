@@ -374,6 +374,9 @@ export function Editor() {
                 <div className="flex justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scale</p><p className="text-xs text-slate-400">{Math.round(selected.scale * 100)}%</p></div>
                 <input type="range" min={0.5} max={1.5} step={0.05} value={selected.scale} onChange={(e) => updateSelected({ scale: Number(e.target.value) })} className="w-full accent-emerald-500" />
               </div>
+              <Select label="PBR finish" value={selected.finish ?? "satin"} onChange={(e) => updateSelected({ finish: e.target.value as FurnitureItem["finish"] })}>
+                <option value="matte">Matte</option><option value="satin">Satin</option><option value="glossy">Glossy</option><option value="metallic">Metallic</option><option value="glass">Glass</option>
+              </Select>
               <Select label="Mounting" value={selected.mount ?? furnitureMount(selected.type)} onChange={(e) => updateSelected({ mount: e.target.value as FurnitureItem["mount"] })}>
                 <option value="unassigned">Choose placement</option>
                 <option value="floor">Floor</option>

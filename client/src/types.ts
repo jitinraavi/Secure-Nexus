@@ -251,6 +251,7 @@ export interface FurnitureItem {
   mount?: FurnitureMount;
   mountWall?: RoomWall;
   mountHeightM?: number;
+  finish?: "matte" | "satin" | "glossy" | "metallic" | "glass";
   phaseId?: string;
 }
 

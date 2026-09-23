@@ -656,14 +656,14 @@ export function Canvas3D({
     }
 
     for (const item of desired.values()) {
-      const sig = `${item.type}|${item.color}|${item.scale}|${item.mount ?? ""}|${item.mountWall ?? "north"}|${design.room.widthMm}|${design.room.depthMm}|${design.room.wallHeightMm}`;
+      const sig = `${item.type}|${item.color}|${item.scale}|${item.finish ?? "satin"}|${item.mount ?? ""}|${item.mountWall ?? "north"}|${design.room.widthMm}|${design.room.depthMm}|${design.room.wallHeightMm}`;
       let rec = itemGroups.current.get(item.id);
       if (!rec || rec.sig !== sig) {
         if (rec) {
           scene.remove(rec.group);
           disposeGroup(rec.group);
         }
-        const group = buildFurniture({ type: item.type, color: item.color, scale: item.scale });
+        const group = buildFurniture({ type: item.type, color: item.color, scale: item.scale, finish: item.finish });
         addTechnicalEdges(group, "#334155", 0.7);
         group.traverse((o) => {
           if ((o as THREE.Mesh).isMesh) {

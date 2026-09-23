@@ -487,14 +487,35 @@ export function applyFinish(group: THREE.Group, color: string) {
   for (const m of tintables) m.color.set(color);
 }
 
-export function buildFurniture(item: { type: string; color: string; scale: number }): THREE.Group {
+export type FurnitureFinish = "matte" | "satin" | "glossy" | "metallic" | "glass";
+
+export function buildFurniture(item: { type: string; color: string; scale: number; finish?: FurnitureFinish }): THREE.Group {
   const entry = catalogEntry(item.type) ?? CATALOG[0];
   const group = entry.build(item.color);
   group.scale.setScalar(item.scale * 0.001);
   group.traverse((obj) => {
-    if ((obj as THREE.Mesh).isMesh) {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.isMesh) {
       obj.castShadow = true;
       obj.receiveShadow = true;
+      const finish = item.finish ?? "satin";
+      const values: Record<FurnitureFinish, { roughness: number; metalness: number; envMapIntensity: number }> = {
+        matte: { roughness: 0.92, metalness: 0.02, envMapIntensity: 0.25 },
+        satin: { roughness: 0.58, metalness: 0.08, envMapIntensity: 0.55 },
+        glossy: { roughness: 0.2, metalness: 0.12, envMapIntensity: 1 },
+        metallic: { roughness: 0.28, metalness: 0.78, envMapIntensity: 1.1 },
+        glass: { roughness: 0.08, metalness: 0.15, envMapIntensity: 1.2 },
+      };
+      const finishValues = values[finish];
+      for (const material of (Array.isArray(mesh.material) ? mesh.material : [mesh.material])) {
+        const standard = material as THREE.MeshStandardMaterial;
+        if ("roughness" in standard) {
+          standard.roughness = finishValues.roughness;
+          standard.metalness = finishValues.metalness;
+          standard.envMapIntensity = finishValues.envMapIntensity;
+          standard.needsUpdate = true;
+        }
+      }
     }
   });
   return group;
