@@ -22,6 +22,7 @@ import { CollaborationStatus } from "../components/CollaborationStatus";
 import { SheetHeader } from "../components/SheetHeader";
 import { ProjectHistory } from "../components/ProjectHistory";
 import { VisualizationControls } from "../components/VisualizationControls";
+import { visualizationSettings } from "../lib/visualization";
 
 const Canvas3D = lazy(() => import("../editor/Canvas3D").then((module) => ({ default: module.Canvas3D })));
 const CommunityEditor = lazy(() => import("./CommunityEditor").then((module) => ({ default: module.CommunityEditor })));
@@ -305,6 +306,7 @@ export function Editor() {
   };
 
   const canUseCamera = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
+  const cameraPath = visualizationSettings(design.visualization).cameraPath ?? [];
 
   const onHistoryRestore = (state: { design: Design | null; projectType: ProjectType; widthMm: number; depthMm: number }) => {
     const restored = state.design ?? defaultDesign();
@@ -575,14 +577,25 @@ export function Editor() {
           }}
         />
 
-         <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
+          <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
            <Button variant="ghost" size="sm" onClick={() => api?.topView()} title="Top view">Top</Button>
            <Button variant="ghost" size="sm" onClick={() => api?.frontView()} title="Front view">Front</Button>
            <Button variant="ghost" size="sm" onClick={() => api?.detailView()} title="Presentation detail view">Detail</Button>
            <Button variant="ghost" size="sm" onClick={() => api?.toggleSection()} title="Toggle cutaway section">Cutaway</Button>
            <Button variant="ghost" size="sm" onClick={() => setTourPlaying(api?.togglePresentationTour() ?? false)} title="Toggle presentation camera tour">{tourPlaying ? "Stop tour" : "Tour"}</Button>
-           <Button variant="ghost" size="sm" onClick={() => api?.resetView()} title="Reset view">Home</Button>
-         </div>
+            <Button variant="ghost" size="sm" onClick={() => api?.resetView()} title="Reset view">Home</Button>
+          </div>
+          <div className="flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1">
+            <Button variant="ghost" size="sm" onClick={() => {
+              if (!api) return;
+              const current = visualizationSettings(design.visualization);
+              const currentPath = current.cameraPath ?? [];
+              const waypoint = api.captureCameraWaypoint(`View ${currentPath.length + 1}`);
+              changeDesign({ ...design, visualization: { ...current, cameraPath: [...currentPath, waypoint] } });
+            }} title="Save current camera viewpoint">Add view</Button>
+            <Button variant="ghost" size="sm" disabled={cameraPath.length < 2} onClick={() => api?.playCameraPath(cameraPath)} title="Play authored camera path">Play path</Button>
+            <Button variant="ghost" size="sm" onClick={() => api?.stopCameraPath()} title="Stop camera path">Stop</Button>
+          </div>
 
         <Button size="sm" onClick={() => setExportOpen(true)}>
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v3h18v-3M7 8l5-5 5 5M12 3v11" /></svg>

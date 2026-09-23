@@ -66,6 +66,13 @@ export interface ConstructionPhase {
   color?: string;
 }
 
+export interface CameraWaypoint {
+  id: string;
+  label: string;
+  position: [number, number, number];
+  target: [number, number, number];
+}
+
 /** Presentation state for 4D review; this is not a construction schedule. */
 export interface VisualizationSettings {
   enabled: boolean;
@@ -73,6 +80,7 @@ export interface VisualizationSettings {
   playing: boolean;
   walkthrough: boolean;
   renderQuality?: "performance" | "balanced" | "presentation";
+  cameraPath?: CameraWaypoint[];
   phases: ConstructionPhase[];
 }
 

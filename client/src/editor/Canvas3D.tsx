@@ -5,7 +5,7 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { ARButton } from "three/examples/jsm/webxr/ARButton.js";
 import { VRButton } from "three/examples/jsm/webxr/VRButton.js";
-import type { Design, FurnitureItem } from "../types";
+import type { CameraWaypoint, Design, FurnitureItem } from "../types";
 import { addTechnicalEdges } from "../lib/modelcore";
 import { buildFurniture, catalogEntry, furnitureMount } from "../lib/catalog";
 import { buildMepScene } from "../lib/mep";
@@ -20,6 +20,9 @@ export interface EditorApi {
   frontView(): void;
   detailView(): void;
   togglePresentationTour(): boolean;
+  captureCameraWaypoint(label: string): CameraWaypoint;
+  playCameraPath(path: CameraWaypoint[]): void;
+  stopCameraPath(): void;
   toggleSection(): boolean;
   capturePng(): Promise<Blob>;
   exportGlb(): Promise<Blob>;
@@ -415,6 +418,7 @@ export function Canvas3D({
     ro.observe(container);
 
     let tour: { curve: THREE.CatmullRomCurve3; startedAt: number; durationMs: number; target: THREE.Vector3 } | null = null;
+    let authoredTour: { camera: THREE.CatmullRomCurve3; target: THREE.CatmullRomCurve3; startedAt: number; durationMs: number } | null = null;
     const loop = () => {
       if (document.hidden && !renderer.xr.isPresenting) return;
       const transition = transitionRef.current;
@@ -429,8 +433,17 @@ export function Canvas3D({
         controls.target.copy(tour.target);
         camera.lookAt(tour.target);
       }
+      if (authoredTour) {
+        const progress = Math.min((performance.now() - authoredTour.startedAt) / authoredTour.durationMs, 1);
+        camera.position.copy(authoredTour.camera.getPointAt(progress));
+        controls.target.copy(authoredTour.target.getPointAt(progress));
+        if (progress >= 1) {
+          authoredTour = null;
+          controls.enabled = true;
+        }
+      }
       const walkthrough = Boolean(designRef.current.visualization?.walkthrough);
-      controls.enabled = !walkthrough && !tour;
+      controls.enabled = !walkthrough && !tour && !authoredTour;
       if (walkthrough && keys.size) {
         const direction = new THREE.Vector3();
         camera.getWorldDirection(direction);
@@ -486,6 +499,32 @@ export function Canvas3D({
         tour = { curve: new THREE.CatmullRomCurve3(points, true, "centripetal"), startedAt: performance.now(), durationMs: 18000, target: new THREE.Vector3(0, height * 0.48, 0) };
         controls.enabled = false;
         return true;
+      },
+      captureCameraWaypoint(label) {
+        const target = controls.target;
+        return {
+          id: `camera-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          label,
+          position: [camera.position.x, camera.position.y, camera.position.z],
+          target: [target.x, target.y, target.z],
+        };
+      },
+      playCameraPath(path) {
+        if (path.length < 2) return;
+        tour = null;
+        const cameraPoints = path.map((point) => new THREE.Vector3(...point.position));
+        const targetPoints = path.map((point) => new THREE.Vector3(...point.target));
+        authoredTour = {
+          camera: new THREE.CatmullRomCurve3(cameraPoints, false, "centripetal"),
+          target: new THREE.CatmullRomCurve3(targetPoints, false, "centripetal"),
+          startedAt: performance.now(),
+          durationMs: Math.max((path.length - 1) * 3500, 3500),
+        };
+        controls.enabled = false;
+      },
+      stopCameraPath() {
+        authoredTour = null;
+        controls.enabled = true;
       },
       toggleSection() {
         sectionRef.current = !sectionRef.current;

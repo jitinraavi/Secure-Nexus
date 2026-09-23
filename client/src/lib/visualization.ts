@@ -15,6 +15,7 @@ export function visualizationSettings(value: Design["visualization"]): Visualiza
     playing: false,
     walkthrough: value?.walkthrough ?? false,
     renderQuality: value?.renderQuality ?? "balanced",
+    cameraPath: value?.cameraPath ?? [],
     phases,
   };
 }
