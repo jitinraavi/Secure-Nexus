@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { ARButton } from "three/examples/jsm/webxr/ARButton.js";
 import { VRButton } from "three/examples/jsm/webxr/VRButton.js";
 import type { Design, FurnitureItem } from "../types";
 import { addTechnicalEdges } from "../lib/modelcore";
@@ -198,13 +199,33 @@ export function Canvas3D({
     container.appendChild(renderer.domElement);
     const vrButton = VRButton.createButton(renderer);
     vrButton.setAttribute("aria-label", "Enter immersive VR view");
-    container.appendChild(vrButton);
+    const arButton = ARButton.createButton(renderer, { optionalFeatures: ["local-floor", "hit-test", "dom-overlay"], domOverlay: { root: container } });
+    arButton.setAttribute("aria-label", "Enter augmented reality view");
+    const xrToolbar = document.createElement("div");
+    xrToolbar.setAttribute("aria-label", "Immersive presentation modes");
+    Object.assign(xrToolbar.style, { position: "absolute", bottom: "12px", left: "12px", display: "flex", gap: "8px", zIndex: "5" });
+    for (const button of [vrButton, arButton]) Object.assign(button.style, { position: "static", margin: "0", left: "auto", bottom: "auto" });
+    xrToolbar.append(vrButton, arButton);
+    container.appendChild(xrToolbar);
     rendererRef.current = renderer;
 
     const pmrem = new THREE.PMREMGenerator(renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     scene.environmentIntensity = 0.45;
     pmrem.dispose();
+
+    const restoreBackground = () => {
+      scene.background = new THREE.Color("#10141c");
+      renderer.setClearAlpha(1);
+    };
+    const onXrSessionStart = () => {
+      if (renderer.xr.getSession()?.environmentBlendMode === "alpha-blend") {
+        scene.background = null;
+        renderer.setClearAlpha(0);
+      }
+    };
+    renderer.xr.addEventListener("sessionstart", onXrSessionStart);
+    renderer.xr.addEventListener("sessionend", restoreBackground);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -519,6 +540,8 @@ export function Canvas3D({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.xr.removeEventListener("sessionstart", onXrSessionStart);
+      renderer.xr.removeEventListener("sessionend", restoreBackground);
       scene.environment?.dispose();
       disposeGroup(scene);
       controls.dispose();
@@ -526,7 +549,7 @@ export function Canvas3D({
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement);
       }
-      if (vrButton.parentElement === container) container.removeChild(vrButton);
+      if (xrToolbar.parentElement === container) container.removeChild(xrToolbar);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
