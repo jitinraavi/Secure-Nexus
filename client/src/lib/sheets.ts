@@ -173,6 +173,11 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
     { label: "MEP routes", value: `${infra.mep?.elements.length ?? 0}`, basis: "Preliminary coordination" },
     { label: "Review markups", value: `${review.length}`, basis: "Open/resolved coordination notes" },
   ] : [{ label: "Furniture", value: `${design.furniture.length}`, basis: "Stored catalog objects" }, { label: "MEP routes", value: `${design.mep?.elements.length ?? 0}`, basis: "Preliminary coordination" }];
+  const constructionPhases = (design.visualization?.phases ?? []).map((phase) => ({
+    label: `4D · ${phase.name}`,
+    value: `${phase.durationDays ?? "—"} days | ${phase.crewSize ?? "—"} crew | ${phase.costEstimate ?? "—"}`,
+    basis: `Timeline ${phase.start}%–${phase.end}% | ${(phase.dependsOn ?? []).length} dependency(ies)`,
+  }));
   const takeoff: { items: (TakeoffItem | InfraTakeoffItem)[]; summary: string[] } = community
     ? { items: computeTakeoff(community).items, summary: [`Site ${computeTakeoff(community).summary.siteAreaM2} m2`, `Built-up ${computeTakeoff(community).summary.builtUpM2} m2`, `Concrete ${computeTakeoff(community).summary.concreteM3} m3`, `Steel ${computeTakeoff(community).summary.steelT} t`] }
     : infra ? { items: computeInfraTakeoff(infra).items, summary: computeInfraTakeoff(infra).summary.map((s) => `${s.label}: ${s.value}`) }
@@ -190,7 +195,7 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
       if (view && !view.visible) { text(p, `VIEW HIDDEN: ${view.name}`, 90, 430, 9); } else if (view?.kind === "plan") renderPlan(p); else if (view?.kind === "elevation") renderElevation(p); else if (view?.kind === "section") renderSection(p); else if (view?.kind === "schedule" || sheet.number === "S-401") {
          const configuredSchedules = docs.schedules.map((schedule) => ({ label: schedule.name, value: schedule.fields.join(", "), basis: `${schedule.category} schedule` }));
          const complianceRows = compliance.issues.map((item) => ({ label: `${item.severity.toUpperCase()} · ${item.category}`, value: item.message, basis: item.basis }));
-         rows(p, [...configuredSchedules, ...scheduleItems, ...complianceRows], 70, 445, 650); text(p, "ANNOTATIONS / REVIEW MARKUPS", 70, 210, 9, true);
+          rows(p, [...configuredSchedules, ...scheduleItems, ...constructionPhases, ...complianceRows], 70, 445, 650); text(p, "ANNOTATIONS / REVIEW MARKUPS", 70, 210, 9, true);
          const annotations = docs.annotations.map((a) => `${a.tag ? `[${a.tag}] ` : ""}${a.text}`); bulletList(p, [...review.map((m) => `${m.severity.toUpperCase()}: ${m.text} (${m.status})`), ...annotations, ...(review.length || annotations.length ? [] : ["No saved annotations."])], 70, 185, 620);
       } else { text(p, "DOCUMENTATION VIEW", 90, 465, 9, true); text(p, `${view?.name ?? sheet.name} | ${view?.scale ?? ""} ${view?.orientation ?? ""}`, 90, 430, 9); }
     }

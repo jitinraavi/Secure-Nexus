@@ -64,6 +64,10 @@ export interface ConstructionPhase {
   start: number;
   end: number;
   color?: string;
+  durationDays?: number;
+  dependsOn?: string[];
+  crewSize?: number;
+  costEstimate?: number;
 }
 
 export interface CameraWaypoint {
@@ -434,6 +438,8 @@ export type SectionAxis = "x" | "y" | "z";
 export interface SectionSettings {
   enabled: boolean;
   axis: SectionAxis;
+  /** Rotation around the vertical axis for an angled vertical section plane. */
+  rotationDeg?: number;
   /** Lower bound of the visible interval, in scene metres. */
   offset: number;
   /** Visible interval length, in scene metres. */

@@ -25,3 +25,33 @@ export function phaseVisible(phaseId: string | undefined, value: VisualizationSe
   const phase = value.phases.find((item) => item.id === phaseId);
   return !phase || phase.start <= value.time;
 }
+
+export function auditConstructionSchedule(phases: ConstructionPhase[]): string[] {
+  const warnings: string[] = [];
+  const ids = new Set(phases.map((phase) => phase.id));
+  for (const phase of phases) {
+    if (phase.start < 0 || phase.end > 100 || phase.start >= phase.end) warnings.push(`${phase.name}: timeline start/end must form an increasing range from 0 to 100%.`);
+    if (phase.durationDays !== undefined && (!Number.isFinite(phase.durationDays) || phase.durationDays <= 0)) warnings.push(`${phase.name}: duration must be greater than zero.`);
+    if (phase.crewSize !== undefined && (!Number.isFinite(phase.crewSize) || phase.crewSize < 1)) warnings.push(`${phase.name}: crew size must be at least one.`);
+    if (phase.costEstimate !== undefined && (!Number.isFinite(phase.costEstimate) || phase.costEstimate < 0)) warnings.push(`${phase.name}: cost estimate cannot be negative.`);
+    for (const dependencyId of phase.dependsOn ?? []) {
+      const dependency = phases.find((item) => item.id === dependencyId);
+      if (!ids.has(dependencyId)) warnings.push(`${phase.name}: a dependency refers to a missing phase.`);
+      else if (dependency && dependency.end > phase.start) warnings.push(`${phase.name}: dependency “${dependency.name}” ends after this phase starts.`);
+    }
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (visiting.has(id)) return true;
+    if (visited.has(id)) return false;
+    visiting.add(id);
+    const phase = phases.find((item) => item.id === id);
+    for (const dependency of phase?.dependsOn ?? []) if (visit(dependency)) return true;
+    visiting.delete(id);
+    visited.add(id);
+    return false;
+  };
+  if (phases.some((phase) => visit(phase.id))) warnings.push("Schedule dependencies contain a cycle.");
+  return [...new Set(warnings)];
+}
