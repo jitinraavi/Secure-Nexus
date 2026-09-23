@@ -55,6 +55,7 @@ export function Editor() {
   const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [api, setApi] = useState<EditorApi | null>(null);
+  const [tourPlaying, setTourPlaying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
@@ -569,6 +570,7 @@ export function Editor() {
            <Button variant="ghost" size="sm" onClick={() => api?.frontView()} title="Front view">Front</Button>
            <Button variant="ghost" size="sm" onClick={() => api?.detailView()} title="Presentation detail view">Detail</Button>
            <Button variant="ghost" size="sm" onClick={() => api?.toggleSection()} title="Toggle cutaway section">Cutaway</Button>
+           <Button variant="ghost" size="sm" onClick={() => setTourPlaying(api?.togglePresentationTour() ?? false)} title="Toggle presentation camera tour">{tourPlaying ? "Stop tour" : "Tour"}</Button>
            <Button variant="ghost" size="sm" onClick={() => api?.resetView()} title="Reset view">Home</Button>
          </div>
 

@@ -17,6 +17,7 @@ export interface EditorApi {
   topView(): void;
   frontView(): void;
   detailView(): void;
+  togglePresentationTour(): boolean;
   toggleSection(): boolean;
   capturePng(): Promise<Blob>;
   exportGlb(): Promise<Blob>;
@@ -388,6 +389,7 @@ export function Canvas3D({
     ro.observe(container);
 
     let raf = 0;
+    let tour: { curve: THREE.CatmullRomCurve3; startedAt: number; durationMs: number; target: THREE.Vector3 } | null = null;
     const loop = () => {
       raf = requestAnimationFrame(loop);
       if (document.hidden) return;
@@ -397,8 +399,14 @@ export function Canvas3D({
         controls.target.lerp(transition.target, 0.09);
         if (camera.position.distanceTo(transition.position) < 0.02 && controls.target.distanceTo(transition.target) < 0.02) transitionRef.current = null;
       }
+      if (tour) {
+        const progress = ((performance.now() - tour.startedAt) % tour.durationMs) / tour.durationMs;
+        camera.position.copy(tour.curve.getPointAt(progress));
+        controls.target.copy(tour.target);
+        camera.lookAt(tour.target);
+      }
       const walkthrough = Boolean(designRef.current.visualization?.walkthrough);
-      controls.enabled = !walkthrough;
+      controls.enabled = !walkthrough && !tour;
       if (walkthrough && keys.size) {
         const direction = new THREE.Vector3();
         camera.getWorldDirection(direction);
@@ -432,6 +440,28 @@ export function Canvas3D({
       },
       detailView() {
         transitionRef.current = { position: new THREE.Vector3(3.2, 2.25, 3.4), target: new THREE.Vector3(0, 1.15, 0) };
+      },
+      togglePresentationTour() {
+        if (tour) {
+          tour = null;
+          controls.enabled = true;
+          return false;
+        }
+        const room = designRef.current.room;
+        const width = room.widthMm * MM;
+        const depth = room.depthMm * MM;
+        const radiusX = Math.max(width * 0.62, 2.5);
+        const radiusZ = Math.max(depth * 0.72, 2.5);
+        const height = Math.max(room.wallHeightMm * MM * 0.8, 2.2);
+        const points = [
+          new THREE.Vector3(-radiusX, height, -radiusZ),
+          new THREE.Vector3(radiusX, height * 0.92, -radiusZ),
+          new THREE.Vector3(radiusX, height * 1.08, radiusZ),
+          new THREE.Vector3(-radiusX, height, radiusZ),
+        ];
+        tour = { curve: new THREE.CatmullRomCurve3(points, true, "centripetal"), startedAt: performance.now(), durationMs: 18000, target: new THREE.Vector3(0, height * 0.48, 0) };
+        controls.enabled = false;
+        return true;
       },
       toggleSection() {
         sectionRef.current = !sectionRef.current;
