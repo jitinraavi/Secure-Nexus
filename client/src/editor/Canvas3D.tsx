@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { VRButton } from "three/examples/jsm/webxr/VRButton.js";
 import type { Design, FurnitureItem } from "../types";
 import { addTechnicalEdges } from "../lib/modelcore";
 import { buildFurniture, catalogEntry, furnitureMount } from "../lib/catalog";
@@ -183,6 +184,7 @@ export function Canvas3D({
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.xr.enabled = true;
     renderer.localClippingEnabled = true;
     renderer.setSize(width, height);
     renderer.domElement.tabIndex = 0;
@@ -194,6 +196,9 @@ export function Canvas3D({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.1;
     container.appendChild(renderer.domElement);
+    const vrButton = VRButton.createButton(renderer);
+    vrButton.setAttribute("aria-label", "Enter immersive VR view");
+    container.appendChild(vrButton);
     rendererRef.current = renderer;
 
     const pmrem = new THREE.PMREMGenerator(renderer);
@@ -388,11 +393,9 @@ export function Canvas3D({
     });
     ro.observe(container);
 
-    let raf = 0;
     let tour: { curve: THREE.CatmullRomCurve3; startedAt: number; durationMs: number; target: THREE.Vector3 } | null = null;
     const loop = () => {
-      raf = requestAnimationFrame(loop);
-      if (document.hidden) return;
+      if (document.hidden && !renderer.xr.isPresenting) return;
       const transition = transitionRef.current;
       if (transition) {
         camera.position.lerp(transition.position, 0.09);
@@ -424,7 +427,7 @@ export function Canvas3D({
       controls.update();
       renderer.render(scene, camera);
     };
-    loop();
+    renderer.setAnimationLoop(loop);
 
     onApiReady({
       resetView() {
@@ -509,7 +512,7 @@ export function Canvas3D({
 
     return () => {
       cancelAnimationFrame(pendingItemRaf.current);
-      cancelAnimationFrame(raf);
+      renderer.setAnimationLoop(null);
       ro.disconnect();
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
@@ -523,6 +526,7 @@ export function Canvas3D({
       if (renderer.domElement.parentElement === container) {
         container.removeChild(renderer.domElement);
       }
+      if (vrButton.parentElement === container) container.removeChild(vrButton);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
