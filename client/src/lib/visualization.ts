@@ -14,6 +14,7 @@ export function visualizationSettings(value: Design["visualization"]): Visualiza
     time: Math.min(100, Math.max(0, value?.time ?? 100)),
     playing: false,
     walkthrough: value?.walkthrough ?? false,
+    renderQuality: value?.renderQuality ?? "balanced",
     phases,
   };
 }

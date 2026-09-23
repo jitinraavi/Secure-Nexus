@@ -18,6 +18,8 @@ import { disposeObject3D } from "../lib/modelcore";
  */
 export function InfraScene({ infra, activeTool = "select", onSelect, onChange, visualization }: { infra: InfraDesign; activeTool?: CadTool; onSelect?: (id: string | null) => void; onChange?: (next: InfraDesign) => void; visualization?: VisualizationSettings }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const groupRef = useRef<THREE.Group | null>(null);
@@ -36,6 +38,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
     if (!container) return;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
+    rendererRef.current = renderer;
     renderer.localClippingEnabled = true;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, container.clientWidth < 900 ? 1.5 : 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -47,6 +50,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
     container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
+    sceneRef.current = scene;
     scene.background = new THREE.Color("#0b1220");
     const ext = infraExtent(infraRef.current);
     const span = Math.max(ext.w, ext.d);
@@ -218,6 +222,17 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    if (!renderer || !scene) return;
+    const quality = visualization?.renderQuality ?? "balanced";
+    renderer.setPixelRatio(quality === "performance" ? 1 : quality === "presentation" ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1.5));
+    renderer.shadowMap.enabled = quality !== "performance";
+    renderer.toneMappingExposure = quality === "presentation" ? 1.16 : quality === "performance" ? 1 : 1.08;
+    scene.environmentIntensity = quality === "presentation" ? 0.68 : quality === "performance" ? 0.28 : 0.48;
+  }, [visualization?.renderQuality]);
 
   useEffect(() => {
     rebuildRef.current?.();

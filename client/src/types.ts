@@ -72,6 +72,7 @@ export interface VisualizationSettings {
   time: number;
   playing: boolean;
   walkthrough: boolean;
+  renderQuality?: "performance" | "balanced" | "presentation";
   phases: ConstructionPhase[];
 }
 

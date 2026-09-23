@@ -27,6 +27,13 @@ export function VisualizationControls({ design, onChange }: { design: Design; on
       <input aria-label="Visualization timeline" type="range" min="0" max="100" value={value.time} onChange={(e) => setTime(Number(e.target.value))} className="w-28 accent-cyan-400" />
       <span className="w-10 text-right tabular-nums text-slate-300">{Math.round(value.time)}%</span>
       <Toggle checked={value.walkthrough} onChange={(walkthrough) => onChange({ ...design, visualization: { ...value, walkthrough } })} label="Flythrough" />
+      <label className="flex items-center gap-1.5 text-[11px] text-slate-400">Quality
+        <select value={value.renderQuality ?? "balanced"} onChange={(event) => onChange({ ...design, visualization: { ...value, renderQuality: event.target.value as NonNullable<typeof value.renderQuality> } })} className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200">
+          <option value="performance">Performance</option>
+          <option value="balanced">Balanced</option>
+          <option value="presentation">Presentation</option>
+        </select>
+      </label>
       <span className="hidden text-slate-400 sm:inline">{active?.name ?? "All phases"}</span>
     </div>
   );

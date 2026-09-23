@@ -1131,6 +1131,17 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
 
   /* Rebuild geometry only when the design changes; selection is a cheap overlay update. */
   useEffect(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    if (!renderer || !scene) return;
+    const quality = visualization?.renderQuality ?? "balanced";
+    renderer.setPixelRatio(quality === "performance" ? 1 : quality === "presentation" ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1.5));
+    renderer.shadowMap.enabled = quality !== "performance";
+    renderer.toneMappingExposure = quality === "presentation" ? 1.16 : quality === "performance" ? 1 : 1.08;
+    scene.environmentIntensity = quality === "presentation" ? 0.68 : quality === "performance" ? 0.28 : 0.48;
+  }, [visualization?.renderQuality]);
+
+  useEffect(() => {
     rebuildRef.current?.();
   }, [design, visualization]);
 

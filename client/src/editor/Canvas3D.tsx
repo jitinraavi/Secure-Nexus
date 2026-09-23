@@ -527,6 +527,18 @@ export function Canvas3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    if (!renderer || !scene) return;
+    const quality = design.visualization?.renderQuality ?? "balanced";
+    const ratio = quality === "performance" ? 1 : quality === "presentation" ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 1.5);
+    renderer.setPixelRatio(ratio);
+    renderer.shadowMap.enabled = quality !== "performance";
+    renderer.toneMappingExposure = quality === "presentation" ? 1.16 : quality === "performance" ? 1 : 1.08;
+    scene.environmentIntensity = quality === "presentation" ? 0.7 : quality === "performance" ? 0.28 : 0.48;
+  }, [design.visualization?.renderQuality]);
+
   /* Room + curtains build */
   useEffect(() => {
     const scene = sceneRef.current;
