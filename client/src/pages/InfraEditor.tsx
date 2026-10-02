@@ -14,6 +14,7 @@ import { MepPanel } from "../components/MepPanel";
 import { DesignExportMenu } from "../components/DesignExportMenu";
 import { SectionControls } from "../components/SectionControls";
 import { TerrainControls } from "../components/TerrainControls";
+import { CivilControls } from "../components/CivilControls";
 import { download } from "../lib/download";
 import { buildBoqCsv, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
 import { infraReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
@@ -391,6 +392,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
   const locationPanel = (
     <Section title="Where will it be built?">
       <TerrainControls value={infra.terrain} width={infraExtent(infra).w} depth={infraExtent(infra).d} onChange={(terrain) => update({ terrain })} />
+      <CivilControls value={infra} onChange={(civil) => update({ civil })} />
       <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
         {kind === "highway"
           ? "Search the corridor and trace the road alignment on the satellite map. The captured length and bearing set the model and the takeoff."
@@ -727,3 +729,4 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
     </div>
   );
 }
+

@@ -881,12 +881,25 @@ export interface InfraDesign {
   review?: DesignReview;
   section?: SectionSettings;
   terrain?: TerrainSettings;
+  civil?: CivilSettings;
   location?: SiteLocation;
   highway?: HighwayDesign;
   airport?: AirportDesign;
   ports?: PortDesign;
   dams?: DamDesign;
   mep?: MepDesign;
+}
+
+/** Local SI corridor and rational-method drainage planning inputs. */
+export interface CivilSettings {
+  stationIntervalM: number;
+  corridorWidthM: number;
+  startElevationM: number;
+  gradePct: number;
+  crossfallPct: number;
+  rainfallMmPerHour: number;
+  runoffCoefficient: number;
+  catchmentAreaHa: number;
 }
 
 export interface CommunityDesign {
@@ -976,3 +989,4 @@ export function defaultDesign(): Design {
     mep: { version: 1, enabled: true, elements: [] },
   };
 }
+
