@@ -972,6 +972,7 @@ export interface CommunityDesign {
   levels?: BuildingLevel[];
   structuralGrid?: StructuralGridLine[];
   structural?: StructuralSettings;
+  structuralResults?: import("./lib/structuralResults").StructuralExternalResults;
   activeLevelId?: string;
   review?: DesignReview;
   section?: SectionSettings;

@@ -34,6 +34,7 @@ import { reviewMarkers, reviewRiskScore } from "../lib/review";
 import { useReviewFindings } from "../lib/useReviewFindings";
 import { ReviewAnalysisState } from "../components/ReviewAnalysisState";
 import { CoordinationPanel } from "../components/CoordinationPanel";
+import { StructuralResultsPanel } from "../components/StructuralResultsPanel";
 import { applyDraftOperation, constrainedDraftSize, duplicateDraftArray, draftingSettings, patchDraftGrip, solveDraftConstraintGraph } from "../lib/drafting";
 import { familyForId, familyMetadata } from "../lib/families";
 import { analyzeCommunity, buildStructuralReport, structuralSettings } from "../lib/structural";
@@ -774,6 +775,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
            {result.connectionWarnings.map((warning) => <p key={warning} className="text-[11px] leading-relaxed text-amber-300">Connection: {warning}</p>)}
         </div>)}
       </div>
+      <StructuralResultsPanel design={c} model={structuralDesign} onChange={commitDesign} />
       {structuralAnalysis.warnings.map((warning) => <p key={warning} className="text-[11px] leading-relaxed text-slate-500">{warning}</p>)}
     </Section>
   );
