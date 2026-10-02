@@ -22,6 +22,7 @@ import { ensureInfraDesign, INFRA_LABELS } from "../lib/infra";
 import { CollaborationStatus } from "../components/CollaborationStatus";
 import { SheetHeader } from "../components/SheetHeader";
 import { ProjectHistory } from "../components/ProjectHistory";
+import { ProjectWorkspaceLinks } from "../components/ProjectWorkspaceLinks";
 import { TeamCollaborationPanel } from "../components/TeamCollaborationPanel";
 import { PerformancePanel } from "../components/PerformancePanel";
 import { VisualizationControls } from "../components/VisualizationControls";
@@ -586,6 +587,7 @@ export function Editor() {
           </p>
            <div className="flex-1" />
            <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
+           <ProjectWorkspaceLinks projectId={id!} />
            <TeamCollaborationPanel projectId={id!} />
            <PerformancePanel design={design} />
            {recoveryControls}
@@ -631,6 +633,7 @@ export function Editor() {
           </p>
            <div className="flex-1" />
            <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
+           <ProjectWorkspaceLinks projectId={id!} />
            <TeamCollaborationPanel projectId={id!} />
            <PerformancePanel design={design} />
            {recoveryControls}
@@ -666,6 +669,7 @@ export function Editor() {
         </div>
 
           <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
+          <ProjectWorkspaceLinks projectId={id!} />
            <TeamCollaborationPanel projectId={id!} />
            <PerformancePanel design={design} />
           <Badge tone="slate">{design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} items</Badge>

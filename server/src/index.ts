@@ -13,6 +13,7 @@ import authRoutes from "./routes/auth.js";
 import secretRoutes from "./routes/secrets.js";
 import auditRoutes from "./routes/audit.js";
 import projectRoutes from "./routes/projects.js";
+import workspaceRoutes from "./routes/workspaces.js";
 import paymentRoutes from "./routes/payments.js";
 import assistantRoutes from "./routes/assistant.js";
 import shareRoutes from "./routes/share.js";
@@ -78,6 +79,7 @@ app.get("/api/countries", (_req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/secrets", secretRoutes);
 app.use("/api/audit", auditRoutes);
+app.use("/api/projects/:projectId/workspaces", workspaceRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/share", shareRoutes);
 app.use("/api/payments", paymentRoutes);

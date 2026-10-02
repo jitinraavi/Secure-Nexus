@@ -17,6 +17,7 @@ import { Badge, Button, Card, Input, Modal, Select, Spinner, Toggle } from "../c
 import { useToast } from "../components/Toast";
 import { formatMoney, timeAgo } from "../lib/format";
 import { cn } from "../lib/cn";
+import { ProjectWorkspaceLinks } from "../components/ProjectWorkspaceLinks";
 
 const TYPE_GROUPS: { label: string; types: ProjectType[] }[] = [
   { label: "Interiors", types: ["house"] },
@@ -292,6 +293,7 @@ export function Dashboard() {
                       </svg>
                     </button>}
                   </div>
+                  <div className="mt-3"><ProjectWorkspaceLinks projectId={p.id} /></div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button size="sm" variant="secondary" onClick={() => { setCopyProject(p); setCopyName(`${p.name} copy`.slice(0, 80)); }}>{p.isTemplate ? "Use template" : "Duplicate"}</Button>
                     {p.role === "owner" && <>

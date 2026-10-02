@@ -32,6 +32,8 @@ The API lives in `server/`, the client in `client/`.
 
 ### Collaboration model
 
+Engineering, BIM/civil exchange and geometry workbenches save independent project workspaces with encrypted source artifacts, revision conflicts and browser recovery. Open them from project cards or editor toolbars. See [Phase 1 project workspaces](docs/PHASE-1-PROJECT-WORKSPACES.md) for limits and deferred checks, and [development phases](docs/DEVELOPMENT-PHASES.md) for the remaining sequence.
+
 CAD design writes use server-authoritative revisions. Each write includes the last observed revision; stale writes receive `409 REVISION_CONFLICT`, and the client retains local edits for explicit recovery/merge review. Authorized personal or organization project members can subscribe to `/api/collaboration/:projectId/events` and create encrypted comments/issues. SSE notifications contain metadata; design and item content remains encrypted at rest. Presence leases and event replay are stored in SQLite for processes on the same host. Optional Redis REST transport supplies event streams, presence and durable outbox retries. The organization board uses a separate deterministic field-register operation API for offline coordination. Account/project authority remains centralized, and CAD geometry retains revision/lock handling. See [ENTERPRISE-DISTRIBUTED-MODULES.md](docs/ENTERPRISE-DISTRIBUTED-MODULES.md) for topology, identity setup and recovery limits.
 
 ### Assistant configuration
