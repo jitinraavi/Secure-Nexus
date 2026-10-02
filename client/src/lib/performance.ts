@@ -73,7 +73,6 @@ export interface SpatialItem2D<T> { id: string; x: number; z: number; radius: nu
 export class SpatialHash2D<T> {
   private readonly buckets = new Map<string, SpatialItem2D<T>[]>();
   constructor(private readonly cellSize = 20) {}
-  private key(x: number, z: number) { return `${Math.floor(x / this.cellSize)}:${Math.floor(z / this.cellSize)}`; }
   insert(item: SpatialItem2D<T>) {
     const minX = Math.floor((item.x - item.radius) / this.cellSize);
     const maxX = Math.floor((item.x + item.radius) / this.cellSize);
