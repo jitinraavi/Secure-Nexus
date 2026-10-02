@@ -18,6 +18,8 @@ import assistantRoutes from "./routes/assistant.js";
 import shareRoutes from "./routes/share.js";
 import cadExchangeRoutes from "./routes/cadExchange.js";
 import collaborationRoutes from "./routes/collaboration.js";
+import organizationRoutes from "./routes/organizations.js";
+import ssoRoutes from "./routes/sso.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(__dirname, "../../client/dist");
@@ -82,6 +84,8 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/assistant", assistantRoutes);
 app.use("/api/cad-exchange", cadExchangeRoutes);
 app.use("/api/collaboration", collaborationRoutes);
+app.use("/api/organizations", organizationRoutes);
+app.use("/api/sso", ssoRoutes);
 
 app.use("/api", (_req, res) => {
   res.status(404).json({ error: "Not found" });

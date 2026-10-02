@@ -24,7 +24,7 @@ router.get("/:token", (req, res) => {
   const row = db.prepare(
     `SELECT l.project_id, l.user_id, l.expires_at, p.name, p.project_type, p.design_data, p.width_mm, p.depth_mm, p.revision, p.created_at, p.updated_at, p.photo_file_id
      FROM project_share_links l JOIN projects p ON p.id = l.project_id
-     WHERE l.token_hash = ? AND l.revoked_at IS NULL`,
+     WHERE l.token_hash = ? AND l.revoked_at IS NULL AND p.organization_id IS NULL`,
   ).get(sha256Hex(req.params.token)) as {
     project_id: string; user_id: string; expires_at: number; name: string; project_type: string;
      design_data: string | null; width_mm: number; depth_mm: number; revision: number; created_at: number; updated_at: number; photo_file_id: string | null;
@@ -46,3 +46,4 @@ router.get("/:token", (req, res) => {
 });
 
 export default router;
+

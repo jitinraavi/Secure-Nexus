@@ -186,6 +186,104 @@ CREATE TABLE IF NOT EXISTS project_operations (
 
 CREATE INDEX IF NOT EXISTS idx_project_operations_project ON project_operations(project_id, id DESC);
 
+CREATE TABLE IF NOT EXISTS organizations (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  seat_limit INTEGER NOT NULL DEFAULT 5 CHECK(seat_limit BETWEEN 1 AND 10000),
+  audit_retention_days INTEGER NOT NULL DEFAULT 365 CHECK(audit_retention_days BETWEEN 30 AND 3650),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS organization_members (
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('owner','admin','editor','viewer')),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(organization_id, user_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_owner ON organization_members(organization_id) WHERE role = 'owner';
+CREATE INDEX IF NOT EXISTS idx_organization_members_user ON organization_members(user_id);
+CREATE TABLE IF NOT EXISTS organization_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_organization_audit_org ON organization_audit(organization_id,id DESC);
+CREATE TABLE IF NOT EXISTS organization_sso (
+  organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  issuer TEXT NOT NULL,
+  client_id TEXT NOT NULL,
+  secret_encrypted TEXT,
+  redirect_uri TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  configuration_revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS organization_sso_identities (
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  issuer TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY(organization_id,issuer,subject),
+  UNIQUE(organization_id,user_id)
+);
+CREATE TABLE IF NOT EXISTS organization_sso_flows (
+  state_hash TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  browser_hash TEXT NOT NULL,
+  verifier_encrypted TEXT NOT NULL,
+  nonce_hash TEXT NOT NULL,
+  linking_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_presence (
+  connection_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_project_presence_project ON project_presence(project_id,expires_at);
+CREATE TABLE IF NOT EXISTS project_sync_operations (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  actor_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  operation_id TEXT NOT NULL,
+  client_id TEXT NOT NULL,
+  logical_clock INTEGER NOT NULL,
+  entity_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  value_encrypted TEXT NOT NULL,
+  value_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(project_id,operation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_sync_sequence ON project_sync_operations(project_id,sequence);
+CREATE TABLE IF NOT EXISTS project_event_outbox (
+  event_id INTEGER PRIMARY KEY REFERENCES project_collaboration_events(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER NOT NULL,
+  claim_owner TEXT,
+  claim_until INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_project_event_outbox_due ON project_event_outbox(next_attempt_at,claim_until,event_id);
+CREATE TABLE IF NOT EXISTS project_sync_registers (
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  entity_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  logical_clock INTEGER NOT NULL,
+  client_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  value_encrypted TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  PRIMARY KEY(project_id,entity_id,field)
+);
+
 CREATE TABLE IF NOT EXISTS payments (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -260,20 +358,35 @@ if (!projectCols.includes("archived")) {
 if (!projectCols.includes("is_template")) {
   raw.exec("ALTER TABLE projects ADD COLUMN is_template INTEGER NOT NULL DEFAULT 0;");
 }
+if (!projectCols.includes("organization_id")) {
+  raw.exec("ALTER TABLE projects ADD COLUMN organization_id TEXT REFERENCES organizations(id);");
+}
+raw.exec("CREATE INDEX IF NOT EXISTS idx_projects_organization ON projects(organization_id,updated_at DESC);");
+const flowCols = (raw.prepare("PRAGMA table_info(organization_sso_flows)").all() as { name: string }[]).map((column) => column.name);
+if (!flowCols.includes("linking_user_id")) raw.exec("ALTER TABLE organization_sso_flows ADD COLUMN linking_user_id TEXT REFERENCES users(id) ON DELETE CASCADE;");
+const ssoCols = (raw.prepare("PRAGMA table_info(organization_sso)").all() as { name: string }[]).map((column) => column.name);
+if (!ssoCols.includes("configuration_revision")) raw.exec("ALTER TABLE organization_sso ADD COLUMN configuration_revision INTEGER NOT NULL DEFAULT 1;");
 
 export type Db = typeof raw;
 export const db: Db = raw;
 
 /** Synchronous SQLite transaction for atomic revision and operation-log writes. */
+let transactionDepth = 0;
 export function withTransaction<T>(work: () => T): T {
-  raw.exec("BEGIN IMMEDIATE");
+  const depth = transactionDepth;
+  const savepoint = `groundwork_nested_${depth}`;
+  raw.exec(depth === 0 ? "BEGIN IMMEDIATE" : `SAVEPOINT ${savepoint}`);
+  transactionDepth += 1;
   try {
     const result = work();
-    raw.exec("COMMIT");
+    raw.exec(depth === 0 ? "COMMIT" : `RELEASE SAVEPOINT ${savepoint}`);
     return result;
   } catch (error) {
-    raw.exec("ROLLBACK");
+    if (depth === 0) raw.exec("ROLLBACK");
+    else { raw.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`); raw.exec(`RELEASE SAVEPOINT ${savepoint}`); }
     throw error;
+  } finally {
+    transactionDepth = depth;
   }
 }
 
