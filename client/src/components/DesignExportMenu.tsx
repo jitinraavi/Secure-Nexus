@@ -6,7 +6,9 @@ import type { Design, DocumentationAnnotation, DocumentationRevision, Documentat
 import { documentationFor } from "../lib/documentation";
 import { getCadExchangeStatus, type CadExchangeStatusResponse } from "../api";
 import { COMPLIANCE_PROFILES, validateDesign } from "../lib/compliance";
-import { buildIfcStep, validateIfcRoundTrip } from "../lib/bim";
+import { buildIfcStep, validateIfcProfile, validateIfcRoundTrip } from "../lib/bim";
+import { buildBcfZip } from "../lib/bcf";
+import { technicalGraphicsSettings } from "../lib/technicalGraphics";
 
 export function DesignExportMenu({ design, projectName, onChange }: { design: Design; projectName?: string; onChange?: (design: Design) => void }) {
   const [open, setOpen] = useState(false);
@@ -14,6 +16,8 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
   const docs = documentationFor(design);
   const compliance = validateDesign(design);
   const ifcReport = validateIfcRoundTrip(design);
+  const ifcProfile = validateIfcProfile(buildIfcStep(design), "reference-view");
+  const graphics = technicalGraphicsSettings(design.technicalGraphics);
   const toast = useToast();
   const stem = (projectName || "design").trim().replace(/[^\w-]+/g, "-").toLowerCase() || "design";
   useEffect(() => { getCadExchangeStatus().then(setCadStatus).catch(() => setCadStatus(null)); }, []);
@@ -49,6 +53,12 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
     toast.push({ title: "PDF sheet set downloaded", description: "Documentation metadata, views, annotations, schedules, and planning geometry included.", tone: "success" });
     setOpen(false);
   };
+  const exportBcf = async () => {
+    const blob = await buildBcfZip(design, projectName || "Untitled project");
+    downloadBlob(`${stem}.bcfzip`, blob);
+    toast.push({ title: "BCF coordination package downloaded", description: "Saved review markers and viewpoints were exported for coordination exchange.", tone: "success" });
+    setOpen(false);
+  };
   return (
     <>
       <Button variant="secondary" size="sm" onClick={() => setOpen(true)} aria-label="Open documentation and export options">Docs / exports</Button>
@@ -68,6 +78,19 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           <p className="mt-2 text-xs text-slate-500">Changes are saved with the design and are used by the PDF sheet set.</p>
         </div>
         <DocumentationEditor docs={docs} add={add} update={update} remove={remove} />
+        <section className="mt-3 rounded-xl border border-slate-700 bg-slate-950/30 p-3">
+          <p className="gw-kicker">Technical graphics</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <Select aria-label="Display mode" value={graphics.displayMode} onChange={(e) => onChange?.({ ...design, technicalGraphics: { ...graphics, displayMode: e.target.value as typeof graphics.displayMode } })}>
+              <option value="shaded">Shaded</option><option value="shaded-edges">Shaded + edges</option><option value="hidden-line">Hidden line</option><option value="wireframe">Wireframe</option>
+            </Select>
+            <Input aria-label="Dimension precision" type="number" min="0" max="6" value={graphics.dimensionStyle.precision} onChange={(e) => onChange?.({ ...design, technicalGraphics: { ...graphics, dimensionStyle: { ...graphics.dimensionStyle, precision: Math.min(6, Math.max(0, Number(e.target.value) || 0)) } } })} />
+            <Select aria-label="Dimension units" value={graphics.dimensionStyle.units} onChange={(e) => onChange?.({ ...design, technicalGraphics: { ...graphics, dimensionStyle: { ...graphics.dimensionStyle, units: e.target.value as typeof graphics.dimensionStyle.units } } })}>
+              <option value="m">Metres</option><option value="mm">Millimetres</option><option value="ft-in">Feet / inches</option>
+            </Select>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">DXF layer lineweights and dimension labels use these project settings.</p>
+        </section>
         <section className="mt-3 rounded-xl border border-slate-700 bg-slate-950/30 p-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -102,7 +125,7 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
             <span className="ml-2">{dwgProvider?.message || "Provider status is loading."}</span>
            </div>
            <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-950/40 p-2 text-xs">
-             <div className="flex flex-wrap items-center gap-2"><Badge tone={ifcReport.valid ? "emerald" : "rose"}>{ifcReport.valid ? "IFC validation passed" : "IFC validation blocked"}</Badge><span className="text-slate-500">{ifcReport.parsedEntities} entities · {ifcReport.guidCount} GUIDs · round-trip {ifcReport.normalized ? "stable" : "changed"}</span></div>
+             <div className="flex flex-wrap items-center gap-2"><Badge tone={ifcReport.valid ? "emerald" : "rose"}>{ifcReport.valid ? "IFC validation passed" : "IFC validation blocked"}</Badge><Badge tone={ifcProfile.valid ? "emerald" : "amber"}>{ifcProfile.valid ? "Reference-view preflight passed" : "Reference-view preflight needs work"}</Badge><span className="text-slate-500">{ifcReport.parsedEntities} entities · {ifcReport.guidCount} GUIDs · round-trip {ifcReport.normalized ? "stable" : "changed"}</span></div>
              {ifcReport.issues.length > 0 && <div className="mt-2 max-h-28 space-y-1 overflow-y-auto text-slate-400">{ifcReport.issues.map((issue, index) => <p key={`${issue.code}-${issue.entityId ?? "model"}-${index}`}><span className={issue.severity === "error" ? "text-rose-300" : "text-amber-300"}>{issue.severity}</span> {issue.message}</p>)}</div>}
            </div>
         </div>
@@ -110,6 +133,8 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           <Button onClick={() => void exportFile("dxf")}>Download DXF</Button>
            <Button variant="secondary" disabled={!ifcReport.valid} title={ifcReport.valid ? "" : "Resolve IFC validation errors first"} onClick={() => void exportFile("ifc")}>Download IFC STEP</Button>
           <Button className="sm:col-span-2" variant="outline" disabled={!dwgProvider?.available} title={dwgProvider?.message || "Licensed DWG provider unavailable"}>Download DWG (licensed provider)</Button>
+          <Button variant="secondary" onClick={() => void exportBcf()}>Download BCF coordination package</Button>
+          <Button variant="outline" onClick={() => download(`${stem}-ifc-validation.json`, JSON.stringify({ roundTrip: ifcReport, profile: ifcProfile }, null, 2), "application/json")}>Download IFC validation report</Button>
            <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download sheet set with screening report</Button>
         </div>
       </Modal>

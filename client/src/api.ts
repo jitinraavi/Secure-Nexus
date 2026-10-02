@@ -16,6 +16,9 @@ import type {
   Design,
   SharedProject,
   CollaborationItem,
+  CollaborationPresence,
+  ProjectMember,
+  ProjectObjectLock,
 } from "./types";
 
 export class ApiError extends Error {
@@ -340,12 +343,25 @@ export interface CollaborationEvent {
   type: string;
   revision: number;
   createdAt: number;
+  actorId?: string;
 }
 
-export function subscribeToProject(id: string, onEvent: (event: CollaborationEvent) => void, onStatus: (status: "connected" | "disconnected") => void) {
+export function subscribeToProject(
+  id: string,
+  onEvent: (event: CollaborationEvent) => void,
+  onStatus: (status: "connected" | "disconnected") => void,
+  onPresence?: (presence: CollaborationPresence) => void,
+) {
   const source = new EventSource(`/api/collaboration/${encodeURIComponent(id)}/events`);
+  let lastEventId = 0;
   source.addEventListener("ready", () => onStatus("connected"));
-  source.addEventListener("collaboration", (event) => onEvent(JSON.parse((event as MessageEvent).data) as CollaborationEvent));
+  source.addEventListener("collaboration", (event) => {
+    const item = JSON.parse((event as MessageEvent).data) as CollaborationEvent;
+    if (item.id <= lastEventId) return;
+    lastEventId = item.id;
+    onEvent(item);
+  });
+  source.addEventListener("presence", (event) => onPresence?.(JSON.parse((event as MessageEvent).data) as CollaborationPresence));
   source.onerror = () => onStatus("disconnected");
   return () => source.close();
 }
@@ -356,6 +372,60 @@ export async function listCollaborationItems(id: string): Promise<CollaborationI
 
 export function createCollaborationItem(id: string, kind: "comment" | "issue", body: string) {
   return request<CollaborationItem>(`/api/collaboration/${id}/items`, { method: "POST", body: JSON.stringify({ kind, body }) });
+}
+
+export function updateCollaborationItem(id: string, itemId: string, status: "open" | "resolved") {
+  return request<{ ok: boolean; status: string; updatedAt: number }>(`/api/collaboration/${id}/items/${encodeURIComponent(itemId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function listProjectMembers(id: string): Promise<{ members: ProjectMember[]; currentRole: ProjectMember["role"] }> {
+  return request<{ members: ProjectMember[]; currentRole: ProjectMember["role"] }>(`/api/collaboration/${id}/members`, { method: "GET" });
+}
+
+export function addProjectMember(id: string, identifier: string, role: "editor" | "viewer") {
+  return request<ProjectMember>(`/api/collaboration/${id}/members`, {
+    method: "POST",
+    body: JSON.stringify({ identifier, role }),
+  });
+}
+
+export function updateProjectMember(id: string, userId: string, role: "editor" | "viewer") {
+  return request<{ ok: boolean }>(`/api/collaboration/${id}/members/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function removeProjectMember(id: string, userId: string) {
+  return request<{ ok: boolean }>(`/api/collaboration/${id}/members/${encodeURIComponent(userId)}`, { method: "DELETE" });
+}
+
+export async function listProjectLocks(id: string): Promise<ProjectObjectLock[]> {
+  return (await request<{ locks: ProjectObjectLock[] }>(`/api/collaboration/${id}/locks`, { method: "GET" })).locks;
+}
+
+export function acquireProjectLock(id: string, objectId: string, ttlSeconds = 90) {
+  return request<ProjectObjectLock>(`/api/collaboration/${id}/locks`, {
+    method: "POST",
+    body: JSON.stringify({ objectId, ttlSeconds }),
+  });
+}
+
+export function releaseProjectLock(id: string, objectId: string) {
+  return request<{ ok: boolean }>(`/api/collaboration/${id}/locks/${encodeURIComponent(objectId)}`, { method: "DELETE" });
+}
+
+export function submitProjectOperation(
+  id: string,
+  operation: { operationId: string; baseRevision: number; kind: "set" | "merge" | "delete"; path: string[]; value?: unknown },
+) {
+  return request<{ ok: boolean; revision: number; duplicate: boolean }>(`/api/collaboration/${id}/operations`, {
+    method: "POST",
+    body: JSON.stringify(operation),
+  });
 }
 
 export async function uploadProjectPhoto(id: string, file: File) {
@@ -470,3 +540,4 @@ export function confirmDemoPayment(paymentId: string) {
 export function getPayment(id: string): Promise<{ payment: PaymentRecord }> {
   return request<{ payment: PaymentRecord }>(`/api/payments/${id}`, { method: "GET" });
 }
+

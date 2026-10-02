@@ -51,6 +51,7 @@ export interface Project {
   updatedAt: number;
   hasPhoto: boolean;
   revision: number;
+  role?: "owner" | "editor" | "viewer";
 }
 
 export interface ProjectDetail extends Project {
@@ -90,10 +91,34 @@ export interface VisualizationSettings {
 
 export interface CollaborationItem {
   id: string;
+  userId?: string;
   kind: "comment" | "issue";
+  body?: string;
   status: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ProjectMember {
+  userId: string;
+  email: string;
+  username: string | null;
+  role: "owner" | "editor" | "viewer";
+  createdAt?: number;
+}
+
+export interface ProjectObjectLock {
+  objectId: string;
+  userId: string;
+  token?: string;
+  expiresAt: number;
+  updatedAt: number;
+}
+
+export interface CollaborationPresence {
+  projectId: string;
+  count: number;
+  users: { userId: string; connections: number }[];
 }
 
 export interface ProjectRevision {
@@ -309,7 +334,13 @@ export interface LandSite {
 
 export type TerrainProfileAxis = "x" | "z";
 
-/** Local terrain controls. The elevation surface is deterministic when no DEM is available. */
+export interface TerrainSample {
+  x: number;
+  z: number;
+  elevationM: number;
+}
+
+/** Local terrain controls. Survey samples override the deterministic fallback surface. */
 export interface TerrainSettings {
   enabled: boolean;
   baseElevationM: number;
@@ -318,6 +349,11 @@ export interface TerrainSettings {
   contoursVisible: boolean;
   profileAxis: TerrainProfileAxis;
   profileOffsetM: number;
+  source?: "procedural" | "survey";
+  projectCrs?: string;
+  localOriginEasting?: number;
+  localOriginNorthing?: number;
+  samples?: TerrainSample[];
 }
 
 export interface UndergroundParking {
@@ -359,9 +395,11 @@ export interface AmenityData {
   phaseId?: string;
 }
 
-export type DraftElementKind = "line" | "rectangle" | "circle" | "dimension" | "wall" | "slab" | "column" | "roof";
+export type DraftElementKind = "line" | "polyline" | "arc" | "spline" | "rectangle" | "circle" | "dimension" | "wall" | "slab" | "column" | "roof";
 
-export type ParametricConstraintKind = "alignment" | "parallel" | "perpendicular" | "level" | "equal";
+export type ParametricConstraintKind = "alignment" | "coincident" | "collinear" | "parallel" | "perpendicular" | "level" | "equal";
+
+export type ParametricConstraintAnchor = "center" | "start" | "end" | "midpoint";
 
 export type DraftGrip = "width-start" | "width-end" | "depth-start" | "depth-end";
 
@@ -392,7 +430,9 @@ export interface ParametricConstraint {
   id: string;
   kind: ParametricConstraintKind;
   targetId?: string;
-  axis?: "x" | "z";
+  axis?: "x" | "z" | "both";
+  anchor?: ParametricConstraintAnchor;
+  targetAnchor?: ParametricConstraintAnchor;
   locked?: boolean;
 }
 
@@ -406,6 +446,11 @@ export interface DraftElement {
   h?: number;
   rotationDeg: number;
   color: string;
+  /** Optional local-space path geometry for CAD curves and polylines. */
+  points?: { x: number; z: number }[];
+  radiusM?: number;
+  startAngleDeg?: number;
+  endAngleDeg?: number;
   /** Optional civil annotation metadata; geometry remains editable in metres. */
   civilKind?: "contour" | "alignment" | "grade";
   elevationM?: number;
@@ -424,6 +469,10 @@ export interface DraftingSettings {
   orthogonal: boolean;
   angleIncrement: number;
   alignment: boolean;
+  endpointSnap?: boolean;
+  midpointSnap?: boolean;
+  centerSnap?: boolean;
+  snapTolerance?: number;
 }
 
 export interface DesignLayer {
@@ -431,6 +480,36 @@ export interface DesignLayer {
   name: string;
   visible: boolean;
   color: string;
+  locked?: boolean;
+  frozen?: boolean;
+  lineweight?: number;
+}
+
+export interface DimensionStyle {
+  name: string;
+  textHeightMm: number;
+  arrowSizeMm: number;
+  precision: number;
+  units: "m" | "mm" | "ft-in";
+  suppressTrailingZeros: boolean;
+}
+
+export interface TechnicalGraphicsSettings {
+  displayMode: "shaded" | "shaded-edges" | "hidden-line" | "wireframe";
+  lineweights: {
+    walls: number;
+    structure: number;
+    mep: number;
+    furniture: number;
+    dimensions: number;
+    annotations: number;
+    site: number;
+  };
+  dimensionStyle: DimensionStyle;
+  showAxes: boolean;
+  showNorthArrow: boolean;
+  showScaleBar: boolean;
+  showElevationMarkers: boolean;
 }
 
 export type SectionAxis = "x" | "y" | "z";
@@ -802,12 +881,25 @@ export interface InfraDesign {
   review?: DesignReview;
   section?: SectionSettings;
   terrain?: TerrainSettings;
+  civil?: CivilSettings;
   location?: SiteLocation;
   highway?: HighwayDesign;
   airport?: AirportDesign;
   ports?: PortDesign;
   dams?: DamDesign;
   mep?: MepDesign;
+}
+
+/** Local SI corridor and rational-method drainage planning inputs. */
+export interface CivilSettings {
+  stationIntervalM: number;
+  corridorWidthM: number;
+  startElevationM: number;
+  gradePct: number;
+  crossfallPct: number;
+  rainfallMmPerHour: number;
+  runoffCoefficient: number;
+  catchmentAreaHa: number;
 }
 
 export interface CommunityDesign {
@@ -846,6 +938,7 @@ export interface Design {
   /** Optional Revit/Archicad-style documentation package; absent in legacy designs. */
   documentation?: DocumentationMetadata;
   compliance?: { profileId: string };
+  technicalGraphics?: TechnicalGraphicsSettings;
   visualization?: VisualizationSettings;
 }
 
@@ -896,3 +989,4 @@ export function defaultDesign(): Design {
     mep: { version: 1, enabled: true, elements: [] },
   };
 }
+

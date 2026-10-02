@@ -7,6 +7,8 @@ import { db, now } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { z } from "zod";
 import { emitProjectEvent } from "../collaboration.js";
+import { conflictingDesignLock } from "../designLocks.js";
+import { canManageProject, canReadProject, canWriteProject, getProjectAccess } from "../projectAccess.js";
 
 const router = Router();
 const VAULT_KEY = deriveVaultKey(MASTER_KEY);
@@ -108,10 +110,14 @@ const revisionSchema = z.object({ name: z.string().trim().min(1).max(80), design
 const shareLinkSchema = z.object({ expiresInHours: z.number().int().min(1).max(24 * 30).default(24 * 7) });
 
 function projectForUser(projectId: string, userId: string) {
-  return db.prepare("SELECT id, name, project_type, design_data, width_mm, depth_mm, revision FROM projects WHERE id = ? AND user_id = ?")
-    .get(projectId, userId) as {
-      id: string; name: string; project_type: string; design_data: string | null; width_mm: number; depth_mm: number; revision: number;
+  const access = getProjectAccess(projectId, userId);
+  if (!canReadProject(access)) return undefined;
+  const row = db.prepare("SELECT id, user_id, name, project_type, design_data, width_mm, depth_mm, revision, photo_file_id, created_at, updated_at FROM projects WHERE id = ?")
+    .get(projectId) as {
+      id: string; user_id: string; name: string; project_type: string; design_data: string | null; width_mm: number; depth_mm: number; revision: number;
+      photo_file_id: string | null; created_at: number; updated_at: number;
     } | undefined;
+  return row ? { ...row, ownerId: access.ownerId, role: access.role } : undefined;
 }
 
 function revisionResponse(row: { id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number }) {
@@ -120,32 +126,21 @@ function revisionResponse(row: { id: string; name: string; project_type: string;
 
 /* GET /api/projects */
 router.get("/", (req: AuthedRequest, res) => {
-  const rows = db
-    .prepare(
-      "SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision FROM projects p WHERE p.user_id = ? ORDER BY p.updated_at DESC",
-    )
-    .all(req.user!.id) as {
-    id: string;
-    name: string;
-    project_type: string;
-    width_mm: number;
-    depth_mm: number;
-    created_at: number;
-    updated_at: number;
-    photo_file_id: string | null;
-    revision: number;
+  const rows = db.prepare(
+    `SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision, 'owner' AS role
+     FROM projects p WHERE p.user_id = ?
+     UNION ALL
+     SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision, pm.role AS role
+     FROM project_members pm JOIN projects p ON p.id = pm.project_id WHERE pm.user_id = ?
+     ORDER BY updated_at DESC`,
+  ).all(req.user!.id, req.user!.id) as {
+    id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number; updated_at: number;
+    photo_file_id: string | null; revision: number; role: "owner" | "editor" | "viewer";
   }[];
   res.json({
     projects: rows.map((p) => ({
-      id: p.id,
-      name: p.name,
-      projectType: p.project_type,
-      widthMm: p.width_mm,
-      depthMm: p.depth_mm,
-      createdAt: p.created_at,
-      updatedAt: p.updated_at,
-      hasPhoto: Boolean(p.photo_file_id),
-      revision: p.revision,
+      id: p.id, name: p.name, projectType: p.project_type, widthMm: p.width_mm, depthMm: p.depth_mm,
+      createdAt: p.created_at, updatedAt: p.updated_at, hasPhoto: Boolean(p.photo_file_id), revision: p.revision, role: p.role,
     })),
   });
 });
@@ -181,22 +176,7 @@ router.post(
 
 /* GET /api/projects/:id */
 router.get("/:id", (req: AuthedRequest, res) => {
-  const row = db
-    .prepare("SELECT * FROM projects WHERE id = ? AND user_id = ?")
-    .get(req.params.id, req.user!.id) as
-    | {
-        id: string;
-        name: string;
-        project_type: string;
-        design_data: string | null;
-        width_mm: number;
-        depth_mm: number;
-        photo_file_id: string | null;
-        created_at: number;
-        updated_at: number;
-        revision: number;
-      }
-    | undefined;
+  const row = projectForUser(req.params.id, req.user!.id);
   if (!row) {
     res.status(404).json({ error: "Project not found" });
     return;
@@ -204,7 +184,7 @@ router.get("/:id", (req: AuthedRequest, res) => {
   let design: unknown = null;
   if (row.design_data) {
     try {
-      design = JSON.parse(decryptForUser(row.design_data, req.user!.id));
+      design = JSON.parse(decryptForUser(row.design_data, row.ownerId));
     } catch (error) {
       console.error(`[groundwork] Could not open project ${row.id}:`, error);
       res.status(422).json({ error: "This project cannot be opened because its stored design data is unreadable. Contact support." });
@@ -222,6 +202,7 @@ router.get("/:id", (req: AuthedRequest, res) => {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     revision: row.revision,
+    role: row.role,
   });
 });
 
@@ -229,13 +210,12 @@ router.get("/:id", (req: AuthedRequest, res) => {
 router.patch(
   "/:id",
   asyncHandler(async (req: AuthedRequest, res) => {
-    const row = db
-      .prepare("SELECT id, name FROM projects WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id) as { id: string; name: string } | undefined;
-    if (!row) {
-      res.status(404).json({ error: "Project not found" });
+    const access = getProjectAccess(req.params.id, req.user!.id);
+    if (!canWriteProject(access)) {
+      res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" });
       return;
     }
+    const row = db.prepare("SELECT id, name, revision FROM projects WHERE id = ?").get(req.params.id) as { id: string; name: string; revision: number };
 
     let parsedBody: Record<string, unknown> = {};
     try {
@@ -247,7 +227,7 @@ router.patch(
 
     const hasDesign = typeof parsedBody.designData === "string";
     const expectedRevision = typeof parsedBody.baseRevision === "number" ? parsedBody.baseRevision : null;
-    const current = db.prepare("SELECT revision FROM projects WHERE id = ? AND user_id = ?").get(req.params.id, req.user!.id) as { revision: number };
+    const current = { revision: row.revision };
     if (expectedRevision !== null && expectedRevision !== current.revision) {
       res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: current.revision });
       return;
@@ -265,7 +245,11 @@ router.patch(
         res.status(400).json({ error: "Design data is invalid" });
         return;
       }
-      designPayload = encryptForUser(parsed.data.designData, req.user!.id);
+      designPayload = encryptForUser(parsed.data.designData, access.ownerId);
+      const stored = db.prepare("SELECT design_data FROM projects WHERE id = ?").get(req.params.id) as { design_data: string | null };
+      const before: unknown = stored.design_data ? JSON.parse(decryptForUser(stored.design_data, access.ownerId)) : null;
+      const lockedObject = conflictingDesignLock(req.params.id, req.user!.id, before, JSON.parse(parsed.data.designData));
+      if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
     }
 
     const fields: string[] = [];
@@ -297,14 +281,13 @@ router.patch(
     fields.push("updated_at = ?");
     values.push(now());
     values.push(req.params.id);
-    values.push(req.user!.id);
 
     fields.push("revision = revision + 1");
     const result = db.prepare(
-      `UPDATE projects SET ${fields.join(", ")} WHERE id = ? AND user_id = ?${expectedRevision !== null ? " AND revision = ?" : ""}`,
+      `UPDATE projects SET ${fields.join(", ")} WHERE id = ?${expectedRevision !== null ? " AND revision = ?" : ""}`,
     ).run(...values, ...(expectedRevision !== null ? [expectedRevision] : []));
     if (!result.changes) {
-      const latest = db.prepare("SELECT revision FROM projects WHERE id = ? AND user_id = ?").get(req.params.id, req.user!.id) as { revision: number };
+      const latest = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.id) as { revision: number };
       res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision });
       return;
     }
@@ -325,8 +308,8 @@ router.get("/:id/revisions", (req: AuthedRequest, res) => {
     return;
   }
   const rows = db.prepare(
-    "SELECT id, name, project_type, width_mm, depth_mm, created_at FROM project_revisions WHERE project_id = ? AND user_id = ? ORDER BY created_at DESC",
-  ).all(req.params.id, req.user!.id) as { id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number }[];
+    "SELECT id, name, project_type, width_mm, depth_mm, created_at FROM project_revisions WHERE project_id = ? ORDER BY created_at DESC",
+  ).all(req.params.id) as { id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number }[];
   res.json({ revisions: rows.map(revisionResponse) });
 });
 
@@ -338,8 +321,9 @@ router.post("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
     return;
   }
   const project = projectForUser(req.params.id, req.user!.id);
-  if (!project) {
-    res.status(404).json({ error: "Project not found" });
+  const access = getProjectAccess(req.params.id, req.user!.id);
+  if (!project || !canWriteProject(access)) {
+    res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" });
     return;
   }
   const revision = {
@@ -347,10 +331,10 @@ router.post("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
     width_mm: project.width_mm, depth_mm: project.depth_mm, created_at: now(),
   };
   const snapshotData = parsed.data.designData
-    ? encryptForUser(parsed.data.designData, req.user!.id)
+    ? encryptForUser(parsed.data.designData, project.ownerId)
     : encryptForUser(
-        project.design_data ? decryptForUser(project.design_data, req.user!.id) : "null",
-        req.user!.id,
+        project.design_data ? decryptForUser(project.design_data, project.ownerId) : "null",
+        project.ownerId,
       );
   db.prepare(
     "INSERT INTO project_revisions (id, project_id, user_id, name, design_data, project_type, width_mm, depth_mm, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -363,32 +347,38 @@ router.post("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
 /* POST /api/projects/:id/revisions/:revisionId/restore */
 router.post("/:id/revisions/:revisionId/restore", asyncHandler(async (req: AuthedRequest, res) => {
   const project = projectForUser(req.params.id, req.user!.id);
+  const access = getProjectAccess(req.params.id, req.user!.id);
   const revision = db.prepare(
-    "SELECT * FROM project_revisions WHERE id = ? AND project_id = ? AND user_id = ?",
-  ).get(req.params.revisionId, req.params.id, req.user!.id) as {
+    "SELECT * FROM project_revisions WHERE id = ? AND project_id = ?",
+  ).get(req.params.revisionId, req.params.id) as {
     id: string; name: string; design_data: string; project_type: string; width_mm: number; depth_mm: number;
   } | undefined;
-  if (!project || !revision) {
-    res.status(404).json({ error: "Project or snapshot not found" });
+  if (!project || !revision || !canWriteProject(access)) {
+    res.status(access && !canWriteProject(access) ? 403 : 404).json({ error: access && !canWriteProject(access) ? "Editor access required" : "Project or snapshot not found" });
     return;
   }
-  // Keep the encrypted payload intact; it remains bound to this user's vault AAD.
-  db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND user_id = ?")
-    .run(revision.design_data, revision.project_type, revision.width_mm, revision.depth_mm, now(), project.id, req.user!.id);
+  // Keep the encrypted payload intact; it remains bound to the project owner's vault AAD.
+  const before = project.design_data ? JSON.parse(decryptForUser(project.design_data, project.ownerId)) : null;
+  const restored = JSON.parse(decryptForUser(revision.design_data, project.ownerId)) as unknown;
+  const lockedObject = conflictingDesignLock(project.id, req.user!.id, before, restored);
+  if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
+  db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
+    .run(revision.design_data, revision.project_type, revision.width_mm, revision.depth_mm, now(), project.id);
   const nextRevision = project.revision + 1;
   emitProjectEvent(project.id, req.user!.id, "design.updated", nextRevision, { restoredRevisionId: revision.id });
   logAudit(req.user!.id, "project.revision_restored", { projectId: project.id, revisionId: revision.id }, req);
-  res.json({ ok: true, revision: nextRevision, name: revision.name, projectType: revision.project_type, widthMm: revision.width_mm, depthMm: revision.depth_mm, design: JSON.parse(decryptForUser(revision.design_data, req.user!.id)) });
+  res.json({ ok: true, revision: nextRevision, name: revision.name, projectType: revision.project_type, widthMm: revision.width_mm, depthMm: revision.depth_mm, design: JSON.parse(decryptForUser(revision.design_data, project.ownerId)) });
 }));
 
 /* GET /api/projects/:id/share-links */
 router.get("/:id/share-links", (req: AuthedRequest, res) => {
-  if (!projectForUser(req.params.id, req.user!.id)) {
-    res.status(404).json({ error: "Project not found" });
+  const access = getProjectAccess(req.params.id, req.user!.id);
+  if (!canManageProject(access)) {
+    res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" });
     return;
   }
   const rows = db.prepare("SELECT id, expires_at, revoked_at, created_at FROM project_share_links WHERE project_id = ? AND user_id = ? ORDER BY created_at DESC")
-    .all(req.params.id, req.user!.id) as { id: string; expires_at: number; revoked_at: number | null; created_at: number }[];
+    .all(req.params.id, access.ownerId) as { id: string; expires_at: number; revoked_at: number | null; created_at: number }[];
   res.json({ links: rows.map((row) => ({ id: row.id, expiresAt: row.expires_at, revokedAt: row.revoked_at, createdAt: row.created_at, active: !row.revoked_at && row.expires_at > now() })) });
 });
 
@@ -396,12 +386,13 @@ router.get("/:id/share-links", (req: AuthedRequest, res) => {
 router.post("/:id/share-links", asyncHandler(async (req: AuthedRequest, res) => {
   const parsed = shareLinkSchema.safeParse(req.body || {});
   const project = projectForUser(req.params.id, req.user!.id);
+  const access = getProjectAccess(req.params.id, req.user!.id);
   if (!parsed.success) {
     res.status(400).json({ error: "Expiry must be between 1 hour and 30 days" });
     return;
   }
-  if (!project) {
-    res.status(404).json({ error: "Project not found" });
+  if (!project || !canManageProject(access)) {
+    res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" });
     return;
   }
   const token = randomToken(32);
@@ -409,15 +400,17 @@ router.post("/:id/share-links", asyncHandler(async (req: AuthedRequest, res) => 
   const createdAt = now();
   const expiresAt = createdAt + parsed.data.expiresInHours * 3600;
   db.prepare("INSERT INTO project_share_links (id, project_id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(id, project.id, req.user!.id, sha256Hex(token), expiresAt, createdAt);
+    .run(id, project.id, access.ownerId, sha256Hex(token), expiresAt, createdAt);
   logAudit(req.user!.id, "project.share_link_created", { projectId: project.id, expiresAt }, req);
   res.status(201).json({ id, token, expiresAt, url: `/share/${token}` });
 }));
 
 /* DELETE /api/projects/:id/share-links/:linkId */
 router.delete("/:id/share-links/:linkId", asyncHandler(async (req: AuthedRequest, res) => {
+  const access = getProjectAccess(req.params.id, req.user!.id);
+  if (!canManageProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" }); return; }
   const result = db.prepare("UPDATE project_share_links SET revoked_at = ? WHERE id = ? AND project_id = ? AND user_id = ? AND revoked_at IS NULL")
-    .run(now(), req.params.linkId, req.params.id, req.user!.id);
+    .run(now(), req.params.linkId, req.params.id, access.ownerId);
   if (!result.changes) {
     res.status(404).json({ error: "Share link not found" });
     return;
@@ -431,11 +424,9 @@ router.post(
   "/:id/photo",
   upload.single("photo"),
   (req: AuthedRequest, res) => {
-    const row = db
-      .prepare("SELECT id FROM projects WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id);
-    if (!row) {
-      res.status(404).json({ error: "Project not found" });
+    const access = getProjectAccess(req.params.id, req.user!.id);
+    if (!canWriteProject(access)) {
+      res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" });
       return;
     }
     if (!req.file) {
@@ -451,29 +442,27 @@ router.post(
     const payload = encryptAesGcm(
       req.file.buffer.toString("base64"),
       VAULT_KEY,
-      `${FILE_AAD}:${req.user!.id}`,
+      `${FILE_AAD}:${access.ownerId}`,
     );
     const fileId = randomId();
     db.prepare(
       "INSERT INTO files (id, user_id, mime, iv, tag, ciphertext, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(fileId, req.user!.id, mime, payload.iv, payload.tag, payload.data, req.file.size, now());
+    ).run(fileId, access.ownerId, mime, payload.iv, payload.tag, payload.data, req.file.size, now());
 
     const oldFile = (
-      db.prepare("SELECT photo_file_id FROM projects WHERE id = ? AND user_id = ?").get(
+      db.prepare("SELECT photo_file_id FROM projects WHERE id = ?").get(
         req.params.id,
-        req.user!.id,
       ) as { photo_file_id: string | null }
     ).photo_file_id;
 
-    db.prepare("UPDATE projects SET photo_file_id = ?, updated_at = ? WHERE id = ? AND user_id = ?").run(
+    db.prepare("UPDATE projects SET photo_file_id = ?, updated_at = ? WHERE id = ?").run(
       fileId,
       now(),
       req.params.id,
-      req.user!.id,
     );
 
     if (oldFile) {
-      db.prepare("DELETE FROM files WHERE id = ? AND user_id = ?").run(oldFile, req.user!.id);
+      db.prepare("DELETE FROM files WHERE id = ? AND user_id = ?").run(oldFile, access.ownerId);
     }
     logAudit(req.user!.id, "project.photo_uploaded", { mime, size: req.file.size }, req);
     res.json({ ok: true, fileId });
@@ -482,47 +471,36 @@ router.post(
 
 /* GET /api/projects/:id/photo */
 router.get("/:id/photo", (req: AuthedRequest, res) => {
-  const row = db
-    .prepare(
-      "SELECT p.photo_file_id FROM projects p WHERE p.id = ? AND p.user_id = ?",
-    )
-    .get(req.params.id, req.user!.id) as { photo_file_id: string | null } | undefined;
+  const access = getProjectAccess(req.params.id, req.user!.id);
+  if (!canReadProject(access)) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const row = db.prepare("SELECT photo_file_id FROM projects WHERE id = ?").get(req.params.id) as { photo_file_id: string | null } | undefined;
   if (!row?.photo_file_id) {
     res.status(404).json({ error: "No photo" });
     return;
   }
-  const file = db
-    .prepare("SELECT mime, iv, tag, ciphertext FROM files WHERE id = ? AND user_id = ?")
-    .get(row.photo_file_id, req.user!.id) as
-    | { mime: string; iv: string; tag: string; ciphertext: string }
-    | undefined;
+  const file = db.prepare("SELECT mime, iv, tag, ciphertext FROM files WHERE id = ? AND user_id = ?")
+    .get(row.photo_file_id, access.ownerId) as { mime: string; iv: string; tag: string; ciphertext: string } | undefined;
   if (!file) {
     res.status(404).json({ error: "No photo" });
     return;
   }
-  const base64 = decryptAesGcm(
-    { iv: file.iv, tag: file.tag, data: file.ciphertext },
-    VAULT_KEY,
-    `${FILE_AAD}:${req.user!.id}`,
-  );
+  const base64 = decryptAesGcm({ iv: file.iv, tag: file.tag, data: file.ciphertext }, VAULT_KEY, `${FILE_AAD}:${access.ownerId}`);
   res.set("Content-Type", file.mime);
   res.set("Cache-Control", "private, no-store");
   res.set("X-Content-Type-Options", "nosniff");
-  const buf = Buffer.from(base64, "base64");
-  res.send(buf);
+  res.send(Buffer.from(base64, "base64"));
 });
 
 /* POST /api/projects/:id/export — records an export event (Downloaded client-side) */
 router.post(
   "/:id/export",
   asyncHandler(async (req: AuthedRequest, res) => {
-    const row = db
-      .prepare("SELECT name FROM projects WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id) as { name: string } | undefined;
-    if (!row) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
+    const access = getProjectAccess(req.params.id, req.user!.id);
+    if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
+    const row = db.prepare("SELECT name FROM projects WHERE id = ?").get(req.params.id) as { name: string };
     const format =
       typeof req.body?.format === "string" && /^[a-z0-9-]{1,20}$/i.test(req.body.format)
         ? String(req.body.format).toUpperCase()
@@ -536,19 +514,16 @@ router.post(
 router.delete(
   "/:id",
   asyncHandler(async (req: AuthedRequest, res) => {
-    const row = db
-      .prepare("SELECT id, name, photo_file_id FROM projects WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id) as
-      | { id: string; name: string; photo_file_id: string | null }
-      | undefined;
-    if (!row) {
-      res.status(404).json({ error: "Project not found" });
+    const access = getProjectAccess(req.params.id, req.user!.id);
+    if (!canManageProject(access)) {
+      res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" });
       return;
     }
+    const row = db.prepare("SELECT id, name, photo_file_id FROM projects WHERE id = ?").get(req.params.id) as { id: string; name: string; photo_file_id: string | null };
     if (row.photo_file_id) {
-      db.prepare("DELETE FROM files WHERE id = ? AND user_id = ?").run(row.photo_file_id, req.user!.id);
+      db.prepare("DELETE FROM files WHERE id = ? AND user_id = ?").run(row.photo_file_id, access.ownerId);
     }
-    db.prepare("DELETE FROM projects WHERE id = ? AND user_id = ?").run(req.params.id, req.user!.id);
+    db.prepare("DELETE FROM projects WHERE id = ?").run(req.params.id);
     logAudit(req.user!.id, "project.deleted", { name: row.name }, req);
     res.json({ ok: true });
   }),
@@ -557,3 +532,4 @@ router.delete(
 // Kept for reference: request typing helper
 export type { Request };
 export default router;
+

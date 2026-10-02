@@ -345,6 +345,53 @@ export function validateIfcRoundTrip(design: Design): IfcValidationReport {
   return { ...report, normalized: normalizeIfcStep(step) === normalizeIfcStep(normalizeIfcStep(step)) };
 }
 
+export type IfcMvdProfile = "coordination" | "reference-view" | "design-transfer";
+
+export interface IfcProfileValidation {
+  profile: IfcMvdProfile;
+  valid: boolean;
+  issues: IfcValidationIssue[];
+  requirements: { id: string; passed: boolean; message: string }[];
+}
+
+/**
+ * Local MVD/IDS-style gate for Groundwork exports.
+ * This is intentionally a deterministic pre-flight check, not a replacement
+ * for buildingSMART schema/IDS validators used in interoperability certification.
+ */
+export function validateIfcProfile(step: string, profile: IfcMvdProfile = "coordination"): IfcProfileValidation {
+  const base = validateIfcStep(step);
+  const requirements: IfcProfileValidation["requirements"] = [];
+  const require = (id: string, passed: boolean, message: string) => requirements.push({ id, passed, message });
+  const count = (entity: string) => (step.match(new RegExp(`=${entity}\\(`, "g")) ?? []).length;
+
+  require("spatial-structure", count("IFCPROJECT") > 0 && count("IFCSITE") > 0 && count("IFCBUILDING") > 0 && count("IFCBUILDINGSTOREY") > 0, "Project, site, building and storey spatial structure must exist.");
+  require("containment", count("IFCRELCONTAINEDINSPATIALSTRUCTURE") > 0, "Products must be related to spatial containers.");
+  require("properties", count("IFCPROPERTYSET") > 0 && count("IFCRELDEFINESBYPROPERTIES") > 0, "Exported products must carry property-set relationships.");
+  require("quantities", count("IFCELEMENTQUANTITY") > 0, "Exported products must include base quantities.");
+  require("geometry", count("IFCSHAPEREPRESENTATION") > 0, "Exported products must carry shape representations.");
+
+  if (profile === "reference-view" || profile === "design-transfer") {
+    require("materials", count("IFCMATERIAL") > 0 || /Material/i.test(step), "Reference exchange should retain material intent.");
+    require("openings", count("IFCOPENINGELEMENT") === 0 || (count("IFCRELVOIDSELEMENT") > 0 && count("IFCRELFILLSELEMENT") > 0), "Hosted openings must preserve void/fill relationships.");
+    require("georeferencing", count("IFCMAPCONVERSION") > 0 || count("IFCSITE") > 0, "Site/georeferencing context must be represented.");
+  }
+  if (profile === "design-transfer") {
+    require("classification", count("IFCCLASSIFICATION") > 0 || /classification/i.test(step), "Design transfer should retain classification metadata.");
+    require("type-data", count("IFCRELDEFINESBYTYPE") > 0 || /Family|Type/i.test(step), "Design transfer should retain reusable type/family intent.");
+  }
+
+  const issues = [
+    ...base.issues,
+    ...requirements.filter((item) => !item.passed).map((item) => ({
+      code: `profile-${item.id}`,
+      message: item.message,
+      severity: (profile === "coordination" ? "warning" : "error") as "error" | "warning",
+    })),
+  ];
+  return { profile, valid: !issues.some((issue) => issue.severity === "error"), issues, requirements };
+}
+
 /** Checks source data before it is lowered into the intentionally limited IFC representation. */
 export function validateBimExchange(design: Design): BimValidationIssue[] {
   const exchange = JSON.parse(buildBimExchange(design)) as { entities: ExchangeEntity[] };
