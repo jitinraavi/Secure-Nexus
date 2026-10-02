@@ -133,7 +133,7 @@ export function Editor() {
       setPendingDraft(recovered); setRecoveryWarning(recovery.error ?? "");
       pendingBaseRevision.current = recovered?.baseRevision ?? null;
       blockedSaveStatus.current = recovered?.lastSaveStatus;
-      setName(document.name); setProjectType(document.projectType); setDesign(document.design);
+      setName(recovered?.name ?? document.name); setProjectType(recovered?.projectType ?? document.projectType); setDesign(recovered?.design ?? document.design);
       setPhotoUrl(project.hasPhoto ? `/api/projects/${id}/photo?v=${project.updatedAt}` : null);
       setLoaded(true);
     } catch (err) {

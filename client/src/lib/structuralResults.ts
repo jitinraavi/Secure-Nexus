@@ -58,7 +58,7 @@ export const MAX_STRUCTURAL_RESULT_BYTES = 6000000;
 export const MAX_STRUCTURAL_RESULT_ROWS = 20000;
 const plain = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const boundedText = (value: unknown, max: number, required = true): value is string => typeof value === "string" && value.length <= max && (!required || Boolean(value.trim()));
-const vector = (value: unknown): value is StructuralVector => plain(value) && [value.x, value.y, value.z].every(item => typeof item === "number" && Number.isFinite(item)) && Number.isFinite(Math.hypot(Number(value.x), Number(value.y), Number(value.z)));
+const vector = (value: unknown): value is StructuralVector => plain(value) && [value.x, value.y, value.z].every(item => typeof item === "number" && Number.isFinite(item) && Math.abs(item) <= 1e6) && Number.isFinite(Math.hypot(Number(value.x), Number(value.y), Number(value.z)));
 const copyVector = (value: StructuralVector): StructuralVector => ({ x: value.x, y: value.y, z: value.z });
 const numericFields = ["axialKN", "shearYKN", "shearZKN", "torsionKNm", "momentYKNm", "momentZKNm"] as const;
 const siUnits = { length: "m", force: "kN", moment: "kN*m", rotation: "rad" } as const;
@@ -84,7 +84,7 @@ export function inspectStructuralResults(value: unknown, design: CommunityDesign
   const nodeResults: StructuralNodeResult[] = [], memberResults: StructuralMemberResult[] = [];
   const seenNodes = new Set<string>(), seenMembers = new Set<string>();
   for (const [index, item] of value.nodeResults.entries()) {
-    if (!plain(item) || !boundedText(item.nodeId, 200) || !boundedText(item.combinationId, 200) || !vector(item.displacementM) || (item.rotationRad !== undefined && !vector(item.rotationRad))) { error(`Node result ${index + 1}: IDs and finite displacement/rotation vectors are required.`); continue; }
+    if (!plain(item) || !boundedText(item.nodeId, 200) || !boundedText(item.combinationId, 200) || !vector(item.displacementM) || (item.rotationRad !== undefined && !vector(item.rotationRad))) { error(`Node result ${index + 1}: IDs and finite displacement/rotation components within +/-1,000,000 are required.`); continue; }
     if (!nodes.has(item.nodeId)) error(`Node result ${index + 1}: unknown node ${item.nodeId}.`);
     if (!combinations.has(item.combinationId)) error(`Node result ${index + 1}: unknown combination ${item.combinationId}. Use exchange IDs, not labels.`);
     const id = JSON.stringify([item.nodeId, item.combinationId]);
@@ -93,7 +93,7 @@ export function inspectStructuralResults(value: unknown, design: CommunityDesign
     nodeResults.push({ nodeId: item.nodeId, combinationId: item.combinationId, displacementM: copyVector(item.displacementM), ...(item.rotationRad && vector(item.rotationRad) ? { rotationRad: copyVector(item.rotationRad) } : {}) });
   }
   for (const [index, item] of value.memberResults.entries()) {
-    if (!plain(item) || !boundedText(item.memberId, 200) || !boundedText(item.combinationId, 200) || numericFields.some(field => typeof item[field] !== "number" || !Number.isFinite(item[field])) || (item.location !== undefined && !["start", "end", "envelope"].includes(String(item.location)))) { error(`Member result ${index + 1}: IDs, finite forces/moments and a supported location are required.`); continue; }
+    if (!plain(item) || !boundedText(item.memberId, 200) || !boundedText(item.combinationId, 200) || numericFields.some(field => typeof item[field] !== "number" || !Number.isFinite(item[field]) || Math.abs(item[field] as number) > 1e12) || (item.location !== undefined && !["start", "end", "envelope"].includes(String(item.location)))) { error(`Member result ${index + 1}: IDs, finite forces/moments within +/-1e12 and a supported location are required.`); continue; }
     if (!members.has(item.memberId)) error(`Member result ${index + 1}: unknown member ${item.memberId}.`);
     if (!combinations.has(item.combinationId)) error(`Member result ${index + 1}: unknown combination ${item.combinationId}. Use exchange IDs, not labels.`);
     const location = (item.location ?? "envelope") as "start" | "end" | "envelope";

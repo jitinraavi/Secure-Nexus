@@ -1,6 +1,7 @@
 # Implementation continuation — 2 October 2026
 
 Branch: `upgrade/r1-modeling-core`  
+Updated continuation: [Remaining module completion](REMAINING-MODULES-COMPLETION.md) supersedes the recovery, worker, presentation and enterprise boundaries described in this earlier report.
 Starting commit: `d3e73f789d776032eb58ecd798363757f75db12a`
 
 This continuation resumes the committed terrain/civil work. The provided workspace contained no previous uncommitted repository edits. Synced project reference files were left unchanged.
