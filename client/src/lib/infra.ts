@@ -14,7 +14,7 @@ import { addTechnicalEdges, material, prismAt } from "./modelcore";
 import { infraReviewFindings } from "./review";
 import { buildTerrainVisualization, defaultTerrain } from "./terrain";
 import { buildMepScene } from "./mep";
-import { phaseVisible } from "./visualization";
+import { setScenePhase } from "./phaseVisibility";
 
 /**
  * Guided infrastructure models.
@@ -148,7 +148,6 @@ function addFacilities(g: THREE.Group, infra: InfraDesign, ext: InfraExtent, vis
   };
   let serial = 0;
   for (const facility of facilities) {
-    if (!phaseVisible(facility.phaseId, visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] })) continue;
     const count = Math.min(Math.max(Math.round(facility.count), 0), 100);
     for (let i = 0; i < count; i++) {
       const length = Math.max(facility.lengthM, 0.5);
@@ -161,7 +160,10 @@ function addFacilities(g: THREE.Group, infra: InfraDesign, ext: InfraExtent, vis
       const z = -ext.d / 2 + 20 + row * (width + 8);
       const mesh = prismAt(x, height / 2 + 0.05, z, length, height, width, material(colors[facility.kind] ?? "#78909c", { rough: 0.75 }));
       mesh.userData.noSelect = true;
-      g.add(mesh);
+      const phaseRoot = new THREE.Group();
+      setScenePhase(phaseRoot, facility.phaseId, visualization);
+      phaseRoot.add(mesh);
+      g.add(phaseRoot);
       serial++;
     }
   }
@@ -606,7 +608,11 @@ export function buildInfraScene(infra: InfraDesign, visualization?: Visualizatio
         : buildDam(infra.dams!, ext);
   scene.add(buildTerrainVisualization(ext.w, ext.d, infra.terrain));
   if (layerVisible("facilities")) addFacilities(scene, infra, ext, visualization);
-  if (layerVisible("drafting")) for (const draft of infra.drafts ?? []) if (phaseVisible(draft.phaseId, visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] })) scene.add(buildCivilDraft(draft));
+  if (layerVisible("drafting")) for (const draft of infra.drafts ?? []) {
+    const node = buildCivilDraft(draft);
+    setScenePhase(node, draft.phaseId, visualization);
+    scene.add(node);
+  }
   if (layerVisible("mep")) scene.add(buildMepScene(infra.mep, visualization));
   addTechnicalEdges(scene, "#253746", 0.5);
   return scene;

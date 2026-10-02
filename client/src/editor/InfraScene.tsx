@@ -9,6 +9,7 @@ import { sectionClippingPlanes } from "../lib/section";
 import { constrainedDraftPatch } from "../lib/drafting";
 import { disposeObject3D } from "../lib/modelcore";
 import { sceneMetricsReporter } from "../lib/sceneMetrics";
+import { isSceneObjectVisible, updateScenePhaseVisibility } from "../lib/phaseVisibility";
 
 /**
  * Infrastructure scene.
@@ -121,6 +122,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
       ndc.set(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(ndc, camera);
       for (const hit of raycaster.intersectObject(group, true)) {
+        if (!isSceneObjectVisible(hit.object)) continue;
         let node: THREE.Object3D | null = hit.object;
         while (node) {
           if (node.userData.selectId) return { id: node.userData.selectId as string, node };
@@ -239,6 +241,10 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
 
   useEffect(() => {
     rebuildRef.current?.();
+  }, [infra]);
+
+  useEffect(() => {
+    if (groupRef.current) updateScenePhaseVisibility(groupRef.current, visualization);
   }, [infra, visualization]);
 
   return <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: "none" }} data-scene="infra" />;

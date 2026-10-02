@@ -17,7 +17,9 @@ import { TerrainControls } from "../components/TerrainControls";
 import { CivilControls } from "../components/CivilControls";
 import { download } from "../lib/download";
 import { buildBoqCsv, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
-import { infraReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
+import { reviewMarkers, reviewRiskScore } from "../lib/review";
+import { useReviewFindings } from "../lib/useReviewFindings";
+import { ReviewAnalysisState } from "../components/ReviewAnalysisState";
 import { applyDraftOperation, constrainedDraftPatch, duplicateDraftArray, patchDraftGrip } from "../lib/drafting";
 import { syncDraftFamilyParameters } from "../lib/parametric";
 import {
@@ -241,7 +243,9 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
   };
 
   const selectedDraft = (infra.drafts ?? []).find((draft) => draft.id === selectedId);
-  const reviewFindings = infraReviewFindings(infra);
+  const reviewAnalysis = useReviewFindings("infra", infra);
+  const reviewFindings = reviewAnalysis.findings;
+  const reviewReady = reviewAnalysis.status === "ready" || reviewAnalysis.status === "fallback-ready";
   const markers = reviewMarkers(infra.review);
   const addReviewMarker = () => {
     if (!reviewText.trim()) return;
@@ -644,8 +648,9 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
          Site-fit, vertical-envelope, clearance, MEP-to-facility, and approximate structure checks. Scores are screening priorities, not code compliance.
       </p>
       <div className="space-y-2">
-         <p className="text-xs font-semibold text-slate-300">Automatic checks ({reviewFindings.length}) · risk {reviewRiskScore(reviewFindings)}/100</p>
-        {reviewFindings.length === 0 && <p className="text-xs text-emerald-300">No basic site-fit clashes detected.</p>}
+         <p className="text-xs font-semibold text-slate-300">Automatic checks {reviewReady ? `(${reviewFindings.length}) · risk ${reviewRiskScore(reviewFindings)}/100` : "awaiting results"}</p>
+        <ReviewAnalysisState status={reviewAnalysis.status} error={reviewAnalysis.error} retry={reviewAnalysis.retry} runFallback={reviewAnalysis.runFallback} />
+        {reviewReady && reviewFindings.length === 0 && <p className="text-xs text-emerald-300">No basic site-fit clashes detected.</p>}
          {reviewFindings.map((finding) => <button key={finding.id} onClick={() => setSelectedId(finding.targetIds[0])} className="block w-full rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-left text-xs text-amber-200"><span className="font-semibold">{finding.severity} · {finding.score}/100</span> · {finding.category} · {finding.text}<span className="mt-1 block text-[10px] text-amber-300/70">Approximation: {finding.approximation}</span></button>)}
       </div>
       <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">

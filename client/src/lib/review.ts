@@ -1,4 +1,5 @@
-import type { CommunityDesign, InfraDesign, MepDesign, MepElement, ReviewMarker } from "../types";
+import type { MepDesign, MepElement, ReviewMarker } from "../types";
+import type { CommunityReviewInput, InfraReviewInput } from "./reviewWorkerProtocol";
 import { amenityKind, towerMeters } from "./community";
 import { SpatialHash2D } from "./performance";
 
@@ -108,7 +109,7 @@ function mepFindings(mep: MepDesign | undefined, structures: Footprint[], pointS
   return findings;
 }
 
-export function communityReviewFindings(design: CommunityDesign): ReviewFinding[] {
+export function communityReviewFindings(design: CommunityReviewInput): ReviewFinding[] {
   const objects: Footprint[] = [
     ...design.towers.map((tower) => {
       const size = towerMeters(tower);
@@ -139,7 +140,7 @@ export function communityReviewFindings(design: CommunityDesign): ReviewFinding[
   return [...findings, ...mepFindings(design.mep, objects, columns, "community")];
 }
 
-export function infraReviewFindings(design: InfraDesign): ReviewFinding[] {
+export function infraReviewFindings(design: InfraReviewInput): ReviewFinding[] {
   const findings: ReviewFinding[] = [];
   const width = design.location?.boundaryWidthM ?? 0;
   const depth = design.location?.boundaryDepthM ?? 0;
