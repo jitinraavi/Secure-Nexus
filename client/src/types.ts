@@ -444,6 +444,36 @@ export interface DesignLayer {
   name: string;
   visible: boolean;
   color: string;
+  locked?: boolean;
+  frozen?: boolean;
+  lineweight?: number;
+}
+
+export interface DimensionStyle {
+  name: string;
+  textHeightMm: number;
+  arrowSizeMm: number;
+  precision: number;
+  units: "m" | "mm" | "ft-in";
+  suppressTrailingZeros: boolean;
+}
+
+export interface TechnicalGraphicsSettings {
+  displayMode: "shaded" | "shaded-edges" | "hidden-line" | "wireframe";
+  lineweights: {
+    walls: number;
+    structure: number;
+    mep: number;
+    furniture: number;
+    dimensions: number;
+    annotations: number;
+    site: number;
+  };
+  dimensionStyle: DimensionStyle;
+  showAxes: boolean;
+  showNorthArrow: boolean;
+  showScaleBar: boolean;
+  showElevationMarkers: boolean;
 }
 
 export type SectionAxis = "x" | "y" | "z";
@@ -859,6 +889,7 @@ export interface Design {
   /** Optional Revit/Archicad-style documentation package; absent in legacy designs. */
   documentation?: DocumentationMetadata;
   compliance?: { profileId: string };
+  technicalGraphics?: TechnicalGraphicsSettings;
   visualization?: VisualizationSettings;
 }
 
