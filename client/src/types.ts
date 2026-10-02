@@ -52,6 +52,9 @@ export interface Project {
   hasPhoto: boolean;
   revision: number;
   role?: "owner" | "editor" | "viewer";
+  folder?: string;
+  archived?: boolean;
+  isTemplate?: boolean;
 }
 
 export interface ProjectDetail extends Project {
@@ -943,7 +946,11 @@ export interface InfraDesign {
 }
 
 /** Local SI corridor and rational-method drainage planning inputs. */
+export interface CivilProfilePoint { stationM: number; elevationM: number; }
+
 export interface CivilSettings {
+  profile?: CivilProfilePoint[];
+  showCorridor?: boolean;
   stationIntervalM: number;
   corridorWidthM: number;
   startElevationM: number;
@@ -969,6 +976,7 @@ export interface CommunityDesign {
   levels?: BuildingLevel[];
   structuralGrid?: StructuralGridLine[];
   structural?: StructuralSettings;
+  structuralResults?: import("./lib/structuralResults").StructuralExternalResults;
   activeLevelId?: string;
   review?: DesignReview;
   section?: SectionSettings;

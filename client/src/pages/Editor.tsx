@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type DragEven
 import { useParams } from "react-router-dom";
 import {
   getProject,
+  ApiError,
   patchProject,
   recordExport,
   uploadProjectPhoto,
@@ -12,7 +13,7 @@ import { Badge, Button, Modal, Select, Spinner, Toggle } from "../components/ui"
 import type { EditorApi } from "../editor/Canvas3D";
 import { CATALOG, catalogEntry, furnitureMount } from "../lib/catalog";
 import { download, downloadBlob, zipFiles } from "../lib/download";
-import type { Design, FurnitureItem, InfraKind, ProjectType } from "../types";
+import type { Design, FurnitureItem, InfraKind, ProjectDetail, ProjectType } from "../types";
 import { defaultDesign, PROJECT_TYPE_LABELS } from "../types";
 import { cn } from "../lib/cn";
 import { isInfraType, resolveModelType } from "../lib/modules";
@@ -26,7 +27,9 @@ import { PerformancePanel } from "../components/PerformancePanel";
 import { VisualizationControls } from "../components/VisualizationControls";
 import { visualizationSettings } from "../lib/visualization";
 import { useAuth } from "../auth";
-import { clearPendingDraft, readPendingDraft, storePendingDraft, type PendingDraft } from "../lib/offlineDraft";
+import { clearPendingDraft, clearRecoveredDraft, hasMergeBase, persistPendingDraft, readPendingDraftResult, recoveryFromAnotherTab, type PendingDraft } from "../lib/offlineDraft";
+import type { MergeDocument } from "../lib/designMerge";
+import { DraftConflictPanel } from "../components/DraftConflictPanel";
 
 const Canvas3D = lazy(() => import("../editor/Canvas3D").then((module) => ({ default: module.Canvas3D })));
 const CommunityEditor = lazy(() => import("./CommunityEditor").then((module) => ({ default: module.CommunityEditor })));
@@ -52,11 +55,24 @@ function landDimensionText(c: NonNullable<Design["community"]>): string {
   return `${c.land.width} × ${c.land.depth} ${unit} · ${c.towers.length} tower(s)`;
 }
 
+function projectDocument(project: ProjectDetail): MergeDocument {
+  const pt = project.projectType ?? "house";
+  let seeded = project.design ?? { ...defaultDesign(), room: { ...defaultDesign().room, widthMm: project.widthMm, depthMm: project.depthMm } };
+  if ((pt === "residential" || pt === "villa-community" || pt === "townhouse") && !seeded.community) {
+    seeded = { ...seeded, community: { ...defaultCommunity("residential"), residentialStyle: pt === "villa-community" ? "villa-community" : pt === "townhouse" ? "townhouse" : "high-rise" } };
+  } else if (pt === "commercial" && !seeded.community) seeded = { ...seeded, community: defaultCommunity("commercial") };
+  const type = resolveModelType(pt);
+  if (isInfraType(type)) seeded = ensureInfraDesign(seeded, type as InfraKind);
+  return { design: seeded, name: project.name, projectType: pt };
+}
+
 export function Editor() {
   const { id } = useParams<{ id: string }>();
   const toast = useToast();
   const { user } = useAuth();
   const [pendingDraft, setPendingDraft] = useState<PendingDraft | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [recoveryWarning, setRecoveryWarning] = useState("");
   const [projectRole, setProjectRole] = useState<"owner" | "editor" | "viewer">("viewer");
 
   const [name, setName] = useState("");
@@ -89,48 +105,39 @@ export function Editor() {
   const saveInFlight = useRef(false);
   const editGeneration = useRef(0);
   const pendingBaseRevision = useRef<number | null>(null);
+  const acknowledged = useRef<MergeDocument | null>(null);
+  const recoveryOrigin = useRef<PendingDraft | null>(null);
+  const latestDraft = useRef<PendingDraft | null>(null);
+  const blockedSaveStatus = useRef<number | undefined>();
+  const loadGeneration = useRef(0);
+  const scope = (user?.id ?? "") + ":" + (id ?? "");
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  latestDraft.current = pendingDraft;
 
   const load = useCallback(async () => {
+    const request = ++loadGeneration.current, currentScope = scopeRef.current;
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    editGeneration.current++;
+    setLoaded(false); setMergeOpen(false); setSaving(false);
     try {
       const project = await getProject(id!);
-      setName(project.name);
+      if (request !== loadGeneration.current || currentScope !== scopeRef.current) return;
+      const document = projectDocument(project);
+      acknowledged.current = document;
       revisionRef.current = project.revision ?? 0;
-      setRemoteRevision(null);
-      setProjectRole(project.role ?? "owner");
-      const recovered = user ? readPendingDraft(user.id, id!) : null;
-      setPendingDraft(recovered);
+      setRemoteRevision(null); setProjectRole(project.role ?? "owner");
+      const recovery = user ? readPendingDraftResult(user.id, id!) : { draft: null, error: undefined };
+      const recovered = recovery.draft;
+      recoveryOrigin.current = recovered; latestDraft.current = recovered;
+      setPendingDraft(recovered); setRecoveryWarning(recovery.error ?? "");
       pendingBaseRevision.current = recovered?.baseRevision ?? null;
-      const pt = (project as { projectType?: ProjectType }).projectType ?? "house";
-      setProjectType(pt);
-      const base = project.design
-        ? (project.design as Design)
-        : {
-            ...defaultDesign(),
-            room: {
-              ...defaultDesign().room,
-              widthMm: project.widthMm,
-              depthMm: project.depthMm,
-            },
-          };
-      const type = resolveModelType(pt);
-      let seeded = base;
-      if ((pt === "residential" || pt === "villa-community" || pt === "townhouse") && !seeded.community) {
-        seeded = {
-          ...seeded,
-          community: {
-            ...defaultCommunity("residential"),
-            residentialStyle: pt === "villa-community" ? "villa-community" : pt === "townhouse" ? "townhouse" : "high-rise",
-          },
-        };
-      } else if (pt === "commercial" && !seeded.community) {
-        seeded = { ...seeded, community: defaultCommunity("commercial") };
-      }
-      if (isInfraType(type)) seeded = ensureInfraDesign(seeded, type as InfraKind);
-      setDesign(seeded);
-      if (project.hasPhoto) setPhotoUrl(`/api/projects/${id}/photo?v=${project.updatedAt}`);
+      blockedSaveStatus.current = recovered?.lastSaveStatus;
+      setName(recovered?.name ?? document.name); setProjectType(recovered?.projectType ?? document.projectType); setDesign(recovered?.design ?? document.design);
+      setPhotoUrl(project.hasPhoto ? `/api/projects/${id}/photo?v=${project.updatedAt}` : null);
       setLoaded(true);
     } catch (err) {
-      toast.push({ title: "Could not open project", description: err instanceof Error ? err.message : undefined, tone: "error" });
+      if (request === loadGeneration.current && currentScope === scopeRef.current) toast.push({ title: "Could not open project", description: err instanceof Error ? err.message : undefined, tone: "error" });
     }
   }, [id, toast, user?.id]);
 
@@ -138,49 +145,69 @@ export function Editor() {
     void load();
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      editGeneration.current++; loadGeneration.current++;
     };
   }, [load]);
 
   const scheduleSave = useCallback(
     (d: Design, recovery?: PendingDraft): void => {
-      if (projectRole === "viewer") return;
-      editGeneration.current += 1;
-      const generation = editGeneration.current;
+      if (projectRole === "viewer" || !id || !user) return;
+      const currentScope = scopeRef.current;
+      const generation = ++editGeneration.current;
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      if (recovery) blockedSaveStatus.current = undefined;
+      const previous = recovery ?? latestDraft.current;
+      const base = acknowledged.current;
+      let draft: PendingDraft = { design: d, name: recovery?.name ?? name, projectType: recovery?.projectType ?? projectType,
+        baseRevision: recovery?.baseRevision ?? pendingBaseRevision.current ?? revisionRef.current, savedAt: Date.now(),
+        baseDesign: previous?.baseDesign ?? base?.design, baseName: previous?.baseName ?? base?.name, baseProjectType: previous?.baseProjectType ?? base?.projectType,
+        lastSaveStatus: blockedSaveStatus.current, lastSaveError: previous?.lastSaveError };
+      const store = (next: PendingDraft) => {
+        const result = persistPendingDraft(user.id, id, next);
+        latestDraft.current = next; setPendingDraft(next); setRecoveryWarning(result.error ?? "");
+      };
+      store(draft);
+      if (!recovery && [401, 409, 403, 423].includes(blockedSaveStatus.current ?? 0)) return;
       const attempt = async (): Promise<void> => {
-        if (generation !== editGeneration.current) return;
+        if (generation !== editGeneration.current || currentScope !== scopeRef.current) return;
+        if (!recovery && [401, 409, 403, 423].includes(blockedSaveStatus.current ?? 0)) return;
         saveTimer.current = null;
         if (saveInFlight.current) { saveTimer.current = window.setTimeout(() => void attempt(), 200); return; }
-        saveInFlight.current = true;
-        const baseRevision = recovery?.baseRevision ?? pendingBaseRevision.current ?? revisionRef.current;
-        const draft: PendingDraft = { design: d, name: recovery?.name ?? name, projectType: recovery?.projectType ?? projectType, baseRevision, savedAt: Date.now() };
-        if (user && !storePendingDraft(user.id, id!, draft)) {
-          toast.push({ title: "Browser recovery storage is unavailable", description: "Keep this tab open or download the local design before leaving.", tone: "error" });
+        if (!recovery && pendingBaseRevision.current === null && acknowledged.current) {
+          const currentBase = acknowledged.current;
+          draft = { ...draft, baseRevision: revisionRef.current, baseDesign: currentBase.design, baseName: currentBase.name, baseProjectType: currentBase.projectType };
+          store(draft);
         }
+        saveInFlight.current = true;
+        const loadAtSave = loadGeneration.current;
         try {
           setSaving(true);
-          const saved = await patchProject(id!, {
-            name: draft.name,
-            projectType: draft.projectType,
-            widthMm: d.room.widthMm,
-            depthMm: d.room.depthMm,
-            designData: JSON.stringify(d),
-            baseRevision,
-          });
-          revisionRef.current = saved.revision;
-          pendingBaseRevision.current = null;
+          const saved = await patchProject(id, { name: draft.name, projectType: draft.projectType, widthMm: d.room.widthMm, depthMm: d.room.depthMm, designData: JSON.stringify(d), baseRevision: draft.baseRevision });
+          if (currentScope !== scopeRef.current || loadAtSave !== loadGeneration.current) return;
+          revisionRef.current = saved.revision; pendingBaseRevision.current = null; blockedSaveStatus.current = undefined;
+          acknowledged.current = { design: d, name: draft.name, projectType: draft.projectType };
           if (generation === editGeneration.current) {
-            setPendingDraft(null);
-            if (user) clearPendingDraft(user.id, id!);
+            latestDraft.current = null; setPendingDraft(null);
+            const cleanup = clearPendingDraft(user.id, id);
+            if (recoveryOrigin.current) clearRecoveredDraft(user.id, id, recoveryOrigin.current);
+            recoveryOrigin.current = null;
+            setRecoveryWarning(cleanup.error ?? "");
+          } else if (latestDraft.current && latestDraft.current.baseRevision === draft.baseRevision) {
+            const latest = latestDraft.current;
+            store({ ...latest, baseRevision: saved.revision, baseDesign: d, baseName: draft.name, baseProjectType: draft.projectType });
           }
-          setLastSaved(Date.now());
+          setRemoteRevision(null); setLastSaved(Date.now());
         } catch (err) {
-          pendingBaseRevision.current = baseRevision;
-          if (generation === editGeneration.current) setPendingDraft(draft);
-          toast.push({ title: "Could not save design", description: err instanceof Error ? err.message : undefined, tone: "error" });
+          if (currentScope !== scopeRef.current || loadAtSave !== loadGeneration.current) return;
+          pendingBaseRevision.current = draft.baseRevision;
+          const status = err instanceof ApiError ? err.status : undefined;
+          blockedSaveStatus.current = status;
+          const failed = { ...(latestDraft.current ?? draft), lastSaveStatus: status, lastSaveError: err instanceof Error ? err.message : "Could not save design" };
+          store(failed);
+          toast.push({ title: "Could not save design", description: failed.lastSaveError, tone: "error" });
         } finally {
           saveInFlight.current = false;
-          setSaving(false);
+          if (currentScope === scopeRef.current) setSaving(false);
         }
       };
       saveTimer.current = window.setTimeout(() => void attempt(), 1200);
@@ -192,19 +219,33 @@ export function Editor() {
     if (["design.updated", "operation.applied"].includes(event.type) && event.actorId !== user?.id && event.revision > revisionRef.current) setRemoteRevision(event.revision);
   }, [user?.id]);
 
-  const recoveryControls = (pendingDraft || remoteRevision) ? <div className="flex flex-wrap items-center gap-2 text-xs text-amber-200">
-    <span>{pendingDraft ? "Unsaved local design available." : "Remote design update available."}</span>
+  const recoveryControls = (pendingDraft || remoteRevision !== null || recoveryWarning) ? <div className="flex flex-wrap items-center gap-2 text-xs text-amber-200">
+    <span>{pendingDraft ? recoveryFromAnotherTab(pendingDraft) ? "Recovery from a previous page or another tab is available." : "Local changes are pending." : remoteRevision !== null ? "Remote design update available." : "Recovery storage needs attention."}</span>
+    {recoveryWarning && <span role="status">{recoveryWarning}</span>}
+    {pendingDraft?.lastSaveError && <span role="status">{pendingDraft.lastSaveError}</span>}
     <Button size="sm" variant="outline" onClick={() => download("local-design.json", JSON.stringify(pendingDraft?.design ?? design, null, 2), "application/json")}>Download local</Button>
-    {pendingDraft && <Button size="sm" variant="secondary" disabled={saving || projectRole === "viewer"} onClick={() => {
-      setDesign(pendingDraft.design); setName(pendingDraft.name); setProjectType(pendingDraft.projectType);
-      scheduleSave(pendingDraft.design, pendingDraft);
-    }}>Retry original revision</Button>}
+    {pendingDraft && <>
+      <Button size="sm" variant="secondary" disabled={saving || projectRole === "viewer"} onClick={() => {
+        setDesign(pendingDraft.design); setName(pendingDraft.name); setProjectType(pendingDraft.projectType);
+        scheduleSave(pendingDraft.design, pendingDraft);
+      }}>Retry original revision</Button>
+      <Button size="sm" variant="outline" disabled={saving || projectRole === "viewer" || !hasMergeBase(pendingDraft)} onClick={() => {
+        if (saveTimer.current) window.clearTimeout(saveTimer.current);
+        editGeneration.current++; setMergeOpen(true);
+      }}>Compare & merge</Button>
+    </>}
     <Button size="sm" variant="ghost" disabled={saving} onClick={() => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
-      editGeneration.current += 1;
-      if (user) clearPendingDraft(user.id, id!);
-      setPendingDraft(null); void load();
+      editGeneration.current++;
+      if (user) { clearPendingDraft(user.id, id!); if (recoveryOrigin.current) clearRecoveredDraft(user.id, id!, recoveryOrigin.current); }
+      latestDraft.current = null; setPendingDraft(null); void load();
     }}>Discard local & reload</Button>
+    {mergeOpen && pendingDraft && <DraftConflictPanel projectId={id!} draft={pendingDraft} remoteDocument={projectDocument} onClose={() => setMergeOpen(false)} onApply={(document, remote) => {
+      const base = projectDocument(remote);
+      const recovery: PendingDraft = { ...document, baseDesign: base.design, baseName: base.name, baseProjectType: base.projectType, baseRevision: remote.revision, savedAt: Date.now() };
+      setDesign(document.design); setName(document.name); setProjectType(document.projectType); setMergeOpen(false);
+      scheduleSave(document.design, recovery);
+    }} />}
   </div> : null;
 
   const changeDesign = useCallback(

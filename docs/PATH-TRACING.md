@@ -1,0 +1,9 @@
+# Path-traced presentation
+
+All three editors expose Presentation → Mesh geometry. Import that JSON in the authenticated Geometry and rendering workbench. IFC and survey exchanges can use the same scene schema. The workbench runs geometry jobs in a module worker; cancel/import/navigation terminates the worker and invalidates stale replies.
+
+`pathTracer.ts` implements a CPU Monte Carlo radiance estimator with BVH nearest-triangle queries, cosine-weighted Lambert diffuse sampling, directional-sun shadow rays, emission, ideal mirror and Schlick dielectric reflection/refraction, radiance transmission scaling and Russian roulette. It handles indirect diffuse transport and progressive accumulation, with deterministic seeded sampling, exposure, Reinhard mapping and linear-to-sRGB conversion. PNG export is local. It is a finite-depth estimator: high bounce counts/samples cost time and finite-depth bias remains. Dielectric normals require consistently oriented geometry and the implementation assumes entry/exit into air rather than nested dielectric media.
+
+The default is 320×240, 16 samples, five bounces. Inputs bound pixels, samples, bounces and maximum bounce samples (40 million). Progressive buffers are copied/transferred. Constant material color represents textures; normal/alpha maps, rough microfacet BRDFs, volumetrics, HDR maps, denoising and GPU path tracing are outside this version. Transparent editor materials are not silently treated as physically accurate glass.
+
+Primary references: [PBRT diffuse reflection](https://www.pbr-book.org/4ed/Reflection_Models/Diffuse_Reflection), [PBRT path tracing](https://www.pbr-book.org/4ed/Light_Transport_I_Surface_Reflection/Path_Tracing), [Three.js BufferGeometry](https://threejs.org/docs/pages/BufferGeometry.html). No application, renderer, numerical sample, test, compiler or build was run; image quality and performance remain unverified.

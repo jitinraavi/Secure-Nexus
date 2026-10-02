@@ -100,28 +100,15 @@ function inspectArchive(bytes: Uint8Array): void {
   if (cursor !== start + size) throw new Error("The BCF ZIP directory size is inconsistent.");
 }
 
-function readEntry(entry: JSZip.JSZipObject, maximum: number, budget: { used: number }): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    let length = 0, settled = false;
-    const stream = entry.internalStream("uint8array");
-    stream.on("data", (chunk: Uint8Array) => {
-      if (settled) return;
-      length += chunk.byteLength; budget.used += chunk.byteLength;
-      if (length > maximum || budget.used > MAX_UNCOMPRESSED_BYTES) { settled = true; stream.pause(); reject(new Error("BCF text or expanded data exceeds the import limit.")); return; }
-      chunks.push(chunk);
-    });
-    stream.on("error", (error: Error) => { if (!settled) { settled = true; reject(error); } });
-    stream.on("end", () => {
-      if (settled) return;
-      settled = true;
-      const bytes = new Uint8Array(length);
-      let offset = 0;
-      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-      resolve(new TextDecoder().decode(bytes));
-    });
-    stream.resume();
-  });
+async function readEntry(entry: JSZip.JSZipObject, maximum: number, budget: { used: number }): Promise<string> {
+  // Archive headers are checked before JSZip loading; count actual expanded
+  // bytes as well so UTF-8 multibyte text cannot bypass the text import budget.
+  const bytes = await entry.async("uint8array");
+  if (bytes.byteLength > maximum || budget.used + bytes.byteLength > MAX_UNCOMPRESSED_BYTES) {
+    throw new Error("BCF text or expanded data exceeds the import limit.");
+  }
+  budget.used += bytes.byteLength;
+  return new TextDecoder().decode(bytes);
 }
 
 const named = (element: Element, name: string) => element.localName.toLowerCase() === name.toLowerCase();

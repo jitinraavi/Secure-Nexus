@@ -49,7 +49,15 @@ app.use(
 );
 
 app.use(cookieParser());
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({
+  limit: "8mb",
+  verify: (req, _res, buffer) => {
+    if ((req.url ?? "").split("?")[0] === "/api/payments/webhook") {
+      if (buffer.length > 256 * 1024) throw Object.assign(new Error("Webhook body too large"), { status: 413 });
+      (req as express.Request & { paymentWebhookBody?: Buffer }).paymentWebhookBody = Buffer.from(buffer);
+    }
+  },
+}));
 
 app.use("/api", apiLimiter);
 app.use("/api", csrfProtection);
@@ -99,6 +107,10 @@ app.use(
       res.status(400).json({ error: "Invalid JSON body" });
       return;
     }
+    if (err && typeof err === "object" && "status" in err && err.status === 413) {
+      res.status(413).json({ error: "Request is too large for this endpoint" });
+      return;
+    }
     next(err);
   },
 );
@@ -134,3 +146,4 @@ app.listen(PORT, () => {
     console.log(`[groundwork] Serving static client from ${CLIENT_DIST}`);
   }
 });
+

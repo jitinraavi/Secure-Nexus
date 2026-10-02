@@ -1,7 +1,7 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import { logAudit } from "../audit.js";
-import { db, now } from "../db.js";
+import { db, now, withTransaction } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import {
   availableMethods,
@@ -22,8 +22,10 @@ import { z } from "zod";
 const router = Router();
 
 router.use((req: AuthedRequest, res, next) => {
+  // Provider callbacks have no browser session; the handler verifies their signature.
+  if (req.method === "POST" && req.path === "/webhook") { next(); return; }
   const session = resolveSession(req);
-  if (!session) {
+  if (!session || session.status !== "active") {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
@@ -157,29 +159,21 @@ router.post(
 );
 
 function markPaid(userId: string, paymentId: string) {
-  const payment = db.prepare("SELECT * FROM payments WHERE id = ? AND user_id = ?").get(
-    paymentId,
-    userId,
-  ) as { plan: string; amount: number; currency: string } | undefined;
-  if (!payment || payment.plan === "free") return;
-
-  const plan = PLANS[payment.plan];
-  const t = now();
-  const expiry = t + plan.periodDays * 86400;
-
-  db.prepare("UPDATE payments SET status = 'paid', completed_at = ? WHERE id = ?").run(t, paymentId);
-  db.prepare("UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = ? WHERE id = ?").run(
-    plan.id,
-    expiry,
-    t,
-    userId,
-  );
-  logAudit(
-    userId,
-    "payment.completed",
-    { plan: plan.id, amount: payment.amount / 100, currency: payment.currency },
-    undefined,
-  );
+  const completed = withTransaction(() => {
+    const payment = db.prepare("SELECT plan, amount, currency, status FROM payments WHERE id = ? AND user_id = ?")
+      .get(paymentId, userId) as { plan: string; amount: number; currency: string; status: string } | undefined;
+    if (!payment || payment.status === "paid" || !["pro", "studio"].includes(payment.plan)) return null;
+    const plan = planForId(payment.plan);
+    if (!plan || plan.id === "free") return null;
+    const t = now();
+    const result = db.prepare("UPDATE payments SET status = 'paid', completed_at = ? WHERE id = ? AND user_id = ? AND status != 'paid'")
+      .run(t, paymentId, userId);
+    if (!result.changes) return null;
+    db.prepare("UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = ? WHERE id = ?")
+      .run(plan.id, t + plan.periodDays * 86400, t, userId);
+    return { plan: plan.id, amount: payment.amount / 100, currency: payment.currency };
+  });
+  if (completed) logAudit(userId, "payment.completed", completed, undefined);
 }
 
 /* POST /api/payments/confirm-demo — ONLY reachable in demo mode */
@@ -290,11 +284,13 @@ router.post(
       res.status(400).json({ error: "Missing webhook signature" });
       return;
     }
-    const raw = JSON.stringify(req.body);
-    const expected = crypto.createHmac("sha256", secret).update(raw).digest("hex");
-    const sigOk =
-      expected.length === signature.length &&
-      crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+    const raw = (req as AuthedRequest & { paymentWebhookBody?: Buffer }).paymentWebhookBody;
+    if (!raw || !/^[0-9a-f]{64}$/i.test(signature)) {
+      res.status(400).json({ error: "Missing webhook body or malformed signature" }); return;
+    }
+    const expected = crypto.createHmac("sha256", secret).update(raw).digest();
+    const received = Buffer.from(signature, "hex");
+    const sigOk = expected.length === received.length && crypto.timingSafeEqual(expected, received);
     if (!sigOk) {
       res.status(401).json({ error: "Invalid signature" });
       return;
@@ -303,13 +299,13 @@ router.post(
       event?: string;
       payload?: { payment_link?: { entity?: { notes?: { order_id?: string }; status?: string } } };
     };
-    if (event.event === "payment_link.paid") {
+    if (event.event === "payment_link.paid" && event.payload?.payment_link?.entity?.status === "paid") {
       const orderId = event.payload?.payment_link?.entity?.notes?.order_id;
       if (orderId) {
-        const payment = db.prepare("SELECT user_id FROM payments WHERE id = ?").get(orderId) as
-          | { user_id: string }
+        const payment = db.prepare("SELECT user_id, status FROM payments WHERE id = ? AND provider = 'razorpay'").get(orderId) as
+          | { user_id: string; status: string }
           | undefined;
-        if (payment) {
+        if (payment && payment.status !== "paid") {
           markPaid(payment.user_id, orderId);
         }
       }

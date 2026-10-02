@@ -16,6 +16,7 @@ const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m
 const Billing = lazy(() => import("./pages/Billing").then((m) => ({ default: m.Billing })));
 const Checkout = lazy(() => import("./pages/Checkout").then((m) => ({ default: m.Checkout })));
 const SharedProject = lazy(() => import("./pages/SharedProject").then((m) => ({ default: m.SharedProject })));
+const GeometryWorkbench = lazy(() => import("./pages/GeometryWorkbench").then((m) => ({ default: m.GeometryWorkbench })));
 
 function FullScreenLoading() {
   return (
@@ -53,6 +54,7 @@ export default function App() {
 
       <Route element={<Protected><Layout /></Protected>}>
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/geometry" element={<GeometryWorkbench />} />
         <Route path="/editor/:id" element={<Editor />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/settings" element={<Settings />} />
@@ -66,3 +68,4 @@ export default function App() {
     </>
   );
 }
+

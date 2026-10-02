@@ -652,7 +652,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
          {reviewFindings.map((finding) => <button key={finding.id} onClick={() => setSelectedId(finding.targetIds[0])} className="block w-full rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-left text-xs text-amber-200"><span className="font-semibold">{finding.severity} · {finding.score}/100</span> · {finding.category} · {finding.text}<span className="mt-1 block text-[10px] text-amber-300/70">Approximation: {finding.approximation}</span></button>)}
       </div>
       <CoordinationPanel markers={markers} findings={reviewReady ? reviewFindings : []} onChange={(next) => update({ review: { markers: next } })}
-        modelIds={[...infra.facilities, ...(infra.drafts ?? []), ...(infra.mep?.elements ?? [])].map(item => item.id)} selectedId={selectedId} selectedPosition={selectedDraft}
+        modelIds={[...(infra.facilities ?? []), ...(infra.drafts ?? []), ...(infra.mep?.elements ?? [])].map(item => item.id)} selectedId={selectedId} selectedPosition={selectedDraft}
         onSelect={setSelectedId} presentationApi={presentationApi} projectName={projectName} />
     </Section>
   );

@@ -1,4 +1,4 @@
-import type { CivilSettings, InfraDesign, SiteLocation, TerrainSample } from "../types";
+import type { CivilProfilePoint, CivilSettings, InfraDesign, SiteLocation, TerrainSample } from "../types";
 import { centroid, toLocalMetres } from "./geo";
 import { terrainElevation, terrainSettings, terrainTriangles, type CutFillSummary } from "./terrain";
 import { infraExtent } from "./infra";
@@ -14,22 +14,68 @@ export interface CivilAlignmentReport {
   projectCrs: string; peakRunoffM3s: number; warnings: string[];
 }
 const finite = (v: number | undefined, fallback: number) => Number.isFinite(v) ? v! : fallback;
+export function inspectCivilProfile(value: unknown): { profile?: CivilProfilePoint[]; error?: string } {
+  if (value === undefined || (Array.isArray(value) && value.length === 0)) return {};
+  if (!Array.isArray(value) || value.length < 2 || value.length > 100) return { error: "A vertical profile needs 2–100 station/elevation points." };
+  const profile: CivilProfilePoint[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") return { error: "Profile points must contain numeric stationM and elevationM." };
+    const point = item as Partial<CivilProfilePoint>;
+    if (typeof point.stationM !== "number" || typeof point.elevationM !== "number" || !Number.isFinite(point.stationM) || !Number.isFinite(point.elevationM) || point.stationM < 0 || point.stationM > 1e7 || Math.abs(point.elevationM) > 1e5) return { error: "Profile coordinates are outside the supported finite range." };
+    if (profile.length && point.stationM <= profile[profile.length - 1].stationM) return { error: "Profile stations must increase strictly, without duplicates." };
+    profile.push({ stationM: point.stationM, elevationM: point.elevationM });
+  }
+  if (profile[0].stationM !== 0) return { error: "The first profile station must be zero." };
+  return { profile };
+}
+
+export function parseCivilProfile(text: string): { profile?: CivilProfilePoint[]; error?: string } {
+  if (!text.trim()) return {};
+  if (text.length > 20000) return { error: "Profile text exceeds the supported size." };
+  const lines = text.trim().split(/\r?\n/).filter(line => line.trim());
+  if (/^station/i.test(lines[0])) lines.shift();
+  const values = lines.map(line => { const fields = line.trim().split(/[,;\s]+/); return fields.length === 2 && fields.every(field => field.trim()) ? { stationM: Number(fields[0]), elevationM: Number(fields[1]) } : null; });
+  return inspectCivilProfile(values);
+}
+
+export function civilDesignElevation(settings: CivilSettings, stationM: number): number {
+  const profile = settings.profile;
+  if (!profile?.length) return settings.startElevationM + stationM * settings.gradePct / 100;
+  if (stationM >= profile[profile.length - 1].stationM) return profile[profile.length - 1].elevationM;
+  let index = 1;
+  while (index < profile.length - 1 && profile[index].stationM < stationM) index++;
+  const a = profile[index - 1], b = profile[index];
+  return a.elevationM + (b.elevationM - a.elevationM) * (stationM - a.stationM) / (b.stationM - a.stationM);
+}
+
+export function civilStationNormal(points: { x: number; z: number }[], index: number) {
+  const point = points[index], prior = points[Math.max(0, index - 1)], next = points[Math.min(points.length - 1, index + 1)];
+  let dx = next.x - prior.x, dz = next.z - prior.z;
+  if (Math.hypot(dx, dz) < 1e-8) { dx = next.x - point.x; dz = next.z - point.z; }
+  if (Math.hypot(dx, dz) < 1e-8) { dx = point.x - prior.x; dz = point.z - prior.z; }
+  const length = Math.hypot(dx, dz) || 1;
+  return { x: -dz / length, z: dx / length };
+}
+
 export function civilSettings(infra: InfraDesign): CivilSettings {
   const v = infra.civil;
   return {
+    showCorridor: v?.showCorridor === true,
+    profile: inspectCivilProfile(v?.profile).profile,
     stationIntervalM: Math.min(1000, Math.max(1, finite(v?.stationIntervalM, 25))),
     corridorWidthM: Math.min(500, Math.max(1, finite(v?.corridorWidthM, 12))),
-    startElevationM: finite(v?.startElevationM, terrainSettings(infra.terrain).baseElevationM),
+    startElevationM: Math.max(-100000, Math.min(100000, finite(v?.startElevationM, terrainSettings(infra.terrain).baseElevationM))),
     gradePct: Math.min(30, Math.max(-30, finite(v?.gradePct, 0))),
     crossfallPct: Math.min(20, Math.max(-20, finite(v?.crossfallPct, 2))),
-    rainfallMmPerHour: Math.max(0, finite(v?.rainfallMmPerHour, 50)),
+    rainfallMmPerHour: Math.min(1000000, Math.max(0, finite(v?.rainfallMmPerHour, 50))),
     runoffCoefficient: Math.min(1, Math.max(0, finite(v?.runoffCoefficient, 0.7))),
-    catchmentAreaHa: Math.max(0, finite(v?.catchmentAreaHa, 1)),
+    catchmentAreaHa: Math.min(1000000, Math.max(0, finite(v?.catchmentAreaHa, 1))),
   };
 }
 
 function localRoute(location?: SiteLocation): { x: number; z: number }[] {
-  const route = (location?.route ?? []).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  if ((location?.route?.length ?? 0) > 10000) return [];
+  const route = (location?.route ?? []).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180);
   if (!route.length) return [];
   const origin = centroid(route);
   return route.map(point => {
@@ -68,18 +114,35 @@ export function analyzeCivilAlignment(infra: InfraDesign, intervalM?: number): C
   // Bound sampling on long routes; original vertices are retained.
   const interval = Math.max(finite(intervalM, civil.stationIntervalM), 1, total / 2000);
   const sampled = samplePolyline(points, interval), warnings: string[] = [];
+  if (total < 1e-8) warnings.push("The alignment has no nonzero segment; no corridor surface or volume is generated.");
+  const profileCheck = inspectCivilProfile(infra.civil?.profile);
+  if (profileCheck.error) warnings.push(profileCheck.error + " Constant-grade settings are used.");
+  if ((infra.location?.route?.length ?? 0) > 10000) warnings.push("The traced route exceeds 10,000 vertices; a straight fallback is used.");
+  if (civil.profile) {
+    const originalStations = [...sampled];
+    for (const point of civil.profile) {
+      if (point.stationM <= 0 || point.stationM >= total || sampled.some(station => Math.abs(station.distance - point.stationM) < 1e-7)) continue;
+      const index = originalStations.findIndex(station => station.distance > point.stationM);
+      if (index < 1) continue;
+      const a = originalStations[index - 1], b = originalStations[index], t = (point.stationM - a.distance) / (b.distance - a.distance);
+      sampled.push({ distance: point.stationM, x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t });
+    }
+    sampled.sort((a, b) => a.distance - b.distance);
+    const end = civil.profile[civil.profile.length - 1].stationM;
+    if (end < total) warnings.push("The vertical profile ends before the route; the final elevation is held beyond it.");
+    if (end > total) warnings.push("The vertical profile extends beyond the route; only covered stations are exported.");
+  }
   if (route.length < 2) warnings.push("No traced alignment: using a straight local fallback.");
   if (interval > civil.stationIntervalM && intervalM === undefined) warnings.push("Station interval increased to limit regular sampling to 2,000 stations.");
   if (terrain.source !== "survey") warnings.push("Terrain is procedural. Quantities are planning estimates.");
   if (terrain.source === "survey") warnings.push("Sampling outside the survey convex hull uses IDW extrapolation.");
-  warnings.push("Straight horizontal segments and a constant design grade; no spiral or vertical-curve design.");
+  warnings.push(civil.profile ? "Straight horizontal segments and piecewise linear vertical profile; no spiral or vertical curves." : "Straight horizontal segments and a constant design grade; no spiral or vertical-curve design.");
   let previous: CivilStation | undefined;
   const stations = sampled.map((point, i): CivilStation => {
     const elevationM = terrainElevation(point.x, point.z, terrain);
     const gradePct = previous && point.distance > previous.stationM ? (elevationM - previous.elevationM) / (point.distance - previous.stationM) * 100 : 0;
-    const a = sampled[Math.max(0, i - 1)], b = sampled[Math.min(sampled.length - 1, i + 1)];
-    const length = Math.hypot(b.x - a.x, b.z - a.z) || 1, nx = -(b.z - a.z) / length, nz = (b.x - a.x) / length;
-    const designElevationM = civil.startElevationM + point.distance * civil.gradePct / 100;
+    const normal = civilStationNormal(sampled, i), nx = normal.x, nz = normal.z;
+    const designElevationM = civilDesignElevation(civil, point.distance);
     let cutAreaM2 = 0, fillAreaM2 = 0;
     const strips = 12, stripWidth = civil.corridorWidthM / strips;
     for (let strip = 0; strip < strips; strip++) {
@@ -93,6 +156,7 @@ export function analyzeCivilAlignment(infra: InfraDesign, intervalM?: number): C
     previous = station;
     return station;
   });
+  if (stations.some(station => [station.x, station.z, station.designElevationM].some(value => !Number.isFinite(value) || Math.abs(value) > 1e7))) warnings.push("The corridor surface exceeds its supported coordinate range and is hidden; reduce the study extent.");
   let cutM3 = 0, fillM3 = 0, maxGradePct = 0, minElevationM = Infinity, maxElevationM = -Infinity;
   stations.forEach((station, i) => {
     minElevationM = Math.min(minElevationM, station.elevationM); maxElevationM = Math.max(maxElevationM, station.elevationM);
@@ -148,7 +212,7 @@ ${faces}
       <CoordGeom>
 ${lines}
       </CoordGeom>
-      <Profile name="Design profile"><ProfAlign name="Constant grade">
+      <Profile name="Design profile"><ProfAlign name="${civilSettings(infra).profile ? "Station elevations" : "Constant grade"}">
 ${profile}
       </ProfAlign></Profile>
     </Alignment>
@@ -164,7 +228,7 @@ export function buildCivilReport(infra: InfraDesign): string {
     `Project CRS: ${r.projectCrs}; coordinates are local metres plus the recorded survey origin.`,
     `Alignment length: ${r.lengthM.toFixed(1)} m; corridor width: ${c.corridorWidthM.toFixed(2)} m`,
     `Elevation range: ${r.minElevationM.toFixed(2)}–${r.maxElevationM.toFixed(2)} m`,
-    `Maximum sampled ground grade: ${r.maxGradePct.toFixed(2)}%; design grade: ${c.gradePct.toFixed(2)}%`,
+    `Maximum sampled ground grade: ${r.maxGradePct.toFixed(2)}%; design profile: ${c.profile ? "piecewise linear station elevations" : c.gradePct.toFixed(2) + "% constant grade"}`,
     `Cut: ${r.cutFill.cutM3.toFixed(1)} m3; fill: ${r.cutFill.fillM3.toFixed(1)} m3; net fill-cut: ${r.cutFill.netM3.toFixed(1)} m3`,
     "Volumes use average end areas across a fixed-width crowned corridor; no side slopes, shrinkage or bulking.",
     `Rational-method runoff: ${r.peakRunoffM3s.toFixed(3)} m3/s (C=${c.runoffCoefficient}, i=${c.rainfallMmPerHour} mm/h, A=${c.catchmentAreaHa} ha).`,

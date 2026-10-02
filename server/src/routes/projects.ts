@@ -3,7 +3,7 @@ import multer from "multer";
 import { logAudit } from "../audit.js";
 import { deriveVaultKey, decryptAesGcm, encryptAesGcm, randomId, randomToken, sha256Hex } from "../crypto.js";
 import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
-import { db, now } from "../db.js";
+import { db, now, withTransaction } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { z } from "zod";
 import { emitProjectEvent } from "../collaboration.js";
@@ -23,7 +23,7 @@ const upload = multer({
 
 router.use((req: AuthedRequest, res, next) => {
   const session = resolveSession(req);
-  if (!session) {
+  if (!session || session.status !== "active") {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
@@ -100,6 +100,9 @@ const projectMetaSchema = z.object({
   projectType: projectTypeSchema.optional(),
   widthMm: z.number().int().min(1000).max(30000).optional(),
   depthMm: z.number().int().min(1000).max(30000).optional(),
+  folder: z.string().trim().max(80).optional(),
+  archived: z.boolean().optional(),
+  isTemplate: z.boolean().optional(),
 });
 
 const designSchema = z.object({
@@ -112,10 +115,10 @@ const shareLinkSchema = z.object({ expiresInHours: z.number().int().min(1).max(2
 function projectForUser(projectId: string, userId: string) {
   const access = getProjectAccess(projectId, userId);
   if (!canReadProject(access)) return undefined;
-  const row = db.prepare("SELECT id, user_id, name, project_type, design_data, width_mm, depth_mm, revision, photo_file_id, created_at, updated_at FROM projects WHERE id = ?")
+  const row = db.prepare("SELECT id, user_id, name, project_type, design_data, width_mm, depth_mm, revision, photo_file_id, folder, archived, is_template, created_at, updated_at FROM projects WHERE id = ?")
     .get(projectId) as {
       id: string; user_id: string; name: string; project_type: string; design_data: string | null; width_mm: number; depth_mm: number; revision: number;
-      photo_file_id: string | null; created_at: number; updated_at: number;
+      photo_file_id: string | null; folder: string; archived: number; is_template: number; created_at: number; updated_at: number;
     } | undefined;
   return row ? { ...row, ownerId: access.ownerId, role: access.role } : undefined;
 }
@@ -124,23 +127,35 @@ function revisionResponse(row: { id: string; name: string; project_type: string;
   return { id: row.id, name: row.name, projectType: row.project_type, widthMm: row.width_mm, depthMm: row.depth_mm, createdAt: row.created_at };
 }
 
+/** All creation paths share the advertised free-plan active-project allowance. */
+function canAddActiveProject(userId: string): boolean {
+  const user = db.prepare("SELECT plan, plan_expires_at FROM users WHERE id = ?").get(userId) as { plan: string; plan_expires_at: number | null } | undefined;
+  if (!user) return false;
+  if (["pro", "studio"].includes(user.plan) && (user.plan_expires_at === null || user.plan_expires_at > now())) return true;
+  const row = db.prepare("SELECT COUNT(*) AS count FROM projects WHERE user_id = ? AND archived = 0").get(userId) as { count: number };
+  return Number(row.count) < 1;
+}
+
+const ACTIVE_PROJECT_LIMIT = "The Free plan allows one active owned project. Archive an existing project or upgrade before creating or restoring another.";
+
 /* GET /api/projects */
 router.get("/", (req: AuthedRequest, res) => {
   const rows = db.prepare(
-    `SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision, 'owner' AS role
+    `SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision, p.folder, p.archived, p.is_template, 'owner' AS role
      FROM projects p WHERE p.user_id = ?
      UNION ALL
-     SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision, pm.role AS role
+     SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision, p.folder, p.archived, p.is_template, pm.role AS role
      FROM project_members pm JOIN projects p ON p.id = pm.project_id WHERE pm.user_id = ?
      ORDER BY updated_at DESC`,
   ).all(req.user!.id, req.user!.id) as {
     id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number; updated_at: number;
-    photo_file_id: string | null; revision: number; role: "owner" | "editor" | "viewer";
+    photo_file_id: string | null; revision: number; folder: string; archived: number; is_template: number; role: "owner" | "editor" | "viewer";
   }[];
   res.json({
     projects: rows.map((p) => ({
       id: p.id, name: p.name, projectType: p.project_type, widthMm: p.width_mm, depthMm: p.depth_mm,
       createdAt: p.created_at, updatedAt: p.updated_at, hasPhoto: Boolean(p.photo_file_id), revision: p.revision, role: p.role,
+      folder: p.folder, archived: Boolean(p.archived), isTemplate: Boolean(p.is_template),
     })),
   });
 });
@@ -156,10 +171,15 @@ router.post(
     }
     const id = randomId();
     const t = now();
-    db.prepare(
-      `INSERT INTO projects (id, user_id, name, project_type, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, req.user!.id, parsed.data.name, parsed.data.projectType || "house", t, t);
+    const created = withTransaction(() => {
+      if (!canAddActiveProject(req.user!.id)) return false;
+      db.prepare(
+        `INSERT INTO projects (id, user_id, name, project_type, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(id, req.user!.id, parsed.data.name, parsed.data.projectType || "house", t, t);
+      return true;
+    });
+    if (!created) { res.status(403).json({ error: ACTIVE_PROJECT_LIMIT, code: "ACTIVE_PROJECT_LIMIT" }); return; }
     logAudit(req.user!.id, "project.created", { name: parsed.data.name, projectType: parsed.data.projectType || "house" }, req);
     res.status(201).json({
       id,
@@ -170,6 +190,7 @@ router.post(
       createdAt: t,
       updatedAt: t,
       revision: 0,
+      role: "owner", folder: "", archived: false, isTemplate: false,
     });
   }),
 );
@@ -203,8 +224,42 @@ router.get("/:id", (req: AuthedRequest, res) => {
     updatedAt: row.updated_at,
     revision: row.revision,
     role: row.role,
+    folder: row.folder, archived: Boolean(row.archived), isTemplate: Boolean(row.is_template),
   });
 });
+
+/* POST /api/projects/:id/duplicate — read access is required even for templates. */
+router.post("/:id/duplicate", asyncHandler(async (req: AuthedRequest, res) => {
+  const source = projectForUser(req.params.id, req.user!.id);
+  if (!source) { res.status(404).json({ error: "Project not found" }); return; }
+  const parsed = z.object({ name: z.string().trim().min(1).max(80) }).safeParse(req.body || {});
+  if (!parsed.success) { res.status(400).json({ error: "A project name of 1–80 characters is required" }); return; }
+  let designData: string | null = null;
+  try {
+    if (source.design_data) {
+      const plaintext = decryptForUser(source.design_data, source.ownerId);
+      if (plaintext.length > 4_000_000) throw new Error("Design exceeds the project size limit");
+      JSON.parse(plaintext);
+      designData = encryptForUser(plaintext, req.user!.id);
+    }
+  } catch {
+    res.status(422).json({ error: "The source design cannot be copied because its stored data is unreadable or too large" });
+    return;
+  }
+  const id = randomId();
+  const t = now();
+  const created = withTransaction(() => {
+    if (!canAddActiveProject(req.user!.id)) return false;
+    db.prepare("INSERT INTO projects (id, user_id, name, project_type, design_data, width_mm, depth_mm, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, req.user!.id, parsed.data.name, source.project_type, designData, source.width_mm, source.depth_mm, t, t);
+    return true;
+  });
+  if (!created) { res.status(403).json({ error: ACTIVE_PROJECT_LIMIT, code: "ACTIVE_PROJECT_LIMIT" }); return; }
+  // Photos, team permissions, share links, history, locks and operations stay with the source.
+  logAudit(req.user!.id, "project.duplicated", { projectId: id, sourceProjectId: source.id, name: parsed.data.name, fromTemplate: Boolean(source.is_template) }, req);
+  res.status(201).json({ id, name: parsed.data.name, projectType: source.project_type, widthMm: source.width_mm, depthMm: source.depth_mm,
+    createdAt: t, updatedAt: t, hasPhoto: false, revision: 0, role: "owner", folder: "", archived: false, isTemplate: false });
+}));
 
 /* PATCH /api/projects/:id — name, dims, or encrypted design data */
 router.patch(
@@ -215,7 +270,7 @@ router.patch(
       res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" });
       return;
     }
-    const row = db.prepare("SELECT id, name, revision FROM projects WHERE id = ?").get(req.params.id) as { id: string; name: string; revision: number };
+    const row = db.prepare("SELECT id, name, revision, archived FROM projects WHERE id = ?").get(req.params.id) as { id: string; name: string; revision: number; archived: number };
 
     let parsedBody: Record<string, unknown> = {};
     try {
@@ -233,8 +288,13 @@ router.patch(
       return;
     }
     const meta = projectMetaSchema.partial().safeParse(parsedBody);
-    if (!meta.success && !hasDesign) {
-      res.status(400).json({ error: "Nothing to update" });
+    if (!meta.success) {
+      res.status(400).json({ error: meta.error.issues[0]?.message || "Invalid project metadata" });
+      return;
+    }
+    const hasLibraryMetadata = meta.data.folder !== undefined || meta.data.archived !== undefined || meta.data.isTemplate !== undefined;
+    if (hasLibraryMetadata && !canManageProject(access)) {
+      res.status(403).json({ error: "Owner access required to organize, archive or designate templates" });
       return;
     }
 
@@ -254,21 +314,30 @@ router.patch(
 
     const fields: string[] = [];
     const values: (string | number)[] = [];
-    if (typeof parsedBody.name === "string" && parsedBody.name.trim()) {
+    if (meta.data.name !== undefined) {
       fields.push("name = ?");
-      values.push(parsedBody.name.trim().slice(0, 80));
+      values.push(meta.data.name);
     }
-    if (typeof parsedBody.projectType === "string" && PROJECT_TYPES.includes(parsedBody.projectType as ProjectType)) {
+    if (meta.data.projectType !== undefined) {
       fields.push("project_type = ?");
-      values.push(parsedBody.projectType);
+      values.push(meta.data.projectType);
     }
-    if (typeof parsedBody.widthMm === "number") {
+    if (meta.data.widthMm !== undefined) {
       fields.push("width_mm = ?");
-      values.push(Math.round(Math.min(Math.max(parsedBody.widthMm, 1000), 30000)));
+      values.push(meta.data.widthMm);
     }
-    if (typeof parsedBody.depthMm === "number") {
+    if (meta.data.depthMm !== undefined) {
       fields.push("depth_mm = ?");
-      values.push(Math.round(Math.min(Math.max(parsedBody.depthMm, 1000), 30000)));
+      values.push(meta.data.depthMm);
+    }
+    if (meta.data.folder !== undefined) {
+      fields.push("folder = ?"); values.push(meta.data.folder);
+    }
+    if (meta.data.archived !== undefined) {
+      fields.push("archived = ?"); values.push(Number(meta.data.archived));
+    }
+    if (meta.data.isTemplate !== undefined) {
+      fields.push("is_template = ?"); values.push(Number(meta.data.isTemplate));
     }
     if (designPayload !== null) {
       fields.push("design_data = ?");
@@ -283,9 +352,14 @@ router.patch(
     values.push(req.params.id);
 
     fields.push("revision = revision + 1");
-    const result = db.prepare(
-      `UPDATE projects SET ${fields.join(", ")} WHERE id = ?${expectedRevision !== null ? " AND revision = ?" : ""}`,
-    ).run(...values, ...(expectedRevision !== null ? [expectedRevision] : []));
+    const result = withTransaction(() => {
+      const libraryState = db.prepare("SELECT archived FROM projects WHERE id = ?").get(req.params.id) as { archived: number } | undefined;
+      if (libraryState?.archived && meta.data.archived === false && !canAddActiveProject(access.ownerId)) return null;
+      return db.prepare(
+        `UPDATE projects SET ${fields.join(", ")} WHERE id = ?${expectedRevision !== null ? " AND revision = ?" : ""}`,
+      ).run(...values, ...(expectedRevision !== null ? [expectedRevision] : []));
+    });
+    if (!result) { res.status(403).json({ error: ACTIVE_PROJECT_LIMIT, code: "ACTIVE_PROJECT_LIMIT" }); return; }
     if (!result.changes) {
       const latest = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.id) as { revision: number };
       res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision });
@@ -294,6 +368,9 @@ router.patch(
 
     if (designPayload !== null) {
       logAudit(req.user!.id, "project.updated", { name: row.name }, req);
+    }
+    if (hasLibraryMetadata) {
+      logAudit(req.user!.id, "project.library_updated", { projectId: req.params.id, folder: meta.data.folder, archived: meta.data.archived, isTemplate: meta.data.isTemplate }, req);
     }
     const revision = current.revision + 1;
     emitProjectEvent(req.params.id, req.user!.id, designPayload !== null ? "design.updated" : "snapshot.created", revision, { designChanged: designPayload !== null });

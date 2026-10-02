@@ -217,6 +217,35 @@ export function screenStructuralDesign(design: CommunityDesign): StructuralDesig
   };
 }
 
+function canonicalStructuralValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalStructuralValue).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalStructuralValue((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  return JSON.stringify(value ?? null) ?? "null";
+}
+
+/** Deterministic model/load identity for accidental stale-result detection; not an authenticity signature. */
+export function structuralModelFingerprint(design: CommunityDesign, pkg = screenStructuralDesign(design)): string {
+  const sort = <T extends { id: string }>(items: T[]) => [...items].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const settings = structuralSettings(design.structural);
+  const source = canonicalStructuralValue({
+    fingerprintVersion: 1,
+    units: "SI",
+    supportPolicy: "lowest-column-bases-assumed-fixed",
+    nodes: sort(pkg.frame.nodes), members: sort(pkg.frame.members), levels: sort(pkg.frame.levels),
+    combinations: sort(pkg.combinations),
+    assumptions: { ...settings, loadCombinations: sort(settings.loadCombinations ?? []) },
+    towerLoadSource: sort(design.towers.map(tower => ({ id: tower.id, width: tower.unitWidth, depth: tower.unitDepth, floors: tower.floors, unitsPerFloor: tower.unitsPerFloor, floorHeight: tower.floorHeight }))),
+  });
+  const mask = 0xffffffffffffffffn;
+  let a = 0xcbf29ce484222325n, b = 0x84222325cbf29ce4n;
+  for (let i = 0; i < source.length; i += 1) {
+    const code = BigInt(source.charCodeAt(i));
+    a = ((a ^ code) * 0x100000001b3n) & mask;
+    b = ((b ^ code) * 0x9e3779b185ebca87n) & mask;
+  }
+  return `gw-structural-v1-${a.toString(16).padStart(16, "0")}${b.toString(16).padStart(16, "0")}`;
+}
+
 export function buildStructuralSolverExchange(design: CommunityDesign): string {
   const pkg = screenStructuralDesign(design);
   const columns = pkg.frame.members.filter(member => member.kind === "column");
@@ -226,6 +255,8 @@ export function buildStructuralSolverExchange(design: CommunityDesign): string {
   return JSON.stringify({
     format: "groundwork-structural-analysis-model",
     version: 1,
+    modelFingerprint: structuralModelFingerprint(design, pkg),
+    resultsSchema: { format: "groundwork-structural-results", version: 1, units: { length: "m", force: "kN", moment: "kN*m", rotation: "rad" }, axes: "global-y-up", forceConvention: "compression-positive" },
     units: "SI",
     nodes: pkg.frame.nodes,
     members: pkg.frame.members,
