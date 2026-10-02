@@ -361,7 +361,9 @@ export interface AmenityData {
 
 export type DraftElementKind = "line" | "rectangle" | "circle" | "dimension" | "wall" | "slab" | "column" | "roof";
 
-export type ParametricConstraintKind = "alignment" | "parallel" | "perpendicular" | "level" | "equal";
+export type ParametricConstraintKind = "alignment" | "coincident" | "collinear" | "parallel" | "perpendicular" | "level" | "equal";
+
+export type ParametricConstraintAnchor = "center" | "start" | "end" | "midpoint";
 
 export type DraftGrip = "width-start" | "width-end" | "depth-start" | "depth-end";
 
@@ -392,7 +394,9 @@ export interface ParametricConstraint {
   id: string;
   kind: ParametricConstraintKind;
   targetId?: string;
-  axis?: "x" | "z";
+  axis?: "x" | "z" | "both";
+  anchor?: ParametricConstraintAnchor;
+  targetAnchor?: ParametricConstraintAnchor;
   locked?: boolean;
 }
 
@@ -424,6 +428,10 @@ export interface DraftingSettings {
   orthogonal: boolean;
   angleIncrement: number;
   alignment: boolean;
+  endpointSnap?: boolean;
+  midpointSnap?: boolean;
+  centerSnap?: boolean;
+  snapTolerance?: number;
 }
 
 export interface DesignLayer {

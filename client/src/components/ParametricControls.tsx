@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ParametricConstraint, ParametricConstraintKind, ParametricFamilyMetadata, ParametricLocks } from "../types";
+import type { ParametricConstraint, ParametricConstraintAnchor, ParametricConstraintKind, ParametricFamilyMetadata, ParametricLocks } from "../types";
 import { Button, Input, Select, Toggle } from "./ui";
 import { FAMILY_LIBRARY, familyForId, familyMetadata, type FamilyParameter } from "../lib/families";
 
@@ -13,10 +13,19 @@ interface ParametricControlsProps {
 
 const kinds: { value: ParametricConstraintKind; label: string }[] = [
   { value: "alignment", label: "Align" },
+  { value: "coincident", label: "Coincident" },
+  { value: "collinear", label: "Collinear" },
   { value: "parallel", label: "Parallel" },
   { value: "perpendicular", label: "Perpendicular" },
   { value: "level", label: "Same level" },
   { value: "equal", label: "Equal size" },
+];
+
+const anchors: { value: ParametricConstraintAnchor; label: string }[] = [
+  { value: "center", label: "Center" },
+  { value: "start", label: "Start" },
+  { value: "end", label: "End" },
+  { value: "midpoint", label: "Midpoint" },
 ];
 
 export function ParametricControls({ family, locks, constraints, targets, onChange }: ParametricControlsProps) {
@@ -28,7 +37,8 @@ export function ParametricControls({ family, locks, constraints, targets, onChan
     const parsed = parameter.type === "number" || parameter.type === "length" ? Number(value) || 0 : value;
     patchFamily({ ...family, [scope]: { ...(family?.[scope] ?? {}), [parameter.key]: parsed } });
   };
-  const addConstraint = () => onChange({ constraints: [...current, { id: `constraint_${Math.random().toString(36).slice(2, 9)}`, kind: "alignment", targetId: targets[0]?.id, axis: "x", locked: true }] });
+  const addConstraint = () => onChange({ constraints: [...current, { id: `constraint_${Math.random().toString(36).slice(2, 9)}`, kind: "alignment", targetId: targets[0]?.id, axis: "x", anchor: "center", targetAnchor: "center", locked: true }] });
+  const patchConstraint = (id: string, patch: Partial<ParametricConstraint>) => onChange({ constraints: current.map((item) => item.id === id ? { ...item, ...patch } : item) });
   return (
     <div className="space-y-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-300">Parametric family</p>
@@ -54,15 +64,34 @@ export function ParametricControls({ family, locks, constraints, targets, onChan
         {(["x", "z", "width", "depth", "height", "rotation"] as const).map((key) => <Toggle key={key} checked={Boolean(locks?.[key])} onChange={(value) => onChange({ locks: { ...locks, [key]: value } })} label={`Lock ${key}`} />)}
       </div>
       {current.map((constraint) => (
-        <div key={constraint.id} className="grid grid-cols-[1fr_1fr_auto] items-end gap-1">
-          <Select label="Relation" value={constraint.kind} onChange={(e) => onChange({ constraints: current.map((item) => item.id === constraint.id ? { ...item, kind: e.target.value as ParametricConstraintKind } : item) })}>
-            {kinds.map((kind) => <option key={kind.value} value={kind.value}>{kind.label}</option>)}
-          </Select>
-          <Select label="Target" value={constraint.targetId ?? ""} onChange={(e) => onChange({ constraints: current.map((item) => item.id === constraint.id ? { ...item, targetId: e.target.value || undefined } : item) })}>
-            <option value="">Choose target</option>
-            {targets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
-          </Select>
-          <Button size="sm" variant="danger" onClick={() => onChange({ constraints: current.filter((item) => item.id !== constraint.id) })}>×</Button>
+        <div key={constraint.id} className="space-y-1.5 rounded-lg border border-slate-800/80 bg-slate-950/35 p-2">
+          <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-1">
+            <Select label="Relation" value={constraint.kind} onChange={(e) => patchConstraint(constraint.id, { kind: e.target.value as ParametricConstraintKind })}>
+              {kinds.map((kind) => <option key={kind.value} value={kind.value}>{kind.label}</option>)}
+            </Select>
+            <Select label="Target" value={constraint.targetId ?? ""} onChange={(e) => patchConstraint(constraint.id, { targetId: e.target.value || undefined })}>
+              <option value="">Choose target</option>
+              {targets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}
+            </Select>
+            <Button size="sm" variant="danger" onClick={() => onChange({ constraints: current.filter((item) => item.id !== constraint.id) })}>×</Button>
+          </div>
+          {(constraint.kind === "alignment" || constraint.kind === "coincident" || constraint.kind === "collinear") && (
+            <Select label="Constraint axis" value={constraint.axis ?? "both"} onChange={(e) => patchConstraint(constraint.id, { axis: e.target.value as "x" | "z" | "both" })}>
+              <option value="both">X + Z</option>
+              <option value="x">X only</option>
+              <option value="z">Z only</option>
+            </Select>
+          )}
+          {constraint.kind === "coincident" && (
+            <div className="grid grid-cols-2 gap-1">
+              <Select label="This anchor" value={constraint.anchor ?? "center"} onChange={(e) => patchConstraint(constraint.id, { anchor: e.target.value as ParametricConstraintAnchor })}>
+                {anchors.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </Select>
+              <Select label="Target anchor" value={constraint.targetAnchor ?? "center"} onChange={(e) => patchConstraint(constraint.id, { targetAnchor: e.target.value as ParametricConstraintAnchor })}>
+                {anchors.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </Select>
+            </div>
+          )}
         </div>
       ))}
       <Button size="sm" variant="secondary" onClick={addConstraint} disabled={targets.length === 0}>+ Constraint</Button>

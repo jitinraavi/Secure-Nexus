@@ -9,7 +9,7 @@ import { amenityKind, facadeOption, landMeters, levelsForDesign, towerMeters, un
 import { pitFootprint } from "../lib/takeoff";
 import { buildMapGround } from "../lib/mapGround";
 import { sectionClippingPlanes } from "../lib/section";
-import { constrainDraftEnd, constrainedDraftPatch, constrainedDraftSize, draftingSettings, snapDraftPoint } from "../lib/drafting";
+import { constrainDraftEnd, constrainedDraftSize, draftingSettings, snapDraftPoint, solveDraftConstraintGraph } from "../lib/drafting";
 import { buildTerrainVisualization } from "../lib/terrain";
 import { buildMepScene } from "../lib/mep";
 import { resolveDraft, resolveTowerOpening } from "../lib/parametric";
@@ -1015,7 +1015,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
       const ground = groundAt(e.clientX, e.clientY);
       if (!ground) return;
       const settings = draftingSettings(designRef.current.drafting);
-      const point = snapDraftPoint({ x: drag.startX + (ground.x - drag.grabX), z: drag.startZ + (ground.z - drag.grabZ) }, settings, designRef.current);
+      const point = snapDraftPoint({ x: drag.startX + (ground.x - drag.grabX), z: drag.startZ + (ground.z - drag.grabZ) }, settings, designRef.current, { ignoreDraftId: drag.kind === "draft" ? drag.id : undefined });
       const nx = point.x;
       const nz = point.z;
       drag.node.position.x = nx;
@@ -1037,7 +1037,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
       } else if (kind === "amenity") {
         handlersRef.current.onChange({ ...current, amenities: current.amenities.map((a) => (a.id === id ? { ...a, x, z } : a)) });
       } else if (kind === "draft") {
-        handlersRef.current.onChange({ ...current, drafts: (current.drafts ?? []).map((d) => (d.id === id ? { ...d, ...constrainedDraftPatch(d, { x, z }, current.drafts ?? []) } : d)) });
+        handlersRef.current.onChange({ ...current, drafts: solveDraftConstraintGraph(current.drafts ?? [], id, { x, z }) });
       } else if (kind === "room") {
         const room = current.interiors.find((candidate) => candidate.id === id);
         const tower = room && current.towers.find((candidate) => candidate.id === room.towerId);

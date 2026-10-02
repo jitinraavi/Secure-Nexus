@@ -32,9 +32,8 @@ import { download } from "../lib/download";
 import { computeTakeoff } from "../lib/takeoff";
 import { buildBoqCsv, buildNotesText, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
 import { communityReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
-import { applyDraftOperation, constrainedDraftPatch, constrainedDraftSize, duplicateDraftArray, draftingSettings, patchDraftGrip } from "../lib/drafting";
+import { applyDraftOperation, constrainedDraftSize, duplicateDraftArray, draftingSettings, patchDraftGrip, solveDraftConstraintGraph } from "../lib/drafting";
 import { familyForId, familyMetadata } from "../lib/families";
-import { syncDraftFamilyParameters } from "../lib/parametric";
 import { analyzeCommunity, buildStructuralReport, structuralSettings } from "../lib/structural";
 import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects";
 import { MepPanel } from "../components/MepPanel";
@@ -524,10 +523,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
 
   const patchDraft = (id: string, patch: Partial<DraftElement>) => {
     const drafts = c.drafts ?? [];
-    const draft = drafts.find((item) => item.id === id);
-    if (!draft) return;
-    const constrained = constrainedDraftPatch(draft, patch, drafts);
-    update({ drafts: drafts.map((d) => (d.id === id ? { ...d, ...syncDraftFamilyParameters(d, constrained) } : d)) });
+    update({ drafts: solveDraftConstraintGraph(drafts, id, patch) });
   };
 
   const operateDraft = (operation: "trim" | "extend" | "offset" | "rotate" | "mirror") => {
