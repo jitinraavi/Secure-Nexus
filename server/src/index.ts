@@ -50,9 +50,10 @@ app.use(
 
 app.use(cookieParser());
 app.use(express.json({
-  limit: "256kb",
+  limit: "8mb",
   verify: (req, _res, buffer) => {
     if ((req.url ?? "").split("?")[0] === "/api/payments/webhook") {
+      if (buffer.length > 256 * 1024) throw Object.assign(new Error("Webhook body too large"), { status: 413 });
       (req as express.Request & { paymentWebhookBody?: Buffer }).paymentWebhookBody = Buffer.from(buffer);
     }
   },
@@ -104,6 +105,10 @@ app.use(
     }
     if (err instanceof SyntaxError) {
       res.status(400).json({ error: "Invalid JSON body" });
+      return;
+    }
+    if (err && typeof err === "object" && "status" in err && err.status === 413) {
+      res.status(413).json({ error: "Request is too large for this endpoint" });
       return;
     }
     next(err);
