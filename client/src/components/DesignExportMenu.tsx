@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, Input, Modal, Select } from "./ui";
 import { useToast } from "./Toast";
 import { download, downloadBlob } from "../lib/download";
@@ -6,7 +6,7 @@ import type { Design, DocumentationAnnotation, DocumentationRevision, Documentat
 import { documentationFor } from "../lib/documentation";
 import { getCadExchangeStatus, type CadExchangeStatusResponse } from "../api";
 import { COMPLIANCE_PROFILES, validateDesign } from "../lib/compliance";
-import { buildIfcStep, validateIfcProfile, validateIfcRoundTrip } from "../lib/bim";
+import { buildIfcStep, inspectGroundworkIfcSources, validateIfcProfile, validateIfcRoundTrip, type IfcValidationReport } from "../lib/bim";
 import { buildBcfZip } from "../lib/bcf";
 import { technicalGraphicsSettings } from "../lib/technicalGraphics";
 
@@ -15,8 +15,10 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
   const [cadStatus, setCadStatus] = useState<CadExchangeStatusResponse | null>(null);
   const docs = documentationFor(design);
   const compliance = validateDesign(design);
-  const ifcReport = validateIfcRoundTrip(design);
-  const ifcProfile = validateIfcProfile(buildIfcStep(design), "reference-view");
+  const ifcStep = useMemo(() => open ? buildIfcStep(design) : "", [open, design]);
+  const ifcReport = useMemo<IfcValidationReport>(() => open ? validateIfcRoundTrip(design, ifcStep) : { valid: false, parsedEntities: 0, guidCount: 0, normalized: false, issues: [] }, [open, design, ifcStep]);
+  const ifcProfile = useMemo(() => open ? validateIfcProfile(ifcStep, "reference-view") : { valid: false, requirements: [], issues: [] }, [open, ifcStep]);
+  const [importSummary, setImportSummary] = useState("");
   const graphics = technicalGraphicsSettings(design.technicalGraphics);
   const toast = useToast();
   const stem = (projectName || "design").trim().replace(/[^\w-]+/g, "-").toLowerCase() || "design";
@@ -41,7 +43,7 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
         toast.push({ title: "IFC export blocked", description: "Resolve IFC validation errors before downloading the model.", tone: "error" });
         return;
       }
-      download(`${stem}.ifc`, buildIfcStep(design), "application/x-step");
+      download(`${stem}.ifc`, ifcStep, "application/x-step");
     }
     toast.push({ title: `${format.toUpperCase()} downloaded`, description: "Planning and coordination geometry is marked as approximate.", tone: "success" });
     setOpen(false);
@@ -135,6 +137,21 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           <Button className="sm:col-span-2" variant="outline" disabled={!dwgProvider?.available} title={dwgProvider?.message || "Licensed DWG provider unavailable"}>Download DWG (licensed provider)</Button>
           <Button variant="secondary" onClick={() => void exportBcf()}>Download BCF coordination package</Button>
           <Button variant="outline" onClick={() => download(`${stem}-ifc-validation.json`, JSON.stringify({ roundTrip: ifcReport, profile: ifcProfile }, null, 2), "application/json")}>Download IFC validation report</Button>
+          <p className="text-xs text-slate-500">{ifcReport.sourceRoundTrip?.scope} {ifcReport.sourceRoundTrip?.checkedEntities ?? 0} source entities checked.</p>
+          <label className="block text-xs text-slate-400">Inspect a Groundwork IFC metadata export
+            <input className="mt-1 block text-xs" type="file" accept=".ifc,.step,.stp" onChange={e => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              if (file.size > 10000000) { setImportSummary("Inspect files up to 10 MB."); return; }
+              void file.text().then(text => {
+                const recovered = inspectGroundworkIfcSources(text);
+                setImportSummary(`${recovered.entities.length} Groundwork source records recovered; ${recovered.issues.length} metadata errors. Geometry is not imported.`);
+                download(`${stem}-inspected-ifc-sources.json`, JSON.stringify(recovered, null, 2), "application/json");
+              }).catch(error => setImportSummary(error instanceof Error ? error.message : "Could not read IFC."));
+              e.target.value = "";
+            }} />
+          </label>
+          {importSummary && <p className="text-xs text-slate-400">{importSummary}</p>}
            <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download sheet set with screening report</Button>
         </div>
       </Modal>
@@ -211,3 +228,4 @@ function DocumentationEditor({
 function DocSection({ title, addLabel, onAdd, children }: { title: string; addLabel: string; onAdd: () => void; children: React.ReactNode }) {
   return <section className="rounded-xl border border-slate-700 bg-slate-950/30 p-3"><div className="mb-2 flex items-center justify-between"><p className="gw-kicker">{title}</p><Button variant="outline" size="sm" onClick={onAdd}>{addLabel}</Button></div><div className="space-y-2">{children}</div></section>;
 }
+

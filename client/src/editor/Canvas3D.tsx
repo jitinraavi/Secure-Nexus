@@ -632,7 +632,7 @@ export function Canvas3D({
     scene.add(room);
     roomGroupRef.current = room;
     if (sectionRef.current && sectionWall) sectionWall.visible = false;
-    const mep = buildMepScene(design.mep);
+    const mep = buildMepScene(design.mep, visualizationSettings(design.visualization));
     scene.add(mep);
     mepGroupRef.current = mep;
 
@@ -649,9 +649,9 @@ export function Canvas3D({
       rec.group.visible = !item || phaseVisible(item.phaseId, settings);
     }
     if (mepGroupRef.current) mepGroupRef.current.traverse((node) => {
-      if (node.userData.phaseId) node.visible = phaseVisible(node.userData.phaseId as string, settings);
+      if (node.userData.selectKind === "mep") node.visible = phaseVisible(typeof node.userData.phaseId === "string" ? node.userData.phaseId : undefined, settings);
     });
-  }, [design.visualization, design.furniture]);
+  }, [design.visualization, design.furniture, design.mep]);
 
   /* Photo overlay */
   useEffect(() => {
@@ -735,6 +735,7 @@ export function Canvas3D({
       } else {
         groupSync(rec.group, item, sig, design.room);
       }
+      rec.group.visible = phaseVisible(item.phaseId, visualizationSettings(design.visualization));
     }
   }, [design.furniture, design.room.widthMm, design.room.depthMm, design.room.wallHeightMm]);
 
@@ -820,3 +821,4 @@ function disposeGroup(group: THREE.Object3D) {
     ma.dispose();
   }
 }
+

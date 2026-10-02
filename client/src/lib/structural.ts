@@ -40,10 +40,11 @@ export function defaultLoadCombinations(): StructuralLoadCombination[] {
 
 export function structuralSettings(value?: Partial<StructuralSettings>): StructuralSettings {
   const next = { ...DEFAULT_STRUCTURAL_SETTINGS, ...value };
+  const input = (value: number, fallback: number, min: number) => Math.max(Number.isFinite(value) ? value : fallback, min);
   return {
     enabled: Boolean(next.enabled),
-    deadLoadKPa: Math.max(Number(next.deadLoadKPa) || 5, 0),
-    liveLoadKPa: Math.max(Number(next.liveLoadKPa) || 2, 0),
+    deadLoadKPa: input(next.deadLoadKPa, 5, 0),
+    liveLoadKPa: input(next.liveLoadKPa, 2, 0),
     concreteStrengthMPa: Math.max(Number(next.concreteStrengthMPa) || 25, 10),
     soilBearingKPa: Math.max(Number(next.soilBearingKPa) || 150, 25),
     columnWidthM: Math.max(Number(next.columnWidthM) || 0.4, 0.15),
@@ -60,6 +61,7 @@ export function structuralSettings(value?: Partial<StructuralSettings>): Structu
     windExposure: next.windExposure ?? "unknown",
     seismicSiteClass: next.seismicSiteClass ?? "unknown",
     occupancyCategory: next.occupancyCategory ?? "unknown",
+    codeProfileId: next.codeProfileId ?? "planning-si",
     driftLimitRatio: Math.max(Number(next.driftLimitRatio) || 1 / 500, 1 / 1000),
     loadCombinations: (next.loadCombinations?.length ? next.loadCombinations : defaultLoadCombinations()).map((combination) => ({
       ...combination,
@@ -234,3 +236,4 @@ export { calculateStructuralScreen };
 export function structuralProfile(design: CommunityDesign) {
   return profileFromStructuralSettings(structuralSettings(design.structural));
 }
+

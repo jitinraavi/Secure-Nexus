@@ -67,7 +67,6 @@ export function Editor() {
   const [tourPlaying, setTourPlaying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
-  const [revision, setRevision] = useState(0);
   const [remoteRevision, setRemoteRevision] = useState<number | null>(null);
 
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
@@ -95,7 +94,6 @@ export function Editor() {
     try {
       const project = await getProject(id!);
       setName(project.name);
-      setRevision(project.revision ?? 0);
       revisionRef.current = project.revision ?? 0;
       setRemoteRevision(null);
       setProjectRole(project.role ?? "owner");
@@ -169,7 +167,6 @@ export function Editor() {
             designData: JSON.stringify(d),
             baseRevision,
           });
-          setRevision(saved.revision);
           revisionRef.current = saved.revision;
           pendingBaseRevision.current = null;
           if (generation === editGeneration.current) {
@@ -360,7 +357,9 @@ export function Editor() {
   };
 
   const canUseCamera = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
-  const cameraPath = visualizationSettings(design.visualization).cameraPath ?? [];
+  const visualization = visualizationSettings(design.visualization);
+  const phaseOptions = visualization.phases.slice(0, 1000);
+  const cameraPath = visualization.cameraPath ?? [];
 
   const onHistoryRestore = (state: { design: Design | null; projectType: ProjectType; widthMm: number; depthMm: number }) => {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
@@ -436,6 +435,11 @@ export function Editor() {
                 <div className="flex justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scale</p><p className="text-xs text-slate-400">{Math.round(selected.scale * 100)}%</p></div>
                 <input type="range" min={0.5} max={1.5} step={0.05} value={selected.scale} onChange={(e) => updateSelected({ scale: Number(e.target.value) })} className="w-full accent-emerald-500" />
               </div>
+              <Select label="Construction phase" value={selected.phaseId ?? ""} onChange={(e) => updateSelected({ phaseId: e.target.value || undefined })}>
+                <option value="">Unassigned / always visible</option>
+                {selected.phaseId && !phaseOptions.some((phase) => phase.id === selected.phaseId) && <option value={selected.phaseId}>Missing or outside selection limit ({selected.phaseId})</option>}
+                {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+              </Select>
               <Select label="PBR finish" value={selected.finish ?? "satin"} onChange={(e) => updateSelected({ finish: e.target.value as FurnitureItem["finish"] })}>
                 <option value="matte">Matte</option><option value="satin">Satin</option><option value="glossy">Glossy</option><option value="metallic">Metallic</option><option value="glass">Glass</option>
               </Select>
@@ -515,7 +519,7 @@ export function Editor() {
         </div>
       )}
 
-      {panelTab === "mep" && <div className="flex-1 space-y-4 overflow-y-auto"><Suspense fallback={<Spinner className="h-5 w-5" />}><MepPanel value={design.mep} onChange={(mep) => changeDesign({ ...design, mep })} /></Suspense></div>}
+      {panelTab === "mep" && <div className="flex-1 space-y-4 overflow-y-auto"><Suspense fallback={<Spinner className="h-5 w-5" />}><MepPanel value={design.mep} phases={visualization.phases} onChange={(mep) => changeDesign({ ...design, mep })} /></Suspense></div>}
     </>
   );
 

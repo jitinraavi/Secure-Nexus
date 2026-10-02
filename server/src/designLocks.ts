@@ -6,7 +6,7 @@ function objectsById(value: unknown): Map<string, unknown> {
   while (pending.length) {
     const current = pending.pop();
     if (!current || typeof current !== "object") continue;
-    if (Array.isArray(current)) { pending.push(...current); continue; }
+    if (Array.isArray(current)) { for (const child of current) pending.push(child); continue; }
     const object = current as Record<string, unknown>;
     if (typeof object.id === "string") {
       // Duplicate IDs are ambiguous; retain all occurrences for lock comparisons.

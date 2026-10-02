@@ -1,9 +1,10 @@
 import * as THREE from "three";
-import type { MepDesign, MepElement, MepElementKind, MepPoint, MepPlanningInputs, MepSystemType } from "../types";
+import type { MepDesign, MepElement, MepElementKind, MepPoint, MepPlanningInputs, MepSystemType, VisualizationSettings } from "../types";
 import { material, prismAt, uid } from "./modelcore";
 import { calculateMepPlan, validateMepInputs } from "./mep-calculations";
 import { engineeringProfile } from "./engineering";
 import { familyForMepKind, familyMetadata } from "./families";
+import { phaseVisible } from "./visualization";
 
 export const MEP_KINDS: { kind: MepElementKind; label: string; color: string }[] = [
   { kind: "duct", label: "Duct", color: "#f59e0b" },
@@ -148,12 +149,14 @@ function segment(g: THREE.Group, a: MepPoint, b: MepPoint, radius: number, color
   mesh.position.copy(start.clone().add(end).multiplyScalar(0.5)); mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize()); mesh.userData.noSelect = true; g.add(mesh);
 }
 
-export function buildMepScene(mep: MepDesign | undefined): THREE.Group {
+export function buildMepScene(mep: MepDesign | undefined, visualization?: VisualizationSettings): THREE.Group {
   const g = new THREE.Group(); const data = normalizeMep(mep);
   if (!data.enabled) return g;
   for (const element of data.elements) {
     if (!element.visible || element.route.length === 0) continue;
     const item = new THREE.Group(); item.userData.selectId = element.id; item.userData.selectKind = "mep";
+    item.userData.phaseId = element.phaseId;
+    item.visible = !visualization || phaseVisible(element.phaseId, visualization);
     if (element.kind === "equipment" || element.kind === "fixture") {
       const p = element.route[0]; const body = prismAt(p.x, p.y, p.z, Math.max(element.width, 0.2), Math.max(element.height, 0.2), Math.max(element.diameter, element.width, 0.2), material(element.color)); item.add(body);
     } else for (let i = 1; i < element.route.length; i++) segment(item, element.route[i - 1], element.route[i], element.kind === "duct" ? Math.min(element.width, element.height) / 2 : element.diameter / 2, element.color);
@@ -161,3 +164,4 @@ export function buildMepScene(mep: MepDesign | undefined): THREE.Group {
   }
   return g;
 }
+

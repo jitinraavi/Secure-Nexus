@@ -1,5 +1,7 @@
-import type { CommunityDesign, InfraDesign, MepDesign, MepElement, ReviewMarker } from "../types";
+import type { MepDesign, MepElement, ReviewMarker } from "../types";
+import type { CommunityReviewInput, InfraReviewInput } from "./reviewWorkerProtocol";
 import { amenityKind, towerMeters } from "./community";
+import { SpatialHash2D } from "./performance";
 
 export interface ReviewFinding {
   id: string;
@@ -15,6 +17,23 @@ export interface ReviewFinding {
 
 type Footprint = { id: string; label: string; x: number; z: number; w: number; d: number; rotationDeg: number; minY: number; maxY: number };
 type PointStructure = { id: string; label: string; x: number; z: number; w: number; d: number; minY: number; maxY: number };
+
+const footprintRadius = (box: { w: number; d: number }) => Math.hypot(box.w, box.d) / 2;
+function footprintIndex<T extends { id: string; x: number; z: number; w: number; d: number }>(objects: T[]) {
+  const index = new SpatialHash2D<T>(20);
+  for (const object of objects) {
+    if ([object.x, object.z, object.w, object.d].every(Number.isFinite)) index.insert({ id: object.id, x: object.x, z: object.z, radius: footprintRadius(object), value: object });
+  }
+  return index;
+}
+
+/** Circular broad phase retains every rotated-envelope candidate for the SAT narrow phase. */
+function* footprintPairs(objects: Footprint[]): Generator<[Footprint, Footprint]> {
+  const index = footprintIndex(objects), order = new Map(objects.map((box, i) => [box.id, i]));
+  for (const [i, a] of objects.entries()) {
+    for (const b of index.query(a.x, a.z, footprintRadius(a))) if ((order.get(b.id) ?? -1) > i) yield [a, b.value];
+  }
+}
 
 function axes(box: Footprint): [number, number][] {
   const angle = box.rotationDeg * Math.PI / 180;
@@ -70,17 +89,17 @@ function mepEnvelope(element: MepElement): Footprint | null {
 function mepFindings(mep: MepDesign | undefined, structures: Footprint[], pointStructures: PointStructure[], prefix: string): ReviewFinding[] {
   const elements = (mep?.elements ?? []).filter((element) => element.visible).map(mepEnvelope).filter((item): item is Footprint => Boolean(item));
   const findings: ReviewFinding[] = [];
-  for (let i = 0; i < elements.length; i++) for (let j = i + 1; j < elements.length; j++) {
-    const a = elements[i]; const b = elements[j];
+  for (const [a, b] of footprintPairs(elements)) {
     if (horizontalOverlap(a, b) && verticalOverlap(a, b)) findings.push(finding(`${prefix}-mep-clash-${a.id}-${b.id}`, `${a.label} intersects ${b.label} in the approximate 3D envelope`, "blocker", "clash", 92, (a.x + b.x) / 2, (a.z + b.z) / 2, [a.id, b.id]));
   }
-  for (const element of elements) for (const structure of structures) {
+  const structureIndex = footprintIndex(structures), pointIndex = footprintIndex(pointStructures);
+  for (const element of elements) for (const { value: structure } of structureIndex.query(element.x, element.z, footprintRadius(element) + 0.2)) {
     const gap = horizontalGap(element, structure);
     if (gap <= 0 && verticalOverlap(element, structure)) findings.push(finding(`${prefix}-mep-building-${element.id}-${structure.id}`, `${element.label} crosses the ${structure.label} building envelope`, "warning", "mep-building", 76, element.x, element.z, [element.id, structure.id]));
     else if (gap > 0 && gap < 0.2 && verticalOverlap(element, structure)) findings.push(finding(`${prefix}-mep-clearance-${element.id}-${structure.id}`, `${element.label} is about ${gap.toFixed(2)} m from ${structure.label}; below the 0.20 m planning clearance`, "warning", "clearance", 62, element.x, element.z, [element.id, structure.id]));
     else if (gap <= 0 && !verticalOverlap(element, structure) && verticalGap(element, structure) < 0.2) findings.push(finding(`${prefix}-vertical-${element.id}-${structure.id}`, `${element.label} and ${structure.label} are vertically separated by only about ${verticalGap(element, structure).toFixed(2)} m`, "warning", "vertical", 57, element.x, element.z, [element.id, structure.id]));
   }
-  for (const element of elements) for (const structure of pointStructures) {
+  for (const element of elements) for (const { value: structure } of pointIndex.query(element.x, element.z, footprintRadius(element) + 0.2)) {
     const pointBox: Footprint = { ...structure, rotationDeg: 0 };
     const gap = horizontalGap(element, pointBox);
     if (gap <= 0 && verticalOverlap(element, structure)) findings.push(finding(`${prefix}-mep-structure-${element.id}-${structure.id}`, `${element.label} intersects approximate structural element ${structure.label}`, "blocker", "mep-structure", 88, element.x, element.z, [element.id, structure.id]));
@@ -90,7 +109,7 @@ function mepFindings(mep: MepDesign | undefined, structures: Footprint[], pointS
   return findings;
 }
 
-export function communityReviewFindings(design: CommunityDesign): ReviewFinding[] {
+export function communityReviewFindings(design: CommunityReviewInput): ReviewFinding[] {
   const objects: Footprint[] = [
     ...design.towers.map((tower) => {
       const size = towerMeters(tower);
@@ -109,13 +128,9 @@ export function communityReviewFindings(design: CommunityDesign): ReviewFinding[
     })),
   ];
   const findings: ReviewFinding[] = [];
-  for (let i = 0; i < objects.length; i++) {
-    for (let j = i + 1; j < objects.length; j++) {
-      const a = objects[i];
-      const b = objects[j];
+  for (const [a, b] of footprintPairs(objects)) {
       if (!horizontalOverlap(a, b) || !verticalOverlap(a, b)) continue;
       findings.push(finding(`clash-${a.id}-${b.id}`, `${a.label} overlaps ${b.label} in the rotated footprint`, "blocker", "clash", 95, (a.x + b.x) / 2, (a.z + b.z) / 2, [a.id, b.id]));
-    }
   }
   const draftedColumns: PointStructure[] = (design.drafts ?? []).filter((draft) => draft.kind === "column").map((draft) => ({ id: draft.id, label: draft.label ?? "drafted column", x: draft.x, z: draft.z, w: draft.w, d: draft.d, minY: draft.elevationM ?? 0, maxY: (draft.elevationM ?? 0) + (draft.h ?? 3) }));
   const gridX = (design.structuralGrid ?? []).filter((line) => line.axis === "x");
@@ -125,7 +140,7 @@ export function communityReviewFindings(design: CommunityDesign): ReviewFinding[
   return [...findings, ...mepFindings(design.mep, objects, columns, "community")];
 }
 
-export function infraReviewFindings(design: InfraDesign): ReviewFinding[] {
+export function infraReviewFindings(design: InfraReviewInput): ReviewFinding[] {
   const findings: ReviewFinding[] = [];
   const width = design.location?.boundaryWidthM ?? 0;
   const depth = design.location?.boundaryDepthM ?? 0;
@@ -146,3 +161,4 @@ export function reviewMarkers(review: { markers: ReviewMarker[] } | undefined): 
 export function reviewRiskScore(findings: ReviewFinding[]): number {
   return findings.length ? Math.max(...findings.map((item) => item.score)) : 0;
 }
+

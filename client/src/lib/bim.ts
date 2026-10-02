@@ -229,6 +229,7 @@ export interface IfcValidationReport {
   guidCount: number;
   normalized: boolean;
   issues: IfcValidationIssue[];
+  sourceRoundTrip?: { checkedEntities: number; missingIds: string[]; changedIds: string[]; scope: string };
 }
 
 interface ParsedIfcEntity {
@@ -236,6 +237,25 @@ interface ParsedIfcEntity {
   type: string;
   fields: string;
   line: string;
+}
+
+/** Split only top-level STEP arguments; quoted commas and nested selects are preserved. */
+function stepFields(value: string): string[] {
+  const fields: string[] = [];
+  let start = 0, depth = 0, quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char === "'") {
+      if (quoted && value[i + 1] === "'") { i++; continue; }
+      quoted = !quoted;
+    } else if (!quoted) {
+      if (char === "(") depth++;
+      if (char === ")") depth--;
+      if (char === "," && depth === 0) { fields.push(value.slice(start, i).trim()); start = i + 1; }
+    }
+  }
+  fields.push(value.slice(start).trim());
+  return fields;
 }
 
 const productTypes = new Set([
@@ -251,7 +271,10 @@ function parseIfcEntities(step: string): { entities: ParsedIfcEntity[]; issues: 
   const ids = new Set<number>();
   for (const line of lines) {
     const match = line.match(/^#(\d+)=([A-Z][A-Z0-9_]*)\((.*)\);$/);
-    if (!match) continue;
+    if (!match) {
+      if (line.startsWith("#")) issues.push({ code: "parse-error", message: "Unsupported or malformed STEP entity record.", severity: "error" });
+      continue;
+    }
     const id = Number(match[1]);
     if (ids.has(id)) issues.push({ code: "duplicate-entity-id", message: `Entity #${id} is declared more than once.`, severity: "error", entityId: id });
     ids.add(id);
@@ -262,7 +285,8 @@ function parseIfcEntities(step: string): { entities: ParsedIfcEntity[]; issues: 
 }
 
 function references(fields: string): number[] {
-  return [...fields.matchAll(/#(\d+)/g)].map((match) => Number(match[1]));
+  const withoutStrings = fields.replace(/'(?:''|[^'])*'/g, "''");
+  return [...withoutStrings.matchAll(/#(\d+)/g)].map((match) => Number(match[1]));
 }
 
 function firstString(fields: string): string | undefined {
@@ -281,19 +305,29 @@ export function validateIfcStep(step: string): IfcValidationReport {
   ["IFCPROJECT", "IFCSITE", "IFCBUILDING", "IFCBUILDINGSTOREY", "IFCUNITASSIGNMENT", "IFCSIUNIT", "IFCLOCALPLACEMENT", "IFCOWNERHISTORY"].forEach(requireType);
 
   const knownIds = new Set(parsed.entities.map((entity) => entity.id));
+  const byId = new Map(parsed.entities.map(entity => [entity.id, entity]));
+  const dataIndex = parsed.lines.indexOf("DATA;"), endIndex = parsed.lines.indexOf("ENDSEC;", dataIndex + 1);
+  if (dataIndex < 0 || endIndex < dataIndex || [...parsed.lines.slice(0, dataIndex), ...parsed.lines.slice(endIndex + 1)].some(line => /^#[0-9]+=/.test(line))) {
+    issues.push({ code: "data-section", message: "STEP entities must stay inside the DATA section.", severity: "error" });
+  }
   for (const entity of parsed.entities) {
     for (const ref of references(entity.fields)) if (!knownIds.has(ref)) issues.push({ code: "dangling-reference", message: `Entity #${entity.id} references missing entity #${ref}.`, severity: "error", entityId: entity.id });
   }
   const guids = new Set<string>();
   for (const entity of parsed.entities) {
-    if (!/^IFC(ROOT|REL|PROPERTYSET|ELEMENTQUANTITY|MATERIAL|APPLICATION|OWNERHISTORY|PROJECT|SITE|BUILDING|BUILDINGSTOREY)/.test(entity.type)) continue;
+    if (!productTypes.has(entity.type) && !/^IFC(REL|PROPERTYSET|ELEMENTQUANTITY|PROJECT|SITE|BUILDING|BUILDINGSTOREY|GRID)$/.test(entity.type) && !entity.type.startsWith("IFCREL")) continue;
     const guid = firstString(entity.fields);
     if (!guid) continue;
     if (guids.has(guid)) issues.push({ code: "duplicate-guid", message: `GUID ${guid} is not unique.`, severity: "error", entityId: entity.id });
     guids.add(guid);
   }
   for (const entity of parsed.entities.filter((item) => productTypes.has(item.type))) {
-    if (!/,#\d+,/.test(entity.fields)) issues.push({ code: "missing-placement", message: `${entity.type} #${entity.id} has no local placement.`, severity: "error", entityId: entity.id });
+    const placementId = Number(stepFields(entity.fields)[5]?.replace("#", ""));
+    if (byId.get(placementId)?.type !== "IFCLOCALPLACEMENT") issues.push({ code: "missing-placement", message: `${entity.type} #${entity.id} has no local placement.`, severity: "error", entityId: entity.id });
+  }
+  for (const placement of byType("IFCLOCALPLACEMENT")) {
+    const parent = stepFields(placement.fields)[0];
+    if (parent !== "$" && byId.get(Number(parent.replace("#", "")))?.type !== "IFCLOCALPLACEMENT") issues.push({ code: "placement-parent", message: "Local placement parent must reference another local placement.", severity: "error", entityId: placement.id });
   }
   const contained = new Set<number>();
   for (const relation of byType("IFCRELCONTAINEDINSPATIALSTRUCTURE")) {
@@ -307,7 +341,7 @@ export function validateIfcStep(step: string): IfcValidationReport {
   for (const relation of byType("IFCRELDEFINESBYPROPERTIES")) {
     const target = relation.fields.match(/,\(#(\d+)\),#(\d+)$/);
     if (!target) continue;
-    const definition = parsed.entities.find((entity) => entity.id === Number(target[2]));
+    const definition = byId.get(Number(target[2]));
     if (definition?.type === "IFCPROPERTYSET") propertyTargets.add(Number(target[1]));
     if (definition?.type === "IFCELEMENTQUANTITY") quantityTargets.add(Number(target[1]));
   }
@@ -335,14 +369,53 @@ export function validateIfcStep(step: string): IfcValidationReport {
 /** Canonicalizes line endings/whitespace and re-renders parsed entity records for round-trip checks. */
 export function normalizeIfcStep(step: string): string {
   const parsed = parseIfcEntities(step);
-  const lines = step.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean).filter((line) => !/^#\d+=/.test(line));
-  return [...lines, ...parsed.entities.map((entity) => entity.line)].join("\n") + "\n";
+  const lines = parsed.lines;
+  const data = lines.indexOf("DATA;"), end = lines.indexOf("ENDSEC;", data + 1);
+  if (data < 0 || end < 0) return lines.join("\n") + "\n";
+  return [...lines.slice(0, data + 1), ...parsed.entities.map(entity => entity.line), ...lines.slice(end)].join("\n") + "\n";
 }
 
-export function validateIfcRoundTrip(design: Design): IfcValidationReport {
-  const step = buildIfcStep(design);
+export function validateIfcRoundTrip(design: Design, step = buildIfcStep(design)): IfcValidationReport {
   const report = validateIfcStep(step);
-  return { ...report, normalized: normalizeIfcStep(step) === normalizeIfcStep(normalizeIfcStep(step)) };
+  const recovered = inspectGroundworkIfcSources(step);
+  const expected = (JSON.parse(buildBimExchange(design)) as { entities: ExchangeEntity[] }).entities.filter(e => e.type !== "GRID_AXIS");
+  const bySource = new Map(recovered.entities.map(e => [e.id, e]));
+  const missingIds = expected.filter(e => !bySource.has(e.id)).map(e => e.id);
+  const changedIds = expected.filter(e => bySource.has(e.id) && JSON.stringify(e) !== JSON.stringify(bySource.get(e.id))).map(e => e.id);
+  const issues = [...report.issues, ...recovered.issues,
+    ...missingIds.map(id => ({ code: "source-roundtrip-missing", message: `Source ${id} was not recovered.`, severity: "error" as const })),
+    ...changedIds.map(id => ({ code: "source-roundtrip-changed", message: `Source ${id} changed during metadata exchange.`, severity: "error" as const }))];
+  return { ...report, valid: !issues.some(i => i.severity === "error"), issues,
+    normalized: normalizeIfcStep(step) === normalizeIfcStep(normalizeIfcStep(step)),
+    sourceRoundTrip: { checkedEntities: expected.length, missingIds, changedIds, scope: "Groundwork SourceData metadata only; not imported IFC geometry or third-party interoperability." } };
+}
+
+/** Read only Groundwork's own source metadata. This never applies imported geometry to a design. */
+export function inspectGroundworkIfcSources(step: string): { entities: ExchangeEntity[]; issues: IfcValidationIssue[] } {
+  const parsed = parseIfcEntities(step), byId = new Map(parsed.entities.map(e => [e.id, e]));
+  const entities: ExchangeEntity[] = [], issues: IfcValidationIssue[] = [];
+  const seen = new Set<string>();
+  for (const pset of parsed.entities.filter(e => e.type === "IFCPROPERTYSET")) {
+    if (firstString(stepFields(pset.fields)[2] ?? "") !== "Groundwork Source") continue;
+    for (const ref of references(stepFields(pset.fields)[4] ?? "")) {
+      const property = byId.get(ref);
+      if (property?.type !== "IFCPROPERTYSINGLEVALUE") continue;
+      const fields = stepFields(property.fields);
+      if (firstString(fields[0]) !== "SourceData") continue;
+      const match = fields[2]?.match(/^IFCTEXT\('((?:''|[^'])*)'\)$/);
+      try {
+        if (!match) throw new Error("SourceData is not IFC text.");
+        const text = match[1].replace(/''/g, "'").replace(/\\\\/g, "\\");
+        const item = JSON.parse(text) as ExchangeEntity;
+        if (!item || typeof item.id !== "string" || typeof item.type !== "string") throw new Error("Invalid source identity.");
+        if (seen.has(item.id)) throw new Error("Duplicate source identity.");
+        seen.add(item.id); entities.push(item);
+      } catch (e) {
+        issues.push({ code: "source-data", message: e instanceof Error ? e.message : "Invalid source metadata.", severity: "error", entityId: property.id });
+      }
+    }
+  }
+  return { entities, issues };
 }
 
 export type IfcMvdProfile = "coordination" | "reference-view" | "design-transfer";
@@ -438,14 +511,14 @@ export function buildIfcStep(design: Design): string {
   const origin = add("IFCCARTESIANPOINT", "(0.,0.,0.)");
   const up = add("IFCDIRECTION", "(0.,0.,1.)");
   const east = add("IFCDIRECTION", "(1.,0.,0.)");
-  const worldAxis = add("IFCAXIS2PLACEMENT3D", `#${origin},$,#${up}`);
+  const worldAxis = add("IFCAXIS2PLACEMENT3D", `#${origin},#${up},#${east}`);
   const context = add("IFCGEOMETRICREPRESENTATIONCONTEXT", `$, 'Model', 3, 1.E-05, #${worldAxis},$`);
   const metre = add("IFCSIUNIT", "*,.LENGTHUNIT.,$,.METRE.");
   const area = add("IFCSIUNIT", "*,.AREAUNIT.,$,.SQUARE_METRE.");
   const volume = add("IFCSIUNIT", "*,.VOLUMEUNIT.,$,.CUBIC_METRE.");
   const units = add("IFCUNITASSIGNMENT", `(#${metre},#${area},#${volume})`);
   const guid = (key: string) => ifcGuid(`groundwork-ifc4:${key}`);
-  const project = add("IFCPROJECT", `'${guid("project")}',#${history},'Groundwork exchange',$,$,$,$,$,(#${context}),#${units}`, "project");
+  const project = add("IFCPROJECT", `'${guid("project")}',#${history},'Groundwork exchange',$,$,$,$,(#${context}),#${units}`, "project");
   const placement = (x = 0, y = 0, z = 0, rotation = 0, parent?: number) => {
     const point = add("IFCCARTESIANPOINT", `(${number(x).toFixed(3)},${number(y).toFixed(3)},${number(z).toFixed(3)})`);
     const angle = rotation ? Math.PI * rotation / 180 : 0;
@@ -462,6 +535,8 @@ export function buildIfcStep(design: Design): string {
   aggregate("Building", site, [building], "site-building");
 
   const storeyIds = new Map<string, number>();
+  const storeyPlacements = new Map<number, number>();
+  const storeyElevations = new Map<number, number>();
   const storeyProducts = new Map<number, number[]>();
   const ensureStorey = (key: string, name: string, elevation: number) => {
     const existing = storeyIds.get(key);
@@ -469,6 +544,8 @@ export function buildIfcStep(design: Design): string {
     const storeyPlacement = placement(0, 0, elevation, 0, buildingPlacement);
     const id = add("IFCBUILDINGSTOREY", `'${guid(`storey:${key}`)}',#${history},${ifcText(name)},$,$,#${storeyPlacement},$,$,.ELEMENT.,${number(elevation).toFixed(3)}`, `storey:${key}`);
     storeyIds.set(key, id);
+    storeyPlacements.set(id, storeyPlacement);
+    storeyElevations.set(id, elevation);
     storeyProducts.set(id, []);
     aggregate(name, building, [id], `building-storey:${key}`);
     return id;
@@ -506,6 +583,7 @@ export function buildIfcStep(design: Design): string {
     const values = [
       `IFCPROPERTYSINGLEVALUE('SourceId',$,IFCLABEL(${ifcText(item.id)}),$)`,
       `IFCPROPERTYSINGLEVALUE('SourceType',$,IFCLABEL(${ifcText(item.type)}),$)`,
+      `IFCPROPERTYSINGLEVALUE('SourceData',$,IFCTEXT(${ifcText(JSON.stringify(item))}),$)`,
       `IFCPROPERTYSINGLEVALUE('Approximation',$,IFCBOOLEAN(.T.),$)`,
       `IFCPROPERTYSINGLEVALUE('InteroperabilityNote',$,IFCTEXT(${ifcText(String(item.properties?.approximation ?? "Source geometry is planning intent."))}),$)`,
     ];
@@ -555,8 +633,13 @@ export function buildIfcStep(design: Design): string {
     const first = add("IFCCARTESIANPOINT", geometry.axis === "z" ? `(${position.toFixed(3)},${(-extent).toFixed(3)},0.)` : `(${(-extent).toFixed(3)},${position.toFixed(3)},0.)`);
     const second = add("IFCCARTESIANPOINT", geometry.axis === "z" ? `(${position.toFixed(3)},${extent.toFixed(3)},0.)` : `(${extent.toFixed(3)},${position.toFixed(3)},0.)`);
     const curve = add("IFCPOLYLINE", `(#${first},#${second})`);
-    const axis = add("IFCGRIDAXIS", `${ifcText(item.name ?? item.id)},#${curve},.T.,$`, `grid-axis:${item.id}`);
-    add("IFCGRID", `'${guid(`grid:${item.id}`)}',#${history},${ifcText(item.name ?? item.id)},$,#${buildingPlacement},$,(#${axis}),(),()`, `grid:${item.id}`);
+    const axis = add("IFCGRIDAXIS", `${ifcText(item.name ?? item.id)},#${curve},.T.`, `grid-axis:${item.id}`);
+    // IFC grids need both U and V axes; retain a perpendicular reference axis.
+    const perpendicularStart = add("IFCCARTESIANPOINT", geometry.axis === "z" ? `(${(-extent).toFixed(3)},0.,0.)` : `(0.,${(-extent).toFixed(3)},0.)`);
+    const perpendicularEnd = add("IFCCARTESIANPOINT", geometry.axis === "z" ? `(${extent.toFixed(3)},0.,0.)` : `(0.,${extent.toFixed(3)},0.)`);
+    const perpendicular = add("IFCPOLYLINE", `(#${perpendicularStart},#${perpendicularEnd})`);
+    const reference = add("IFCGRIDAXIS", `'Reference',#${perpendicular},.T.`);
+    add("IFCGRID", `'${guid(`grid:${item.id}`)}',#${history},${ifcText(item.name ?? item.id)},$,$,#${buildingPlacement},$,$,(#${axis}),(#${reference}),$,.RECTANGULAR.`, `grid:${item.id}`);
   }
   const products = exchange.entities.filter((item) => item.type !== "GRID_AXIS").map((item) => {
     const geometry = item.geometry ?? {};
@@ -566,16 +649,16 @@ export function buildIfcStep(design: Design): string {
     const x = Number(geometry.xM ?? 0);
     const y = Number(geometry.zM ?? 0);
     const z = Number(geometry.yM ?? 0);
-    const local = placement(x, y, z, Number(geometry.rotationDeg ?? 0), storey ? (rows[storey - 1]?.includes("IFCBUILDINGSTOREY") ? storey : undefined) : undefined);
+    const local = placement(x, y, z - (storeyElevations.get(storey) ?? 0), Number(geometry.rotationDeg ?? 0), storeyPlacements.get(storey));
     const dims = dimensions(item);
     const shape = boxShape(item, dims);
     const description = `${item.type} intent; geometry is an approximate exchange envelope, not fabrication geometry.`;
     const type = typedClass(item);
     const base = `'${guid(`product:${item.id}`)}',#${history},${ifcText(item.name || item.type)},${ifcText(description)},$,#${local},${shape ? `#${shape}` : "$"},$`;
-    const suffix = type === "IFCSPACE" ? ",.ELEMENT."
-      : ["IFCWALL", "IFCSLAB", "IFCROOF", "IFCCOLUMN"].includes(type) ? ",.ELEMENT."
-      : ["IFCFLOWSEGMENT", "IFCUNITARYEQUIPMENT", "IFCFLOWTERMINAL"].includes(type) ? ",.NOTDEFINED."
-      : type === "IFCDOOR" || type === "IFCWINDOW" ? ",$,$,.NOTDEFINED."
+    const suffix = type === "IFCSPACE" ? ",.ELEMENT.,.NOTDEFINED.,$"
+      : ["IFCWALL", "IFCSLAB", "IFCROOF", "IFCCOLUMN", "IFCUNITARYEQUIPMENT"].includes(type) ? ",.NOTDEFINED."
+      : type === "IFCDOOR" || type === "IFCWINDOW" ? ",$,$,.NOTDEFINED.,.NOTDEFINED.,$"
+      : type === "IFCBUILDINGELEMENTPROXY" ? ",.NOTDEFINED."
       : "";
     const id = add(type, `${base}${suffix}`);
     productBySource.set(item.id, id);
@@ -596,10 +679,11 @@ export function buildIfcStep(design: Design): string {
     const openingShape = boxShape(item, dimensions(item));
     const geometry = item.geometry ?? {};
     const openingPlacement = placement(Number(geometry.xM) || 0, Number(geometry.zM) || 0, Number(geometry.yM) || 0, Number(geometry.rotationDeg) || 0);
-    const opening = add("IFCOPENINGELEMENT", `'${guid(`opening:${item.id}`)}',#${history},${ifcText(`${item.name ?? item.type} void`)},'Host void is approximate',$,#${openingPlacement},${openingShape ? `#${openingShape}` : "$"},$`, `opening:${item.id}`);
+    const opening = add("IFCOPENINGELEMENT", `'${guid(`opening:${item.id}`)}',#${history},${ifcText(`${item.name ?? item.type} void`)},'Host void is approximate',$,#${openingPlacement},${openingShape ? `#${openingShape}` : "$"},$,.OPENING.`, `opening:${item.id}`);
+    pset(opening, { ...item, id: `opening:${item.id}`, type: "OPENING" }, dimensions(item));
     const openingStorey = storeyIds.get(item.levelId || "default") ?? storeyIds.get("default");
     if (openingStorey) storeyProducts.get(openingStorey)?.push(opening);
-    add("IFCRELVOIDSELEMENT", `'${guid(`void:${item.id}`)}',#${history},'Opening host',$,(#${host}),#${opening}`, `void:${item.id}`);
+    add("IFCRELVOIDSELEMENT", `'${guid(`void:${item.id}`)}',#${history},'Opening host',$,#${host},#${opening}`, `void:${item.id}`);
     add("IFCRELFILLSELEMENT", `'${guid(`fill:${item.id}`)}',#${history},'Opening fill',$,#${opening},#${fill}`, `fill:${item.id}`);
   }
 
@@ -640,3 +724,4 @@ export function buildBimScheduleCsv(design: Design): string {
   }
   return rows.join("\n") + "\n";
 }
+

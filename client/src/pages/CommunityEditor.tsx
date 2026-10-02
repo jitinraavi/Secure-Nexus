@@ -15,7 +15,7 @@ import type {
   UnitSystem,
   ReviewSeverity,
 } from "../types";
-import { Button, Input, Modal, Select, Toggle } from "../components/ui";
+import { Badge, Button, Input, Modal, Select, Toggle } from "../components/ui";
 import { ParametricControls } from "../components/ParametricControls";
 import { CadToolPalette, type CadTool } from "../components/CadToolPalette";
 import { CommunityScene, type SceneContextTarget } from "../editor/CommunityScene";
@@ -31,7 +31,9 @@ import { catalogEntry } from "../lib/catalog";
 import { download } from "../lib/download";
 import { computeTakeoff } from "../lib/takeoff";
 import { buildBoqCsv, buildNotesText, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
-import { communityReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
+import { reviewMarkers, reviewRiskScore } from "../lib/review";
+import { useReviewFindings } from "../lib/useReviewFindings";
+import { ReviewAnalysisState } from "../components/ReviewAnalysisState";
 import { applyDraftOperation, constrainedDraftSize, duplicateDraftArray, draftingSettings, patchDraftGrip, solveDraftConstraintGraph } from "../lib/drafting";
 import { familyForId, familyMetadata } from "../lib/families";
 import { analyzeCommunity, buildStructuralReport, structuralSettings } from "../lib/structural";
@@ -196,6 +198,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
   const c = community;
   const visualization = visualizationSettings(design?.visualization);
+  const phaseOptions = visualization.phases.slice(0, 1000);
   const levels = levelsForDesign(c);
   const activeLevelId = c.activeLevelId && levels.some((level) => level.id === c.activeLevelId) ? c.activeLevelId : levels[0]?.id;
   const historyRef = useRef<{ past: CommunityDesign[]; future: CommunityDesign[] }>({ past: [], future: [] });
@@ -272,7 +275,9 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const selectedTower = c.towers.find((t) => t.id === selectedId);
   const selectedAmenity = c.amenities.find((a) => a.id === selectedId);
   const selectedDraft = (c.drafts ?? []).find((d) => d.id === selectedId);
-  const reviewFindings = communityReviewFindings(c);
+  const reviewAnalysis = useReviewFindings("community", c);
+  const reviewFindings = reviewAnalysis.findings;
+  const reviewReady = reviewAnalysis.status === "ready" || reviewAnalysis.status === "fallback-ready";
   const markers = reviewMarkers(c.review);
 
   const requestPlan = async (message: string) => {
@@ -625,7 +630,8 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
             </div>
             <Select label="Construction phase" value={a.phaseId ?? ""} onChange={(e) => patchAmenity(a.id, { phaseId: e.target.value || undefined })}>
               <option value="">Unassigned / always visible</option>
-              {visualization.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+              {a.phaseId && !phaseOptions.some((phase) => phase.id === a.phaseId) && <option value={a.phaseId}>Missing or outside selection limit ({a.phaseId})</option>}
+              {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
             </Select>
           </div>
         ))}
@@ -672,7 +678,8 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
            </Select>
            <Select label="Construction phase" value={selectedDraft.phaseId ?? ""} onChange={(e) => patchDraft(selectedDraft.id, { phaseId: e.target.value || undefined })}>
              <option value="">Unassigned / always visible</option>
-             {visualization.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+             {selectedDraft.phaseId && !phaseOptions.some((phase) => phase.id === selectedDraft.phaseId) && <option value={selectedDraft.phaseId}>Missing or outside selection limit ({selectedDraft.phaseId})</option>}
+             {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
            </Select>
            <ParametricControls
              family={selectedDraft.family}
@@ -906,7 +913,8 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
              </div>
              <Select label="Construction phase" value={t.phaseId ?? ""} onChange={(e) => patchTower(t.id, { phaseId: e.target.value || undefined })}>
                <option value="">Unassigned / always visible</option>
-               {visualization.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+               {t.phaseId && !phaseOptions.some((phase) => phase.id === t.phaseId) && <option value={t.phaseId}>Missing or outside selection limit ({t.phaseId})</option>}
+               {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
              </Select>
              <div className="mt-3">
                <ParametricControls
@@ -1102,6 +1110,11 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
                <Select label="Level" value={String(r.floor)} onChange={(e) => patchRoom(r.id, { floor: Math.max(0, Math.min(Number(e.target.value), levels.length - 1)) })}>
                 {levels.map((level, index) => <option key={level.id} value={index}>{level.name}</option>)}
               </Select>
+              <Select label="Construction phase" value={r.phaseId ?? ""} onChange={(e) => patchRoom(r.id, { phaseId: e.target.value || undefined })}>
+                <option value="">Unassigned / always visible</option>
+                {r.phaseId && !phaseOptions.some((phase) => phase.id === r.phaseId) && <option value={r.phaseId}>Missing or outside selection limit ({r.phaseId})</option>}
+                {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+              </Select>
               <div className="col-span-2">
                 <ParametricControls
                   family={r.family}
@@ -1248,14 +1261,15 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
     <Section title="Coordination review">
       <div className="flex items-center justify-between rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-2">
         <span className="text-xs font-semibold text-rose-200">Review gate</span>
-        <span className="text-xs text-rose-300">{reviewFindings.length} automatic check{reviewFindings.length === 1 ? "" : "s"} · {markers.length} markup{markers.length === 1 ? "" : "s"}</span>
+        <span className="text-xs text-rose-300">{reviewReady ? `${reviewFindings.length} automatic checks` : "Checks updating or unavailable"} · {markers.length} markup{markers.length === 1 ? "" : "s"}</span>
       </div>
       <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
          Rotated footprint, vertical-envelope, clearance, MEP/building, and approximate structure checks. Scores are screening priorities, not code compliance.
       </p>
       <div className="space-y-2">
-         <p className="text-xs font-semibold text-slate-300">Automatic checks ({reviewFindings.length}) · risk {reviewRiskScore(reviewFindings)}/100</p>
-        {reviewFindings.length === 0 && <p className="text-xs text-emerald-300">No tower or amenity footprint clashes detected.</p>}
+         <p className="text-xs font-semibold text-slate-300">Automatic checks {reviewReady ? `(${reviewFindings.length}) · risk ${reviewRiskScore(reviewFindings)}/100` : "awaiting results"}</p>
+        <ReviewAnalysisState status={reviewAnalysis.status} error={reviewAnalysis.error} retry={reviewAnalysis.retry} runFallback={reviewAnalysis.runFallback} />
+        {reviewReady && reviewFindings.length === 0 && <p className="text-xs text-emerald-300">No tower or amenity footprint clashes detected.</p>}
         {reviewFindings.map((finding) => (
           <button key={finding.id} onClick={() => setSelectedId(finding.targetIds[0])} className="block w-full rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-left text-xs text-rose-200 hover:bg-rose-500/10">
              <span className="font-semibold">{finding.severity} · {finding.score}/100</span> · {finding.category} · {finding.text}
@@ -1286,7 +1300,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
     </Section>
   );
 
-  const mepPanel = <Section title="MEP coordination"><MepPanel value={c.mep} onChange={(mep) => update({ mep })} /></Section>;
+  const mepPanel = <Section title="MEP coordination"><MepPanel value={c.mep} phases={visualization.phases} onChange={(mep) => update({ mep })} /></Section>;
 
   const panels: Record<StepId, React.ReactNode> = {
     land: landPanel,
@@ -1645,3 +1659,4 @@ function defaultTowerFor(
     facadeColor: FACADES[0].color,
   };
 }
+

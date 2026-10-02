@@ -17,7 +17,9 @@ import { TerrainControls } from "../components/TerrainControls";
 import { CivilControls } from "../components/CivilControls";
 import { download } from "../lib/download";
 import { buildBoqCsv, boqFilename, copyToClipboard, notesFilename, shareText } from "../lib/notes";
-import { infraReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/review";
+import { reviewMarkers, reviewRiskScore } from "../lib/review";
+import { useReviewFindings } from "../lib/useReviewFindings";
+import { ReviewAnalysisState } from "../components/ReviewAnalysisState";
 import { applyDraftOperation, constrainedDraftPatch, duplicateDraftArray, patchDraftGrip } from "../lib/drafting";
 import { syncDraftFamilyParameters } from "../lib/parametric";
 import {
@@ -160,6 +162,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantPreviewOpen, setAssistantPreviewOpen] = useState(false);
   const visualization = visualizationSettings(design?.visualization);
+  const phaseOptions = visualization.phases.slice(0, 1000);
 
   useEffect(() => {
     setFacilityKind(FACILITY_OPTIONS[kind][0].kind);
@@ -240,7 +243,9 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
   };
 
   const selectedDraft = (infra.drafts ?? []).find((draft) => draft.id === selectedId);
-  const reviewFindings = infraReviewFindings(infra);
+  const reviewAnalysis = useReviewFindings("infra", infra);
+  const reviewFindings = reviewAnalysis.findings;
+  const reviewReady = reviewAnalysis.status === "ready" || reviewAnalysis.status === "fallback-ready";
   const markers = reviewMarkers(infra.review);
   const addReviewMarker = () => {
     if (!reviewText.trim()) return;
@@ -272,6 +277,11 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
             <p className="text-sm font-semibold capitalize text-slate-200">{selectedDraft.civilKind ?? selectedDraft.kind}</p>
             <button onClick={() => { update({ drafts: (infra.drafts ?? []).filter((draft) => draft.id !== selectedDraft.id) }); setSelectedId(null); }} className="text-xs font-semibold text-rose-400">Remove</button>
           </div>
+           <Select label="Construction phase" value={selectedDraft.phaseId ?? ""} onChange={(e) => patchDraft(selectedDraft.id, { phaseId: e.target.value || undefined })}>
+             <option value="">Unassigned / always visible</option>
+             {selectedDraft.phaseId && !phaseOptions.some((phase) => phase.id === selectedDraft.phaseId) && <option value={selectedDraft.phaseId}>Missing or outside selection limit ({selectedDraft.phaseId})</option>}
+             {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+           </Select>
            <Select label="Annotation" value={selectedDraft.civilKind ?? "contour"} onChange={(e) => patchDraft(selectedDraft.id, { civilKind: e.target.value as DraftElement["civilKind"] })}>
             <option value="contour">Contour reference</option>
             <option value="alignment">Alignment</option>
@@ -332,6 +342,11 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
               <button onClick={() => update({ facilities: (infra.facilities ?? []).filter((f) => f.id !== facility.id) })} className="mt-5 text-xs font-semibold text-rose-400 hover:text-rose-300">Remove</button>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
+              <Select label="Construction phase" value={facility.phaseId ?? ""} onChange={(e) => patchFacility(facility.id, { phaseId: e.target.value || undefined })}>
+                <option value="">Unassigned / always visible</option>
+                {facility.phaseId && !phaseOptions.some((phase) => phase.id === facility.phaseId) && <option value={facility.phaseId}>Missing or outside selection limit ({facility.phaseId})</option>}
+                {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+              </Select>
               <Num label="Count" value={facility.count} onChange={(v) => patchFacility(facility.id, { count: Math.max(Math.round(v) || 0, 0) })} min={0} step={1} unit=" nos" />
               <Num label="Length" value={facility.lengthM} onChange={(v) => patchFacility(facility.id, { lengthM: Math.max(v || 0.5, 0.5) })} min={0.5} step={1} unit=" m" />
               <Num label="Width" value={facility.widthM} onChange={(v) => patchFacility(facility.id, { widthM: Math.max(v || 0.5, 0.5) })} min={0.5} step={1} unit=" m" />
@@ -633,8 +648,9 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
          Site-fit, vertical-envelope, clearance, MEP-to-facility, and approximate structure checks. Scores are screening priorities, not code compliance.
       </p>
       <div className="space-y-2">
-         <p className="text-xs font-semibold text-slate-300">Automatic checks ({reviewFindings.length}) · risk {reviewRiskScore(reviewFindings)}/100</p>
-        {reviewFindings.length === 0 && <p className="text-xs text-emerald-300">No basic site-fit clashes detected.</p>}
+         <p className="text-xs font-semibold text-slate-300">Automatic checks {reviewReady ? `(${reviewFindings.length}) · risk ${reviewRiskScore(reviewFindings)}/100` : "awaiting results"}</p>
+        <ReviewAnalysisState status={reviewAnalysis.status} error={reviewAnalysis.error} retry={reviewAnalysis.retry} runFallback={reviewAnalysis.runFallback} />
+        {reviewReady && reviewFindings.length === 0 && <p className="text-xs text-emerald-300">No basic site-fit clashes detected.</p>}
          {reviewFindings.map((finding) => <button key={finding.id} onClick={() => setSelectedId(finding.targetIds[0])} className="block w-full rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-left text-xs text-amber-200"><span className="font-semibold">{finding.severity} · {finding.score}/100</span> · {finding.category} · {finding.text}<span className="mt-1 block text-[10px] text-amber-300/70">Approximation: {finding.approximation}</span></button>)}
       </div>
       <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
@@ -646,7 +662,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
     </Section>
   );
 
-  const mepPanel = <Section title="MEP coordination"><MepPanel value={infra.mep} onChange={(mep) => update({ mep })} /></Section>;
+  const mepPanel = <Section title="MEP coordination"><MepPanel value={infra.mep} phases={visualization.phases} onChange={(mep) => update({ mep })} /></Section>;
 
   const panels: Record<StepId, React.ReactNode> = {
     location: <>{locationPanel}{draftingPanel}</>,

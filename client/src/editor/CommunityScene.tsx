@@ -11,10 +11,11 @@ import { buildMapGround } from "../lib/mapGround";
 import { sectionClippingPlanes } from "../lib/section";
 import { constrainDraftEnd, constrainedDraftSize, draftingSettings, snapDraftPoint, solveDraftConstraintGraph } from "../lib/drafting";
 import { buildTerrainVisualization } from "../lib/terrain";
+import { sceneMetricsReporter } from "../lib/sceneMetrics";
 import { buildMepScene } from "../lib/mep";
 import { resolveDraft, resolveTowerOpening } from "../lib/parametric";
 import { familyMetadata, familyForId } from "../lib/families";
-import { phaseVisible } from "../lib/visualization";
+import { isSceneObjectVisible, setScenePhase, updateScenePhaseVisibility } from "../lib/phaseVisibility";
 
 /* ---------------------------------- Builder ---------------------------------- */
 
@@ -542,7 +543,7 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
     for (const a of design.amenities) {
        try {
          const node = buildAmenityMesh(a);
-         node.visible = phaseVisible(a.phaseId ?? "fitout", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+         setScenePhase(node, a.phaseId, visualization);
          g.add(node);
       } catch {
         /* skip */
@@ -552,10 +553,10 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
 
   if (layerVisible("drafting")) for (const draft of design.drafts ?? []) {
     const node = buildDraftMesh(draft, levels, draft.id === selectedId);
-    node.visible = phaseVisible(draft.phaseId ?? "site", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+    setScenePhase(node, draft.phaseId, visualization);
     g.add(node);
   }
-  if (layerVisible("mep")) g.add(buildMepScene(design.mep));
+  if (layerVisible("mep")) g.add(buildMepScene(design.mep, visualization));
 
   if (activeLevel) {
     for (const axis of design.structuralGrid ?? []) g.add(buildStructuralGridLine(axis, activeLevel));
@@ -566,7 +567,7 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
       const tower = design.towers.find((candidate) => candidate.id === room.towerId);
        if (tower && room.floor === activeLevelIndex) {
          const node = buildRoomPlanMesh(room, tower, activeLevel);
-         node.visible = phaseVisible(room.phaseId ?? "fitout", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+         setScenePhase(node, room.phaseId, visualization);
          g.add(node);
        }
     }
@@ -578,6 +579,12 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
         const detailed = buildTowerMesh(t, design.exteriors);
         const { w, h, d } = towerMeters(t);
         const node = new THREE.LOD();
+        // Both detail levels share one world transform and one distance origin.
+        node.position.copy(detailed.position);
+        node.rotation.copy(detailed.rotation);
+        detailed.position.set(0, 0, 0);
+        detailed.rotation.set(0, 0, 0);
+        delete detailed.userData.selectId;
         node.addLevel(detailed, 0);
         // Keep distant communities cheap while retaining the detailed node for picking up close.
         const proxy = new THREE.Mesh(
@@ -585,14 +592,13 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
           material(facadeOption(t.facadeMaterial ?? "glass").color, { rough: 0.9 }),
         );
         proxy.position.y = h / 2;
-        proxy.userData.selectId = t.id;
-        proxy.userData.selectKind = "tower";
+        proxy.userData.noTechnicalEdges = true;
         node.addLevel(proxy, Math.max(60, Math.max(w, d) * 4));
         node.userData.selectId = t.id;
         node.userData.selectKind = "tower";
         node.userData.selW = w;
         node.userData.selD = d;
-        node.visible = phaseVisible(t.phaseId ?? "structure", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+        setScenePhase(node, t.phaseId, visualization);
         g.add(node);
     }
   }
@@ -603,6 +609,7 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
       const lbl = labelSprite(t.label);
       const { d: td } = towerMeters(t);
       lbl.position.set(t.x, towerMeters(t).h + 2.2, t.z + td / 2 + 1.5);
+      setScenePhase(lbl, t.phaseId, visualization);
       g.add(lbl);
     }
   }
@@ -738,6 +745,7 @@ function selectionRing(w: number, d: number): THREE.Mesh {
   ring.scale.set(r, r, 1);
   ring.position.y = 0.3;
   ring.userData.noSelect = true;
+  ring.userData.selectionRing = true;
   return ring;
 }
 
@@ -756,11 +764,15 @@ export function buildCommunityScene(design: CommunityDesign, selectedId?: string
 }
 
 function updateCommunitySelection(root: THREE.Object3D, selectedId: string | null | undefined): void {
+  const previous: THREE.Object3D[] = [];
   root.traverse((object) => {
-    if (object.userData.selectionRing) object.parent?.remove(object);
+    if (object.userData.selectionRing) previous.push(object);
   });
+  for (const ring of previous) { disposeObject3D(ring, false); ring.removeFromParent(); }
   if (!selectedId) return;
-  const target = root.getObjectByProperty("selectId", selectedId);
+  const targets: THREE.Object3D[] = [];
+  root.traverse(object => { if (!targets.length && object.userData.selectId === selectedId) targets.push(object); });
+  const target = targets[0];
   if (!target) return;
   const w = (target.userData.selW as number) ?? 10;
   const d = (target.userData.selD as number) ?? 10;
@@ -905,7 +917,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
         const loc = designRef.current.location;
         if (loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) {
           buildMapGround(loc, designRef.current.land).then((map) => {
-            if (mapToken.current !== token) return;
+            if (mapToken.current !== token) { disposeObject3D(map, false); return; }
             for (const child of [...slot.children]) disposeObject3D(child, false);
             slot.clear();
             if (map.children.length) slot.add(map);
@@ -926,6 +938,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     renderer.domElement.addEventListener("wheel", onSkip, { once: true });
 
      let raf = 0;
+     const reportMetrics = sceneMetricsReporter("community", renderer);
      const animate = () => {
        raf = requestAnimationFrame(animate);
        if (document.hidden) return;
@@ -942,6 +955,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
       }
       controls.update();
       renderer.render(scene, camera);
+      reportMetrics();
     };
     animate();
 
@@ -957,6 +971,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
       raycaster.setFromCamera(ndc, camera);
       const hits = raycaster.intersectObject(group, true);
       for (const hit of hits) {
+        if (!isSceneObjectVisible(hit.object)) continue;
         let node: THREE.Object3D | null = hit.object;
         while (node) {
            if (node.userData?.selectId) {
@@ -1164,6 +1179,10 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
 
   useEffect(() => {
     rebuildRef.current?.();
+  }, [design]);
+
+  useEffect(() => {
+    if (groupRef.current) updateScenePhaseVisibility(groupRef.current, visualization);
   }, [design, visualization]);
 
   useEffect(() => {
@@ -1175,3 +1194,4 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: "none" }} data-scene="community" />
   );
 }
+
