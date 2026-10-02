@@ -543,7 +543,7 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
     for (const a of design.amenities) {
        try {
          const node = buildAmenityMesh(a);
-         node.visible = phaseVisible(a.phaseId ?? "fitout", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+         node.visible = phaseVisible(a.phaseId, visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
          g.add(node);
       } catch {
         /* skip */
@@ -553,10 +553,10 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
 
   if (layerVisible("drafting")) for (const draft of design.drafts ?? []) {
     const node = buildDraftMesh(draft, levels, draft.id === selectedId);
-    node.visible = phaseVisible(draft.phaseId ?? "site", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+    node.visible = phaseVisible(draft.phaseId, visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
     g.add(node);
   }
-  if (layerVisible("mep")) g.add(buildMepScene(design.mep));
+  if (layerVisible("mep")) g.add(buildMepScene(design.mep, visualization));
 
   if (activeLevel) {
     for (const axis of design.structuralGrid ?? []) g.add(buildStructuralGridLine(axis, activeLevel));
@@ -567,7 +567,7 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
       const tower = design.towers.find((candidate) => candidate.id === room.towerId);
        if (tower && room.floor === activeLevelIndex) {
          const node = buildRoomPlanMesh(room, tower, activeLevel);
-         node.visible = phaseVisible(room.phaseId ?? "fitout", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+         node.visible = phaseVisible(room.phaseId, visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
          g.add(node);
        }
     }
@@ -593,7 +593,7 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
         node.userData.selectKind = "tower";
         node.userData.selW = w;
         node.userData.selD = d;
-        node.visible = phaseVisible(t.phaseId ?? "structure", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
+        node.visible = phaseVisible(t.phaseId, visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
         g.add(node);
     }
   }
@@ -604,6 +604,7 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
       const lbl = labelSprite(t.label);
       const { d: td } = towerMeters(t);
       lbl.position.set(t.x, towerMeters(t).h + 2.2, t.z + td / 2 + 1.5);
+      lbl.visible = phaseVisible(t.phaseId, visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] });
       g.add(lbl);
     }
   }

@@ -1,12 +1,13 @@
 import { useState } from "react";
-import type { MepDesign, MepElement, MepElementKind, MepSystemType } from "../types";
+import type { ConstructionPhase, MepDesign, MepElement, MepElementKind, MepSystemType } from "../types";
 import { Button, Input, Select, Toggle } from "./ui";
 import { DEFAULT_MEP_PLANNING, MEP_KINDS, buildMepReport, makeMepElement, mepClashWarnings, mepPlanningSummary, normalizeMep } from "../lib/mep";
 import { familyForId, familyForMepKind, familyMetadata } from "../lib/families";
 import { analyzeMepNetwork, autoConnectMepSystem, defaultSystem } from "../lib/mepNetwork";
 
-export function MepPanel({ value, onChange }: { value: MepDesign | undefined; onChange: (value: MepDesign) => void }) {
+export function MepPanel({ value, onChange, phases }: { value: MepDesign | undefined; onChange: (value: MepDesign) => void; phases?: ConstructionPhase[] }) {
   const mep = normalizeMep(value);
+  const phaseOptions = phases?.slice(0, 1000);
   const [kind, setKind] = useState<MepElementKind>("duct");
   const [connectSystem, setConnectSystem] = useState<MepSystemType>("hvac-supply");
   const planning = mep.planning ?? DEFAULT_MEP_PLANNING;
@@ -42,6 +43,11 @@ export function MepPanel({ value, onChange }: { value: MepDesign | undefined; on
     <div className="flex gap-2"><Select label="Element" value={kind} onChange={(event) => setKind(event.target.value as MepElementKind)}>{MEP_KINDS.map((item) => <option key={item.kind} value={item.kind}>{item.label}</option>)}</Select><Button size="sm" className="mt-6" onClick={() => onChange({ ...mep, elements: [...mep.elements, makeMepElement(kind, mep.elements.length)] })}>+ Add {MEP_KINDS.find((item) => item.kind === kind)?.label.toLowerCase()}</Button></div>
     {mep.elements.map((item) => <div key={item.id} className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
       <div className="flex items-center justify-between"><span className="text-sm font-semibold text-slate-200">{item.name}</span><button className="text-xs text-rose-400" onClick={() => onChange({ ...mep, elements: mep.elements.filter((candidate) => candidate.id !== item.id).map(candidate => ({ ...candidate, connectedTo: candidate.connectedTo?.filter(id => id !== item.id) })) })}>Remove</button></div>
+      {phaseOptions && <Select label="Construction phase" value={item.phaseId ?? ""} onChange={(e) => patch(item.id, { phaseId: e.target.value || undefined })}>
+        <option value="">Unassigned / always visible</option>
+        {item.phaseId && !phaseOptions.some((phase) => phase.id === item.phaseId) && <option value={item.phaseId}>Missing or outside selection limit ({item.phaseId})</option>}
+        {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+      </Select>}
          <div className="grid grid-cols-2 gap-2"><Input label="Name" value={item.name} onChange={(e) => patch(item.id, { name: e.target.value })} /><Select label="Type" value={item.kind} onChange={(e) => patch(item.id, { kind: e.target.value as MepElementKind })}>{MEP_KINDS.map((kind) => <option key={kind.kind} value={kind.kind}>{kind.label}</option>)}</Select><Select label="Family" value={item.family?.libraryId ?? ""} onChange={(e) => { const family = familyForId(e.target.value); if (family) patch(item.id, { family: familyMetadata(family) }); }}><option value="">Legacy / untyped</option>{familyForMepKind(item.kind).map((family) => <option key={family.id} value={family.id}>{family.name}</option>)}</Select><Select label="System" value={defaultSystem(item)} onChange={(e) => patch(item.id, { system: e.target.value as MepSystemType })}>{["hvac-supply", "hvac-return", "plumbing-supply", "plumbing-drain", "electrical-power", "fire-protection", "controls"].map((system) => <option key={system} value={system}>{system}</option>)}</Select><div className="col-span-2 space-y-1"><p className="text-[11px] text-slate-400">Connections (same system)</p>{mep.elements.filter(candidate => candidate.id !== item.id && defaultSystem(candidate) === defaultSystem(item)).map(candidate => <label key={candidate.id} className="mr-3 inline-flex items-center gap-1 text-xs text-slate-300"><input type="checkbox" checked={Boolean(item.connectedTo?.includes(candidate.id) || candidate.connectedTo?.includes(item.id))} onChange={e => {
           const checked = e.target.checked;
           onChange({ ...mep, elements: mep.elements.map(element => {

@@ -148,7 +148,7 @@ function addFacilities(g: THREE.Group, infra: InfraDesign, ext: InfraExtent, vis
   };
   let serial = 0;
   for (const facility of facilities) {
-    if (!phaseVisible(facility.phaseId ?? "envelope", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] })) continue;
+    if (!phaseVisible(facility.phaseId, visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] })) continue;
     const count = Math.min(Math.max(Math.round(facility.count), 0), 100);
     for (let i = 0; i < count; i++) {
       const length = Math.max(facility.lengthM, 0.5);
@@ -606,8 +606,8 @@ export function buildInfraScene(infra: InfraDesign, visualization?: Visualizatio
         : buildDam(infra.dams!, ext);
   scene.add(buildTerrainVisualization(ext.w, ext.d, infra.terrain));
   if (layerVisible("facilities")) addFacilities(scene, infra, ext, visualization);
-  if (layerVisible("drafting")) for (const draft of infra.drafts ?? []) if (phaseVisible(draft.phaseId ?? "site", visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] })) scene.add(buildCivilDraft(draft));
-  if (layerVisible("mep")) scene.add(buildMepScene(infra.mep));
+  if (layerVisible("drafting")) for (const draft of infra.drafts ?? []) if (phaseVisible(draft.phaseId, visualization ?? { enabled: false, time: 100, playing: false, walkthrough: false, phases: [] })) scene.add(buildCivilDraft(draft));
+  if (layerVisible("mep")) scene.add(buildMepScene(infra.mep, visualization));
   addTechnicalEdges(scene, "#253746", 0.5);
   return scene;
 }
@@ -872,3 +872,4 @@ export function buildInfraNotesText({ projectName, infra }: { projectName: strin
 export function ensureInfraDesign(design: Design, kind: InfraKind): Design {
   return { ...design, infra: normalizeInfra(design.infra, kind) };
 }
+

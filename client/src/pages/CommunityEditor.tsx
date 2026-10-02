@@ -196,6 +196,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
   const c = community;
   const visualization = visualizationSettings(design?.visualization);
+  const phaseOptions = visualization.phases.slice(0, 1000);
   const levels = levelsForDesign(c);
   const activeLevelId = c.activeLevelId && levels.some((level) => level.id === c.activeLevelId) ? c.activeLevelId : levels[0]?.id;
   const historyRef = useRef<{ past: CommunityDesign[]; future: CommunityDesign[] }>({ past: [], future: [] });
@@ -625,7 +626,8 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
             </div>
             <Select label="Construction phase" value={a.phaseId ?? ""} onChange={(e) => patchAmenity(a.id, { phaseId: e.target.value || undefined })}>
               <option value="">Unassigned / always visible</option>
-              {visualization.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+              {a.phaseId && !phaseOptions.some((phase) => phase.id === a.phaseId) && <option value={a.phaseId}>Missing or outside selection limit ({a.phaseId})</option>}
+              {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
             </Select>
           </div>
         ))}
@@ -672,7 +674,8 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
            </Select>
            <Select label="Construction phase" value={selectedDraft.phaseId ?? ""} onChange={(e) => patchDraft(selectedDraft.id, { phaseId: e.target.value || undefined })}>
              <option value="">Unassigned / always visible</option>
-             {visualization.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+             {selectedDraft.phaseId && !phaseOptions.some((phase) => phase.id === selectedDraft.phaseId) && <option value={selectedDraft.phaseId}>Missing or outside selection limit ({selectedDraft.phaseId})</option>}
+             {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
            </Select>
            <ParametricControls
              family={selectedDraft.family}
@@ -906,7 +909,8 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
              </div>
              <Select label="Construction phase" value={t.phaseId ?? ""} onChange={(e) => patchTower(t.id, { phaseId: e.target.value || undefined })}>
                <option value="">Unassigned / always visible</option>
-               {visualization.phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+               {t.phaseId && !phaseOptions.some((phase) => phase.id === t.phaseId) && <option value={t.phaseId}>Missing or outside selection limit ({t.phaseId})</option>}
+               {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
              </Select>
              <div className="mt-3">
                <ParametricControls
@@ -1102,6 +1106,11 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
                <Select label="Level" value={String(r.floor)} onChange={(e) => patchRoom(r.id, { floor: Math.max(0, Math.min(Number(e.target.value), levels.length - 1)) })}>
                 {levels.map((level, index) => <option key={level.id} value={index}>{level.name}</option>)}
               </Select>
+              <Select label="Construction phase" value={r.phaseId ?? ""} onChange={(e) => patchRoom(r.id, { phaseId: e.target.value || undefined })}>
+                <option value="">Unassigned / always visible</option>
+                {r.phaseId && !phaseOptions.some((phase) => phase.id === r.phaseId) && <option value={r.phaseId}>Missing or outside selection limit ({r.phaseId})</option>}
+                {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+              </Select>
               <div className="col-span-2">
                 <ParametricControls
                   family={r.family}
@@ -1286,7 +1295,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
     </Section>
   );
 
-  const mepPanel = <Section title="MEP coordination"><MepPanel value={c.mep} onChange={(mep) => update({ mep })} /></Section>;
+  const mepPanel = <Section title="MEP coordination"><MepPanel value={c.mep} phases={visualization.phases} onChange={(mep) => update({ mep })} /></Section>;
 
   const panels: Record<StepId, React.ReactNode> = {
     land: landPanel,
@@ -1645,3 +1654,4 @@ function defaultTowerFor(
     facadeColor: FACADES[0].color,
   };
 }
+

@@ -160,6 +160,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantPreviewOpen, setAssistantPreviewOpen] = useState(false);
   const visualization = visualizationSettings(design?.visualization);
+  const phaseOptions = visualization.phases.slice(0, 1000);
 
   useEffect(() => {
     setFacilityKind(FACILITY_OPTIONS[kind][0].kind);
@@ -272,6 +273,11 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
             <p className="text-sm font-semibold capitalize text-slate-200">{selectedDraft.civilKind ?? selectedDraft.kind}</p>
             <button onClick={() => { update({ drafts: (infra.drafts ?? []).filter((draft) => draft.id !== selectedDraft.id) }); setSelectedId(null); }} className="text-xs font-semibold text-rose-400">Remove</button>
           </div>
+           <Select label="Construction phase" value={selectedDraft.phaseId ?? ""} onChange={(e) => patchDraft(selectedDraft.id, { phaseId: e.target.value || undefined })}>
+             <option value="">Unassigned / always visible</option>
+             {selectedDraft.phaseId && !phaseOptions.some((phase) => phase.id === selectedDraft.phaseId) && <option value={selectedDraft.phaseId}>Missing or outside selection limit ({selectedDraft.phaseId})</option>}
+             {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+           </Select>
            <Select label="Annotation" value={selectedDraft.civilKind ?? "contour"} onChange={(e) => patchDraft(selectedDraft.id, { civilKind: e.target.value as DraftElement["civilKind"] })}>
             <option value="contour">Contour reference</option>
             <option value="alignment">Alignment</option>
@@ -332,6 +338,11 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
               <button onClick={() => update({ facilities: (infra.facilities ?? []).filter((f) => f.id !== facility.id) })} className="mt-5 text-xs font-semibold text-rose-400 hover:text-rose-300">Remove</button>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
+              <Select label="Construction phase" value={facility.phaseId ?? ""} onChange={(e) => patchFacility(facility.id, { phaseId: e.target.value || undefined })}>
+                <option value="">Unassigned / always visible</option>
+                {facility.phaseId && !phaseOptions.some((phase) => phase.id === facility.phaseId) && <option value={facility.phaseId}>Missing or outside selection limit ({facility.phaseId})</option>}
+                {phaseOptions.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
+              </Select>
               <Num label="Count" value={facility.count} onChange={(v) => patchFacility(facility.id, { count: Math.max(Math.round(v) || 0, 0) })} min={0} step={1} unit=" nos" />
               <Num label="Length" value={facility.lengthM} onChange={(v) => patchFacility(facility.id, { lengthM: Math.max(v || 0.5, 0.5) })} min={0.5} step={1} unit=" m" />
               <Num label="Width" value={facility.widthM} onChange={(v) => patchFacility(facility.id, { widthM: Math.max(v || 0.5, 0.5) })} min={0.5} step={1} unit=" m" />
@@ -646,7 +657,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
     </Section>
   );
 
-  const mepPanel = <Section title="MEP coordination"><MepPanel value={infra.mep} onChange={(mep) => update({ mep })} /></Section>;
+  const mepPanel = <Section title="MEP coordination"><MepPanel value={infra.mep} phases={visualization.phases} onChange={(mep) => update({ mep })} /></Section>;
 
   const panels: Record<StepId, React.ReactNode> = {
     location: <>{locationPanel}{draftingPanel}</>,

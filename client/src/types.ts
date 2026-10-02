@@ -58,7 +58,7 @@ export interface ProjectDetail extends Project {
   design: Design | null;
 }
 
-/** Planning milestones used only to filter and animate the current model. */
+/** Construction planning activities linked to model objects by phaseId. */
 export interface ConstructionPhase {
   id: string;
   name: string;
@@ -69,6 +69,22 @@ export interface ConstructionPhase {
   dependsOn?: string[];
   crewSize?: number;
   costEstimate?: number;
+  earliestStartDay?: number;
+  progressPercent?: number;
+  actualCost?: number;
+}
+
+export interface ConstructionScheduleBaseline {
+  capturedAt: string;
+  projectStartDate?: string;
+  entries: Array<{ phaseId: string; startDay: number; endDay: number; costEstimate: number }>;
+}
+
+export interface ConstructionScheduleSettings {
+  mode: "manual" | "dependency";
+  /** YYYY-MM-DD. Durations and offsets use calendar days, including weekends. */
+  startDate?: string;
+  baseline?: ConstructionScheduleBaseline;
 }
 
 export interface CameraWaypoint {
@@ -78,7 +94,7 @@ export interface CameraWaypoint {
   target: [number, number, number];
 }
 
-/** Presentation state for 4D review; this is not a construction schedule. */
+/** Presentation state and optional dependency schedule for 4D planning review. */
 export interface VisualizationSettings {
   enabled: boolean;
   time: number;
@@ -87,6 +103,7 @@ export interface VisualizationSettings {
   renderQuality?: "performance" | "balanced" | "presentation";
   cameraPath?: CameraWaypoint[];
   phases: ConstructionPhase[];
+  schedule?: ConstructionScheduleSettings;
 }
 
 export interface CollaborationItem {
