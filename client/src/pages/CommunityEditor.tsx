@@ -526,7 +526,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
     update({ drafts: solveDraftConstraintGraph(drafts, id, patch) });
   };
 
-  const operateDraft = (operation: "trim" | "extend" | "offset" | "rotate" | "mirror") => {
+  const operateDraft = (operation: "trim" | "extend" | "offset" | "rotate" | "mirror" | "fillet" | "chamfer") => {
     if (selectedDraft) patchDraft(selectedDraft.id, applyDraftOperation(selectedDraft, operation));
   };
 
@@ -680,7 +680,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
               onChange={(patch) => patchDraft(selectedDraft.id, patch)}
             />
            <div className="grid grid-cols-3 gap-1.5">
-             {(["trim", "extend", "offset", "rotate", "mirror"] as const).map((operation) => <Button key={operation} size="sm" variant="secondary" onClick={() => operateDraft(operation)}>{operation[0].toUpperCase() + operation.slice(1)}</Button>)}
+             {(["trim", "extend", "offset", "fillet", "chamfer", "rotate", "mirror"] as const).map((operation) => <Button key={operation} size="sm" variant="secondary" onClick={() => operateDraft(operation)}>{operation[0].toUpperCase() + operation.slice(1)}</Button>)}
              <Button size="sm" variant="secondary" onClick={arrayDraft}>Array x3</Button>
            </div>
            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2">
@@ -705,7 +705,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
           <label className="block text-xs font-medium text-slate-400">Element color<input type="color" value={selectedDraft.color} onChange={(e) => patchDraft(selectedDraft.id, { color: e.target.value })} className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-slate-700 bg-slate-900" /></label>
         </div>
       ) : (
-        <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs leading-relaxed text-slate-500">Choose Wall, Slab, Column, Roof, Line, Rectangle or Circle from the CAD toolbar, then select it to edit its parametric properties.</p>
+        <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs leading-relaxed text-slate-500">Choose a CAD/BIM tool from the toolbar (line, polyline, arc, spline, wall, slab, column, roof and more), then select the element to edit geometry and parametric relationships.</p>
       )}
     </Section>
   );
