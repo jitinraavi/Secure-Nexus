@@ -10,7 +10,7 @@ export function StreamingGeometryViewport({ scene, manifest }: { scene: Geometry
   useEffect(() => {
     const element = host.current; if (!element || (!scene && !manifest)) return;
     let renderer: THREE.WebGLRenderer;
-    try { renderer = new THREE.WebGLRenderer({ antialias: true }); } catch { setError("WebGL is unavailable."); return; }
+    try { renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true }); } catch { setError("WebGL is unavailable."); return; }
     setError("");
     renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2)); element.appendChild(renderer.domElement);
     const world = new THREE.Scene(); world.background = new THREE.Color(0x101827);
@@ -19,12 +19,12 @@ export function StreamingGeometryViewport({ scene, manifest }: { scene: Geometry
     const controls = new OrbitControls(camera, renderer.domElement); controls.target.fromArray(scene?.camera.target ?? [0, 0, 0]); controls.enableDamping = true;
     if (!scene && manifest?.chunks.length) { const box = new THREE.Box3().makeEmpty(); for (const id of manifest.roots) { const c = manifest.chunks.find(c => c.id === id)!; box.union(new THREE.Box3(new THREE.Vector3(...c.bounds.min), new THREE.Vector3(...c.bounds.max))); } const center = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()).length(); controls.target.copy(center); camera.position.copy(center).add(new THREE.Vector3(size, size, size)); }
     world.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2)); const light = new THREE.DirectionalLight(0xffffff, 2); light.position.set(100, 200, 100); world.add(light);
-    const loaded = new Map<string, THREE.Group>(), cache = new GeometryChunkCache(); let ended = false, pending = false, frame = 0, requested = "", lastSample = performance.now(), frames = 0, lastUpdate = 0;
+    const loaded = new Map<string, THREE.Group>(), cache = new GeometryChunkCache(); let ended = false, pending = false, frame = 0, requested = "", failedUntil = 0, lastSample = performance.now(), frames = 0, lastUpdate = 0;
     const controller = new AbortController();
     if (scene) { const group = geometryGroup(scene); world.add(group); loaded.set("local", group); }
     const resize = new ResizeObserver(() => { const w = element.clientWidth || 1, h = element.clientHeight || 1; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }); resize.observe(element);
     const stream = async () => {
-      if (!manifest || pending || ended) return;
+      if (!manifest || pending || ended || performance.now() < failedUntil) return;
       const chosen = selectGeometryChunks(manifest, camera, element.clientHeight || 400), key = JSON.stringify(chosen.map(c => c.id).sort()); if (key === requested) return;
       pending = true;
       try {
@@ -36,7 +36,7 @@ export function StreamingGeometryViewport({ scene, manifest }: { scene: Geometry
         for (const [id, group] of additions) { world.add(group); loaded.set(id, group); }
         for (const [id, group] of loaded) if (!pinned.has(id)) { world.remove(group); disposeGeometryGroup(group); loaded.delete(id); }
         requested = key; setError("");
-      } catch (failure) { if (!ended) setError(failure instanceof Error ? failure.message : "Streaming failed."); }
+      } catch (failure) { failedUntil = performance.now() + 5000; if (!ended) setError(failure instanceof Error ? failure.message : "Streaming failed."); }
       finally { pending = false; }
     };
     const render = () => {
