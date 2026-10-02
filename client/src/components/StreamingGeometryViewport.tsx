@@ -25,7 +25,7 @@ export function StreamingGeometryViewport({ scene, manifest }: { scene: Geometry
     const resize = new ResizeObserver(() => { const w = element.clientWidth || 1, h = element.clientHeight || 1; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }); resize.observe(element);
     const stream = async () => {
       if (!manifest || pending || ended) return;
-      const chosen = selectGeometryChunks(manifest, camera, element.clientHeight || 400), key = chosen.map(c => c.id).sort().join("|"); if (key === requested) return;
+      const chosen = selectGeometryChunks(manifest, camera, element.clientHeight || 400), key = JSON.stringify(chosen.map(c => c.id).sort()); if (key === requested) return;
       pending = true;
       try {
         const pinned = new Set(chosen.map(c => c.id)), additions = new Map<string, THREE.Group>(); let triangleCount = 0;

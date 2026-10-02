@@ -156,7 +156,7 @@ export function snapshotThreeScene(scene: THREE.Scene, camera: THREE.Perspective
         if (m.clippingPlanes?.length) warnings.add("Section/clipping planes are not applied to the exported triangle geometry.");
         if (m.transparent || m.opacity < 1) warnings.add("Transparent materials require explicit glass assignment in scene JSON.");
         let parent: THREE.Object3D | null = object, sourceId = object.name || object.uuid;
-        while (parent) { if (typeof parent.userData.id === "string") { sourceId = parent.userData.id; break; } parent = parent.parent; }
+        while (parent) { const id = parent.userData.id ?? parent.userData.selectId ?? parent.userData.itemId; if (typeof id === "string") { sourceId = id; break; } parent = parent.parent; }
         meshes.push({ id: `${object.uuid}:${instance}:${groupIndex}`, sourceId: sourceId.slice(0, 240), positions, indices, material: { color: [color.r, color.g, color.b].map(v => Math.max(0, Math.min(1, v))) as Vec3, emission: [emission.r, emission.g, emission.b], model: (m.metalness ?? 0) > 0.95 && (m.roughness ?? 1) < 0.05 ? "mirror" : "diffuse", ior: 1.5 } });
       }
     }

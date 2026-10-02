@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { CameraWaypoint } from "../types";
+import { snapshotThreeScene, type GeometryScene } from "./meshGeometry";
 
 export interface RecordedPresentation { blob: Blob; extension: "webm" | "mp4" }
 export interface PresentationApi {
@@ -13,6 +14,7 @@ export interface PresentationApi {
   recordVideo(durationSeconds: number, framesPerSecond?: number, path?: CameraWaypoint[]): Promise<RecordedPresentation>;
   cancelVideo(): void;
   isRecording(): boolean;
+  exportGeometry(): GeometryScene;
 }
 
 export function validCameraWaypoint(value: unknown): value is CameraWaypoint {
@@ -35,6 +37,7 @@ export function createPresentationController(renderer: THREE.WebGLRenderer, scen
   };
   const available = () => { if (disposed) throw new Error("The presentation viewport is closed."); };
   const api: PresentationApi = {
+    exportGeometry() { available(); const result = snapshotThreeScene(scene, camera, controls.target); if (renderer.clippingPlanes.length) result.warnings.push("Renderer section planes are not applied to exported geometry."); return result; },
     captureCameraWaypoint(label) {
       available();
       return { id: `view-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, label: label.trim().slice(0, 120) || "View", position: [camera.position.x, camera.position.y, camera.position.z], target: [controls.target.x, controls.target.y, controls.target.z] };

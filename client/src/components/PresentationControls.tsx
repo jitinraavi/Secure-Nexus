@@ -51,6 +51,7 @@ export function PresentationControls({ api, design, onChange }: { api: Presentat
           if (current()) downloadBlob(`presentation.${video.extension}`, video.blob);
         })}>{recording ? "Recording…" : "Record video"}</Button>
         <Button size="sm" variant="ghost" disabled={busy || !path.length} onClick={() => download("camera-path.json", JSON.stringify({ version: 1, units: "metres", durationSeconds: duration, waypoints: path }, null, 2), "application/json")}>Path JSON</Button>
+        <Button size="sm" variant="outline" disabled={!api || busy} onClick={() => void run(() => { if (api) download("geometry-scene.json", JSON.stringify(api.exportGeometry()), "application/json"); })}>Mesh geometry</Button>
       </div>
       <p className="text-[10px] text-slate-500">The path uses saved camera positions in metres. Video records this viewport for up to 60 seconds; keep the tab visible. PNG export is capped at 16 megapixels. Device codecs and frame rate vary.</p>
       {path.map((point, index) => <div className="flex items-center gap-1" key={point.id}>
