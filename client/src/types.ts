@@ -946,7 +946,11 @@ export interface InfraDesign {
 }
 
 /** Local SI corridor and rational-method drainage planning inputs. */
+export interface CivilProfilePoint { stationM: number; elevationM: number; }
+
 export interface CivilSettings {
+  profile?: CivilProfilePoint[];
+  showCorridor?: boolean;
   stationIntervalM: number;
   corridorWidthM: number;
   startElevationM: number;

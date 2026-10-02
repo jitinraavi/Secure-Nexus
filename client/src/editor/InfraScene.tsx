@@ -6,6 +6,7 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import type { DraftElement, DraftElementKind, InfraDesign, VisualizationSettings } from "../types";
 import type { CadTool } from "../components/CadToolPalette";
 import { buildInfraScene, infraExtent } from "../lib/infra";
+import { buildCivilCorridor } from "../lib/civilCorridor";
 import { sectionClippingPlanes } from "../lib/section";
 import { constrainedDraftPatch } from "../lib/drafting";
 import { disposeObject3D } from "../lib/modelcore";
@@ -104,6 +105,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
       group.clear();
       renderer.clippingPlanes = sectionClippingPlanes(infraRef.current.section);
        group.add(buildInfraScene(infraRef.current, visualizationRef.current));
+      if (infraRef.current.modelReady !== false && infraRef.current.civil?.showCorridor) group.add(buildCivilCorridor(infraRef.current));
     };
     rebuildRef.current = rebuild;
     rebuild();
