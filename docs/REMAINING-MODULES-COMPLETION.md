@@ -38,6 +38,8 @@ Compiler acceptance and runtime behavior therefore remain unverified. Material r
 
 ## Engineering and infrastructure boundaries
 
+This section records the boundary of the earlier pass. The subsequent advanced implementations, commits and current limits are documented in [ADVANCED-MODULES-COMPLETION.md](ADVANCED-MODULES-COMPLETION.md).
+
 These source modules do not provide a native professional FE/nonlinear solver, balanced hydraulic/HVAC solver, generic IFC geometry import/certification, civil spiral/parabolic curves or CRS/LAS/DEM processing. True organization tenants, SSO/SAML/OIDC/seat administration, distributed event transport/CRDT operation synchronization, streaming world-scale geometry and independently measured performance/certification remain separate integrations. Existing room XR support is retained; this pass does not claim new verified device support or photorealistic/path-traced rendering.
 
 The implementation is complete for the supported modules listed above. Production readiness and engineering certification require the execution and external validation prohibited in this request.

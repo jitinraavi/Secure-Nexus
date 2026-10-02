@@ -17,6 +17,9 @@ const Billing = lazy(() => import("./pages/Billing").then((m) => ({ default: m.B
 const Checkout = lazy(() => import("./pages/Checkout").then((m) => ({ default: m.Checkout })));
 const SharedProject = lazy(() => import("./pages/SharedProject").then((m) => ({ default: m.SharedProject })));
 const GeometryWorkbench = lazy(() => import("./pages/GeometryWorkbench").then((m) => ({ default: m.GeometryWorkbench })));
+const EngineeringWorkbench = lazy(() => import("./pages/EngineeringWorkbench"));
+const ExchangeWorkbench = lazy(() => import("./pages/ExchangeWorkbench").then((m) => ({ default: m.ExchangeWorkbench })));
+const OrganizationWorkspace = lazy(() => import("./pages/OrganizationWorkspace").then((m) => ({ default: m.OrganizationWorkspace })));
 
 function FullScreenLoading() {
   return (
@@ -55,6 +58,9 @@ export default function App() {
       <Route element={<Protected><Layout /></Protected>}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/geometry" element={<GeometryWorkbench />} />
+        <Route path="/engineering" element={<EngineeringWorkbench />} />
+        <Route path="/exchange" element={<ExchangeWorkbench />} />
+        <Route path="/organizations" element={<OrganizationWorkspace />} />
         <Route path="/editor/:id" element={<Editor />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/settings" element={<Settings />} />

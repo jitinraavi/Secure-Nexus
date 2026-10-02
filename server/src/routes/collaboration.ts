@@ -5,8 +5,10 @@ import { decryptAesGcm, deriveVaultKey, encryptAesGcm, randomId } from "../crypt
 import { db, now, withTransaction } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { canManageProject, canReadProject, canWriteProject, getProjectAccess } from "../projectAccess.js";
-import { collaborationItemId, emitProjectEvent, presenceSnapshot, replayProjectEvents, subscribeProject } from "../collaboration.js";
+import { collaborationInstanceId, collaborationItemId, emitProjectEvent, presenceSnapshot, replayProjectEvents, subscribeProject } from "../collaboration.js";
 import { conflictingDesignLock } from "../designLocks.js";
+import syncRouter from "./sync.js";
+import { readRedisProjectEvents, redisPresence, redisTransportConfigured } from "../redisTransport.js";
 
 const router = Router();
 const vaultKey = deriveVaultKey(MASTER_KEY);
@@ -23,6 +25,7 @@ router.use((req: AuthedRequest, res, next) => {
   req.csrfToken = session.csrf_token;
   next();
 });
+router.use("/:projectId/sync", syncRouter);
 
 function encryptProjectText(plaintext: string, ownerId: string): string {
   return JSON.stringify(encryptAesGcm(plaintext, vaultKey, `groundwork:project:${ownerId}`));
@@ -65,12 +68,16 @@ router.get("/:projectId/events", (req: AuthedRequest, res) => {
     res.status(404).json({ error: "Project not found" });
     return;
   }
+  const connectionCount = db.prepare("SELECT COUNT(*) AS count FROM project_presence WHERE project_id=? AND user_id=? AND expires_at>?").get(req.params.projectId, req.user!.id, now()) as { count: number };
+  if (connectionCount.count >= 10) { res.status(429).json({ error: "Too many active collaboration connections for this project" }); return; }
   res.status(200).set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
   res.flushHeaders();
   res.write(`event: ready\ndata: ${JSON.stringify({ projectId: req.params.projectId, role: access.role })}\n\n`);
   const unsubscribe = subscribeProject(req.params.projectId, req.user!.id, res);
   const requestedId = Number(req.get("Last-Event-ID") || req.query.after || 0);
   let lastEventId = replayProjectEvents(req.params.projectId, res, Number.isSafeInteger(requestedId) && requestedId >= 0 ? requestedId : 0);
+  let redisCursor = "0";
+  let polling = false;
   res.write(`event: presence\ndata: ${JSON.stringify(presenceSnapshot(req.params.projectId))}\n\n`);
   const heartbeat = setInterval(() => {
     if (!canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) { res.end(); return; }
@@ -81,15 +88,31 @@ router.get("/:projectId/events", (req: AuthedRequest, res) => {
     const session = resolveSession(req);
     if (!session || session.status !== "active" || !canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) { res.end(); return; }
     lastEventId = replayProjectEvents(req.params.projectId, res, lastEventId);
+    if (redisTransportConfigured && !polling) {
+      polling = true;
+      void readRedisProjectEvents(req.params.projectId, redisCursor).then((result) => {
+        if (res.writableEnded || res.destroyed || resolveSession(req)?.status !== "active" || !canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) return;
+        redisCursor = result.cursor;
+        for (const event of result.events) {
+          const parsed = z.object({ origin: z.string().max(120), eventId: z.string().max(120), projectId: z.string(), type: z.string().max(80), revision: z.number().int().min(0), createdAt: z.number().int(), actorId: z.string().max(120) }).safeParse(event);
+          if (parsed.success && parsed.data.origin !== collaborationInstanceId && parsed.data.projectId === req.params.projectId) res.write(`event: distributed\ndata: ${JSON.stringify(parsed.data)}\n\n`);
+        }
+      }).catch(() => { if (!res.writableEnded && !res.destroyed) res.write('event: transport-status\ndata: {"backend":"redis-rest","degraded":true}\n\n'); }).finally(() => { polling = false; });
+    }
   }, 2000);
   res.on("close", () => { clearInterval(heartbeat); clearInterval(replay); unsubscribe(); });
 });
 
-router.get("/:projectId/presence", (req: AuthedRequest, res) => {
+router.get("/:projectId/presence", asyncHandler(async (req: AuthedRequest, res) => {
   const access = getProjectAccess(req.params.projectId, req.user!.id);
   if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
-  res.json(presenceSnapshot(req.params.projectId));
-});
+  if (redisTransportConfigured) {
+    const presence = await redisPresence(req.params.projectId);
+    if (resolveSession(req)?.status !== "active" || !canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) { res.status(403).json({ error: "Project access changed during presence lookup" }); return; }
+    const users = presence.users.filter((entry) => canReadProject(getProjectAccess(req.params.projectId, entry.userId)));
+    res.json({ projectId: req.params.projectId, users, count: users.length, backend: "redis-rest" });
+  } else res.json({ ...presenceSnapshot(req.params.projectId), backend: "sqlite" });
+}));
 
 router.get("/:projectId/items", (req: AuthedRequest, res) => {
   const access = getProjectAccess(req.params.projectId, req.user!.id);
@@ -141,6 +164,11 @@ router.patch("/:projectId/items/:itemId", asyncHandler(async (req: AuthedRequest
 router.get("/:projectId/members", (req: AuthedRequest, res) => {
   const access = getProjectAccess(req.params.projectId, req.user!.id);
   if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
+  if (access.organizationId) {
+    const members = db.prepare(`SELECT m.user_id AS userId,u.email,u.username,CASE WHEN m.role IN ('owner','admin') THEN 'owner' ELSE m.role END AS role,m.created_at AS createdAt
+      FROM organization_members m JOIN users u ON u.id=m.user_id WHERE m.organization_id=? ORDER BY m.created_at`).all(access.organizationId);
+    res.json({ members, currentRole: access.role, managedByOrganization: true }); return;
+  }
   const owner = db.prepare("SELECT u.id, u.email, u.username FROM projects p JOIN users u ON u.id = p.user_id WHERE p.id = ?")
     .get(req.params.projectId) as { id: string; email: string; username: string | null };
   const rows = db.prepare("SELECT pm.user_id, pm.role, pm.created_at, u.email, u.username FROM project_members pm JOIN users u ON u.id = pm.user_id WHERE pm.project_id = ? ORDER BY pm.created_at")
@@ -156,6 +184,7 @@ router.post("/:projectId/members", asyncHandler(async (req: AuthedRequest, res) 
   const access = getProjectAccess(req.params.projectId, req.user!.id);
   const parsed = memberSchema.safeParse(req.body || {});
   if (!canManageProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" }); return; }
+  if (access.organizationId) { res.status(403).json({ error: "Manage membership in the organization workspace" }); return; }
   if (!parsed.success) { res.status(400).json({ error: "Enter a valid user and role" }); return; }
   const target = db.prepare("SELECT id, email, username FROM users WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE LIMIT 1")
     .get(parsed.data.identifier, parsed.data.identifier) as { id: string; email: string; username: string | null } | undefined;
@@ -172,6 +201,7 @@ router.patch("/:projectId/members/:userId", asyncHandler(async (req: AuthedReque
   const access = getProjectAccess(req.params.projectId, req.user!.id);
   const parsed = z.object({ role: z.enum(["editor", "viewer"]) }).safeParse(req.body || {});
   if (!canManageProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" }); return; }
+  if (access.organizationId) { res.status(403).json({ error: "Manage membership in the organization workspace" }); return; }
   if (!parsed.success) { res.status(400).json({ error: "Role must be editor or viewer" }); return; }
   const result = db.prepare("UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?")
     .run(parsed.data.role, req.params.projectId, req.params.userId);
@@ -185,6 +215,7 @@ router.patch("/:projectId/members/:userId", asyncHandler(async (req: AuthedReque
 router.delete("/:projectId/members/:userId", asyncHandler(async (req: AuthedRequest, res) => {
   const access = getProjectAccess(req.params.projectId, req.user!.id);
   if (!canManageProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" }); return; }
+  if (access.organizationId) { res.status(403).json({ error: "Manage membership in the organization workspace" }); return; }
   const result = db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId);
   db.prepare("DELETE FROM project_locks WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId);
   if (!result.changes) { res.status(404).json({ error: "Project member not found" }); return; }

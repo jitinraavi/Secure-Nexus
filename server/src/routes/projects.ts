@@ -9,6 +9,7 @@ import { z } from "zod";
 import { emitProjectEvent } from "../collaboration.js";
 import { conflictingDesignLock } from "../designLocks.js";
 import { canManageProject, canReadProject, canWriteProject, getProjectAccess } from "../projectAccess.js";
+import { organizationAudit } from "../organization.js";
 
 const router = Router();
 const VAULT_KEY = deriveVaultKey(MASTER_KEY);
@@ -142,12 +143,16 @@ const ACTIVE_PROJECT_LIMIT = "The Free plan allows one active owned project. Arc
 router.get("/", (req: AuthedRequest, res) => {
   const rows = db.prepare(
     `SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision, p.folder, p.archived, p.is_template, 'owner' AS role
-     FROM projects p WHERE p.user_id = ?
+     FROM projects p WHERE p.user_id = ? AND p.organization_id IS NULL
      UNION ALL
      SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision, p.folder, p.archived, p.is_template, pm.role AS role
-     FROM project_members pm JOIN projects p ON p.id = pm.project_id WHERE pm.user_id = ?
+     FROM project_members pm JOIN projects p ON p.id = pm.project_id WHERE pm.user_id = ? AND p.organization_id IS NULL
+     UNION ALL
+     SELECT p.id, p.name, p.project_type, p.width_mm, p.depth_mm, p.created_at, p.updated_at, p.photo_file_id, p.revision, p.folder, p.archived, p.is_template,
+       CASE WHEN om.role IN ('owner','admin') THEN 'owner' ELSE om.role END AS role
+     FROM organization_members om JOIN projects p ON p.organization_id=om.organization_id WHERE om.user_id=?
      ORDER BY updated_at DESC`,
-  ).all(req.user!.id, req.user!.id) as {
+  ).all(req.user!.id, req.user!.id, req.user!.id) as {
     id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number; updated_at: number;
     photo_file_id: string | null; revision: number; folder: string; archived: number; is_template: number; role: "owner" | "editor" | "viewer";
   }[];
@@ -232,6 +237,8 @@ router.get("/:id", (req: AuthedRequest, res) => {
 router.post("/:id/duplicate", asyncHandler(async (req: AuthedRequest, res) => {
   const source = projectForUser(req.params.id, req.user!.id);
   if (!source) { res.status(404).json({ error: "Project not found" }); return; }
+  const sourceAccess = getProjectAccess(req.params.id, req.user!.id);
+  if (sourceAccess?.organizationId) { res.status(403).json({ error: "Tenant projects cannot be duplicated into a personal workspace" }); return; }
   const parsed = z.object({ name: z.string().trim().min(1).max(80) }).safeParse(req.body || {});
   if (!parsed.success) { res.status(400).json({ error: "A project name of 1–80 characters is required" }); return; }
   let designData: string | null = null;
@@ -373,6 +380,7 @@ router.patch(
       logAudit(req.user!.id, "project.library_updated", { projectId: req.params.id, folder: meta.data.folder, archived: meta.data.archived, isTemplate: meta.data.isTemplate }, req);
     }
     const revision = current.revision + 1;
+    if (access.organizationId) organizationAudit(access.organizationId, req.user!.id, "project.updated", { projectId: req.params.id, revision, designChanged: designPayload !== null });
     emitProjectEvent(req.params.id, req.user!.id, designPayload !== null ? "design.updated" : "snapshot.created", revision, { designChanged: designPayload !== null });
     res.json({ ok: true, revision });
   }),
@@ -472,6 +480,7 @@ router.post("/:id/share-links", asyncHandler(async (req: AuthedRequest, res) => 
     res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" });
     return;
   }
+  if (access.organizationId) { res.status(403).json({ error: "Public share links are disabled for organization projects" }); return; }
   const token = randomToken(32);
   const id = randomId();
   const createdAt = now();
@@ -601,6 +610,7 @@ router.delete(
       db.prepare("DELETE FROM files WHERE id = ? AND user_id = ?").run(row.photo_file_id, access.ownerId);
     }
     db.prepare("DELETE FROM projects WHERE id = ?").run(req.params.id);
+    if (access.organizationId) organizationAudit(access.organizationId, req.user!.id, "project.deleted", { projectId: req.params.id, name: row.name });
     logAudit(req.user!.id, "project.deleted", { name: row.name }, req);
     res.json({ ok: true });
   }),

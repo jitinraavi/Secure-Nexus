@@ -95,9 +95,13 @@ export function sceneAllocationBytes(root: THREE.Object3D): { geometryBytes: num
 }
 
 export function geometryGroup(scene: GeometryScene): THREE.Group {
-  const group = new THREE.Group();
+  const group = new THREE.Group(), origin = sceneCenter(scene);
+  // Rebase before float32 allocation; world survey coordinates stay in the
+  // double-precision object/camera transforms rather than every GPU vertex.
+  group.position.fromArray(origin);
   for (const mesh of scene.meshes) {
-    const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.Float32BufferAttribute(mesh.positions, 3)); geometry.setIndex(mesh.indices); geometry.computeVertexNormals();
+    const local = mesh.positions.map((value, index) => value - origin[index % 3]);
+    const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.Float32BufferAttribute(local, 3)); geometry.setIndex(mesh.indices); geometry.computeVertexNormals();
     const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(...mesh.material.color), emissive: new THREE.Color(...mesh.material.emission), side: THREE.DoubleSide, metalness: mesh.material.model === "mirror" ? 1 : 0, roughness: mesh.material.model === "mirror" ? 0 : 0.7 });
     const object = new THREE.Mesh(geometry, material); object.userData.id = mesh.sourceId; group.add(object);
   }

@@ -7,6 +7,9 @@ import { cn } from "../lib/cn";
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: "M4 13h6V4H4v9zm0 7h6v-5H4v5zm10 0h6v-9h-6v9zm0-16v5h6V4h-6z" },
   { to: "/geometry", label: "Geometry & rendering", icon: "M12 2L2 7v10l10 5 10-5V7L12 2zm0 3 7 3-7 3-7-3 7-3zM4 10l6 3v6l-6-3v-6zm16 0v6l-6 3v-6l6-3z" },
+  { to: "/engineering", label: "Engineering", icon: "M3 3h18v3H3V3zm2 5h4v13H5V8zm10 0h4v13h-4V8zm-4 5h2v8h-2v-8z" },
+  { to: "/exchange", label: "BIM & civil exchange", icon: "M3 3h18v18H3V3zm3 3v12h12V6H6zm1 3h4v2H7V9zm6 4h4v2h-4v-2z" },
+  { to: "/organizations", label: "Organizations", icon: "M16 11a4 4 0 10-8 0 4 4 0 008 0zm-4 6c-4 0-7 2-7 4h14c0-2-3-4-7-4zM4 9a3 3 0 013-3v6a3 3 0 01-3-3zm16 0a3 3 0 00-3-3v6a3 3 0 003-3z" },
   { to: "/billing", label: "Billing", icon: "M20 6H4a1 1 0 00-1 1v10a1 1 0 001 1h16a1 1 0 001-1V7a1 1 0 00-1-1zm-2 8h-3v-2h3v2z" },
   { to: "/audit", label: "Audit Log", icon: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-3 14l-4-4 1.5-1.5L11 13l4.5-4.5L17 10l-6 6z" },
   { to: "/settings", label: "Settings", icon: "M12 15a3 3 0 100-6 3 3 0 000 6zm7.4-3a7.4 7.4 0 00-.1-1l2-1.5-2-3.5-2.4 1a7.5 7.5 0 00-1.7-1L14.8 3h-4L10 5.6a7.5 7.5 0 00-1.7 1L5.9 5.5 4 9l2 1.5a7.4 7.4 0 000 1L4 13l1.9 3.4 2.4-1a7.5 7.5 0 001.7 1l.8 2.6h4l.8-2.6a7.5 7.5 0 001.7-1l2.4 1 1.9-3.4-2-1.5c.06-.33.1-.66.1-1z" },
