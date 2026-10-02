@@ -359,7 +359,7 @@ export interface AmenityData {
   phaseId?: string;
 }
 
-export type DraftElementKind = "line" | "rectangle" | "circle" | "dimension" | "wall" | "slab" | "column" | "roof";
+export type DraftElementKind = "line" | "polyline" | "arc" | "spline" | "rectangle" | "circle" | "dimension" | "wall" | "slab" | "column" | "roof";
 
 export type ParametricConstraintKind = "alignment" | "coincident" | "collinear" | "parallel" | "perpendicular" | "level" | "equal";
 
@@ -410,6 +410,11 @@ export interface DraftElement {
   h?: number;
   rotationDeg: number;
   color: string;
+  /** Optional local-space path geometry for CAD curves and polylines. */
+  points?: { x: number; z: number }[];
+  radiusM?: number;
+  startAngleDeg?: number;
+  endAngleDeg?: number;
   /** Optional civil annotation metadata; geometry remains editable in metres. */
   civilKind?: "contour" | "alignment" | "grade";
   elevationM?: number;
