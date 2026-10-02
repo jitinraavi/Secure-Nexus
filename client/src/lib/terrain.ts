@@ -10,15 +10,39 @@ export const defaultTerrain: TerrainSettings = {
   contoursVisible: true,
   profileAxis: "x",
   profileOffsetM: 0,
+  source: "procedural",
+  projectCrs: "LOCAL",
+  localOriginEasting: 0,
+  localOriginNorthing: 0,
+  samples: [],
 };
 
 export function terrainSettings(value?: TerrainSettings): TerrainSettings {
   return { ...defaultTerrain, ...value };
 }
 
-/** A repeatable low-frequency surface for local studies, not survey data. */
+function surveyElevation(x: number, z: number, samples: NonNullable<TerrainSettings["samples"]>): number | null {
+  if (!samples.length) return null;
+  const nearest = [...samples].sort((a, b) => (a.x - x) ** 2 + (a.z - z) ** 2 - ((b.x - x) ** 2 + (b.z - z) ** 2)).slice(0, Math.min(8, samples.length));
+  let weighted = 0;
+  let weights = 0;
+  for (const sample of nearest) {
+    const d2 = (sample.x - x) ** 2 + (sample.z - z) ** 2;
+    if (d2 < 1e-8) return sample.elevationM;
+    const weight = 1 / d2;
+    weighted += sample.elevationM * weight;
+    weights += weight;
+  }
+  return weights ? weighted / weights : null;
+}
+
+/** Survey samples use inverse-distance interpolation; otherwise a repeatable planning surface is used. */
 export function terrainElevation(x: number, z: number, settings?: TerrainSettings): number {
   const t = terrainSettings(settings);
+  if (t.source === "survey" && t.samples?.length) {
+    const surveyed = surveyElevation(x, z, t.samples);
+    if (surveyed !== null) return surveyed;
+  }
   const relief = Math.max(0, t.reliefM);
   return t.baseElevationM + relief * (
     Math.sin(x * 0.035) * 0.48 +
@@ -104,4 +128,59 @@ export function buildTerrainVisualization(width: number, depth: number, value?: 
   g.add(surface);
   if (settings.contoursVisible) g.add(contourSegments(width, depth, settings));
   return g;
+}
+
+
+export interface TerrainTriangle {
+  a: { x: number; z: number; elevationM: number };
+  b: { x: number; z: number; elevationM: number };
+  c: { x: number; z: number; elevationM: number };
+}
+
+/** Deterministic TIN fan suitable for imported survey points after angle sorting around the centroid. */
+export function buildSurveyTin(settings?: TerrainSettings): TerrainTriangle[] {
+  const samples = terrainSettings(settings).samples ?? [];
+  if (samples.length < 3) return [];
+  const center = {
+    x: samples.reduce((sum, point) => sum + point.x, 0) / samples.length,
+    z: samples.reduce((sum, point) => sum + point.z, 0) / samples.length,
+  };
+  const sorted = [...samples].sort((a, b) => Math.atan2(a.z - center.z, a.x - center.x) - Math.atan2(b.z - center.z, b.x - center.x));
+  const centroidSample = { x: center.x, z: center.z, elevationM: samples.reduce((sum, point) => sum + point.elevationM, 0) / samples.length };
+  return sorted.map((point, index) => ({ a: centroidSample, b: point, c: sorted[(index + 1) % sorted.length] }));
+}
+
+export function parseTerrainCsv(csv: string): NonNullable<TerrainSettings["samples"]> {
+  const samples: NonNullable<TerrainSettings["samples"]> = [];
+  for (const raw of csv.replace(/\r\n?/g, "\n").split("\n")) {
+    const line = raw.trim();
+    if (!line || /^x[,;\t]|^easting[,;\t]/i.test(line)) continue;
+    const parts = line.split(/[,;\t]/).map((value) => Number(value.trim()));
+    if (parts.length < 3 || parts.slice(0, 3).some((value) => !Number.isFinite(value))) continue;
+    samples.push({ x: parts[0], z: parts[1], elevationM: parts[2] });
+  }
+  return samples.slice(0, 100_000);
+}
+
+export interface CutFillSummary {
+  cutM3: number;
+  fillM3: number;
+  netM3: number;
+  sampledCells: number;
+}
+
+export function estimateCutFill(width: number, depth: number, settings: TerrainSettings | undefined, designElevationM: number, resolution = 30): CutFillSummary {
+  const dx = width / resolution;
+  const dz = depth / resolution;
+  const area = dx * dz;
+  let cutM3 = 0;
+  let fillM3 = 0;
+  for (let ix = 0; ix < resolution; ix += 1) for (let iz = 0; iz < resolution; iz += 1) {
+    const x = -width / 2 + (ix + 0.5) * dx;
+    const z = -depth / 2 + (iz + 0.5) * dz;
+    const delta = terrainElevation(x, z, settings) - designElevationM;
+    if (delta > 0) cutM3 += delta * area;
+    else fillM3 += -delta * area;
+  }
+  return { cutM3, fillM3, netM3: fillM3 - cutM3, sampledCells: resolution * resolution };
 }
