@@ -22,6 +22,7 @@ export interface StructuralMember {
   depthM: number;
   lengthM: number;
   sourceId?: string;
+  tributaryWidthM?: number;
 }
 
 export interface StructuralFrameModel {
@@ -107,7 +108,7 @@ export function buildStructuralFrameModel(design: CommunityDesign): StructuralFr
       const dx = Math.cos(angle) * draft.w / 2, dz = -Math.sin(angle) * draft.w / 2;
       const start = addNode({ id: `${draft.id}_start`, x: draft.x - dx, y: level.elevationM + (draft.elevationM ?? 0), z: draft.z - dz, kind: "grid-intersection" });
       const end = addNode({ id: `${draft.id}_end`, x: draft.x + dx, y: start.y, z: draft.z + dz, kind: "grid-intersection" });
-      members.push({ id: draft.id, kind: draft.kind === "wall" ? "wall" : "slab", startNodeId: start.id, endNodeId: end.id, levelId: level.id, widthM: Math.max(draft.w, 0.1), depthM: Math.max(draft.d, 0.1), lengthM: Math.max(draft.w, 0.1), sourceId: draft.id });
+      members.push({ id: draft.id, kind: draft.kind === "wall" ? "wall" : "slab", startNodeId: start.id, endNodeId: end.id, levelId: level.id, widthM: Math.max(draft.kind === "slab" ? draft.d : draft.w, 0.1), depthM: Math.max(draft.kind === "slab" ? (draft.h ?? 0.2) : draft.d, 0.1), lengthM: Math.max(draft.w, 0.1), sourceId: draft.id, tributaryWidthM: Math.max(draft.d, 0.1) });
     }
   }
 
@@ -123,17 +124,22 @@ export function buildStructuralFrameModel(design: CommunityDesign): StructuralFr
   }
   if (gridsX.length && gridsZ.length) {
     const xs = [...gridsX].sort((a, b) => a.position - b.position), zs = [...gridsZ].sort((a, b) => a.position - b.position);
+    const tributary = (lines: { position: number }[], index: number) => {
+      const left = index > 0 ? lines[index].position - lines[index - 1].position : 0;
+      const right = index + 1 < lines.length ? lines[index + 1].position - lines[index].position : 0;
+      return Math.max((left + right) / 2, 0.5);
+    };
     for (const level of levels) {
       const y = level.elevationM + level.heightM;
-      const addBeam = (id: string, x1: number, z1: number, x2: number, z2: number) => {
+      const addBeam = (id: string, x1: number, z1: number, x2: number, z2: number, tributaryWidthM: number) => {
         const lengthM = Math.hypot(x2 - x1, z2 - z1);
         if (lengthM < 1e-6) return;
         const a = addNode({ id: `${id}_a`, x: x1, y, z: z1, kind: "grid-intersection" });
         const b = addNode({ id: `${id}_b`, x: x2, y, z: z2, kind: "grid-intersection" });
-        members.push({ id, kind: "beam", startNodeId: a.id, endNodeId: b.id, levelId: level.id, widthM: settings.beamWidthM, depthM: settings.beamDepthM, lengthM });
+        members.push({ id, kind: "beam", startNodeId: a.id, endNodeId: b.id, levelId: level.id, widthM: settings.beamWidthM, depthM: settings.beamDepthM, lengthM, tributaryWidthM });
       };
-      for (const z of zs) for (let i = 1; i < xs.length; i++) addBeam(`beam-x-${level.id}-${xs[i - 1].id}-${xs[i].id}-${z.id}`, xs[i - 1].position, z.position, xs[i].position, z.position);
-      for (const x of xs) for (let i = 1; i < zs.length; i++) addBeam(`beam-z-${level.id}-${zs[i - 1].id}-${zs[i].id}-${x.id}`, x.position, zs[i - 1].position, x.position, zs[i].position);
+      for (const [index, z] of zs.entries()) for (let i = 1; i < xs.length; i++) addBeam(`beam-x-${level.id}-${xs[i - 1].id}-${xs[i].id}-${z.id}`, xs[i - 1].position, z.position, xs[i].position, z.position, tributary(zs, index));
+      for (const [index, x] of xs.entries()) for (let i = 1; i < zs.length; i++) addBeam(`beam-z-${level.id}-${zs[i - 1].id}-${zs[i].id}-${x.id}`, x.position, zs[i - 1].position, x.position, zs[i].position, tributary(xs, index));
     }
     warnings.push("Grid beams are inferred; joint connectivity, releases and tributary loading require engineer verification.");
   }
@@ -166,7 +172,7 @@ export function screenStructuralDesign(design: CommunityDesign): StructuralDesig
   const members = frame.members.map((member): MemberDesignScreen => {
     const area = Math.max(member.widthM * member.depthM, 0.001);
     const lengthFactor = Math.max(member.lengthM / 3, 1);
-    const demandKN = member.kind === "column" ? demandFor(member) : (settings.deadLoadKPa + settings.liveLoadKPa) * Math.max(member.lengthM, 0.5) * Math.max(member.kind === "slab" ? member.depthM : member.widthM, 0.5);
+    const demandKN = member.kind === "column" ? demandFor(member) : (settings.deadLoadKPa + settings.liveLoadKPa) * Math.max(member.lengthM, 0.5) * Math.max(member.tributaryWidthM ?? member.widthM, 0.5);
     const materialStrength = settings.material === "steel" ? 250 : settings.material === "masonry" ? 8 : settings.concreteStrengthMPa;
     const flexural = member.kind === "beam" || member.kind === "slab";
     const demandKNm = flexural ? demandKN * member.lengthM / 8 : undefined;
