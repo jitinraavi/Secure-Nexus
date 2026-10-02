@@ -55,10 +55,10 @@ function samplePolyline(points: { x: number; z: number }[], intervalM: number): 
 export function analyzeCivilAlignment(infra: InfraDesign, intervalM = 25): CivilAlignmentReport {
   const terrain = terrainSettings(infra.terrain);
   const route = localRoute(infra.location);
-  const fallbackLength = infra.kind === "highway" ? infra.highway?.runwayLengthM : undefined;
+  const fallbackLength = infra.location?.routeLengthM ?? 500;
   const points = route.length >= 2 ? route : [
-    { x: -Math.max(infra.location?.routeLengthM ?? fallbackLength ?? 500, 10) / 2, z: 0 },
-    { x: Math.max(infra.location?.routeLengthM ?? fallbackLength ?? 500, 10) / 2, z: 0 },
+    { x: -Math.max(fallbackLength, 10) / 2, z: 0 },
+    { x: Math.max(fallbackLength, 10) / 2, z: 0 },
   ];
   const sampled = samplePolyline(points, intervalM);
   let previous: { distance: number; elevationM: number } | null = null;
