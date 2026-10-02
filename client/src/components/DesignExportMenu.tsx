@@ -3,7 +3,8 @@ import { Badge, Button, Input, Modal, Select } from "./ui";
 import { useToast } from "./Toast";
 import { download, downloadBlob } from "../lib/download";
 import type { Design, DocumentationAnnotation, DocumentationRevision, DocumentationSchedule, DocumentationSheet, DocumentationView } from "../types";
-import { documentationFor } from "../lib/documentation";
+import { documentationFor, documentationIssues } from "../lib/documentation";
+import { buildDocumentationSchedule, documentationInventory, documentationScheduleCsv, SCHEDULE_FIELDS, scheduleCellText } from "../lib/documentationSchedule";
 import { getCadExchangeStatus, type CadExchangeStatusResponse } from "../api";
 import { COMPLIANCE_PROFILES, validateDesign } from "../lib/compliance";
 import { buildIfcStep, inspectGroundworkIfcSources, validateIfcProfile, validateIfcRoundTrip, type IfcValidationReport } from "../lib/bim";
@@ -30,8 +31,10 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
     updateDocs({ [key]: docs[key].map((item) => item.id === id ? { ...item, ...patch } : item) } as Partial<typeof docs>);
   };
   const remove = (key: "views" | "sheets" | "annotations" | "schedules" | "revisions", id: string) => updateDocs({
-    [key]: docs[key].filter((item) => item.id !== id).map((item) => key === "sheets" ? { ...item, viewIds: (item as DocumentationSheet).viewIds.filter((viewId) => viewId !== id) } : item),
-    ...(key === "views" ? { sheets: docs.sheets.map((sheet) => ({ ...sheet, viewIds: sheet.viewIds.filter((viewId) => viewId !== id) })) } : {}),
+    [key]: docs[key].filter(item => item.id !== id),
+    ...(key === "views" ? { sheets: docs.sheets.map(sheet => ({ ...sheet, viewIds: sheet.viewIds.filter(viewId => viewId !== id) })) } : {}),
+    ...(key === "schedules" ? { sheets: docs.sheets.map(sheet => ({ ...sheet, scheduleIds: sheet.scheduleIds?.filter(scheduleId => scheduleId !== id) })) } : {}),
+    ...(key === "revisions" ? { sheets: docs.sheets.map(sheet => ({ ...sheet, revisionIds: sheet.revisionIds?.filter(revisionId => revisionId !== id) })) } : {}),
   } as Partial<typeof docs>);
   const add = (key: "views" | "sheets" | "annotations" | "schedules" | "revisions", value: DocumentationView | DocumentationSheet | DocumentationAnnotation | DocumentationSchedule | DocumentationRevision) => updateDocs({ [key]: [...docs[key], value] } as Partial<typeof docs>);
   const exportFile = async (format: "dxf" | "ifc") => {
@@ -49,11 +52,15 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
     setOpen(false);
   };
   const exportSheets = async () => {
+    try {
     const { buildSheetPdf } = await import("../lib/sheets");
     const blob = new Blob([buildSheetPdf(projectName || "Untitled project", design)], { type: "application/pdf" });
     downloadBlob(`${stem}-sheets.pdf`, blob);
     toast.push({ title: "PDF sheet set downloaded", description: "Documentation metadata, views, annotations, schedules, and planning geometry included.", tone: "success" });
     setOpen(false);
+    } catch (error) {
+      toast.push({ title: "PDF export failed", description: error instanceof Error ? error.message : "Could not export the selected sheets.", tone: "error" });
+    }
   };
   const exportBcf = async () => {
     const blob = await buildBcfZip(design, projectName || "Untitled project");
@@ -79,7 +86,7 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           </div>
           <p className="mt-2 text-xs text-slate-500">Changes are saved with the design and are used by the PDF sheet set.</p>
         </div>
-        <DocumentationEditor docs={docs} add={add} update={update} remove={remove} />
+        {open && <DocumentationEditor design={design} docs={docs} stem={stem} add={add} update={update} remove={remove} />}
         <section className="mt-3 rounded-xl border border-slate-700 bg-slate-950/30 p-3">
           <p className="gw-kicker">Technical graphics</p>
           <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -160,31 +167,43 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
 }
 
 function DocumentationEditor({
+  design,
   docs,
+  stem,
   add,
   update,
   remove,
 }: {
+  design: Design;
   docs: ReturnType<typeof documentationFor>;
+  stem: string;
   add: (key: "views" | "sheets" | "annotations" | "schedules" | "revisions", value: DocumentationView | DocumentationSheet | DocumentationAnnotation | DocumentationSchedule | DocumentationRevision) => void;
   update: <T extends { id: string }>(key: "views" | "sheets" | "annotations" | "schedules" | "revisions", id: string, patch: Partial<T>) => void;
   remove: (key: "views" | "sheets" | "annotations" | "schedules" | "revisions", id: string) => void;
 }) {
+  const inventory = useMemo(() => documentationInventory(design), [design]);
+  const warnings = useMemo(() => documentationIssues(design), [design]);
+  const bindings = (values: string[], target: string, selected: boolean) => selected ? [...new Set([...values, target])] : values.filter(value => value !== target);
   const id = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const addView = () => add("views", { id: id(), name: "New view", kind: "plan", scale: "1:100", orientation: "north", visible: true });
   const addSheet = () => add("sheets", { id: id(), number: "A-000", name: "New sheet", viewIds: [] });
   const addAnnotation = () => add("annotations", { id: id(), text: "New annotation", tag: "NOTE" });
-  const addSchedule = () => add("schedules", { id: id(), name: "New schedule", category: "objects", fields: ["Name", "Quantity"] });
+  const addSchedule = () => add("schedules", { id: id(), name: "New schedule", category: "objects", fields: ["Category", "Name", "Quantity"], filters: [], sortDirection: "asc" });
   const addRevision = () => add("revisions", { id: id(), number: String(docs.revisions.length + 1), date: new Date().toISOString().slice(0, 10), description: "Revision description", author: docs.author });
   return (
     <div className="space-y-3">
+      {warnings.length > 0 && <div className="max-h-32 overflow-auto rounded-lg border border-amber-500/30 p-2 text-xs text-amber-200">{warnings.map(warning => <p key={warning}>{warning}</p>)}</div>}
+      <p className="text-xs text-slate-500">Schedules refresh from saved model occurrences. Schematic PDF geometry is fitted to each page; requested scale and orientation remain metadata.</p>
       <DocSection title="Sheets" addLabel="Add sheet" onAdd={addSheet}>
-        {docs.sheets.map((sheet) => <div key={sheet.id} className="grid gap-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2 sm:grid-cols-[.7fr_1fr_1fr_1fr_auto]">
+        {docs.sheets.map((sheet) => <div key={sheet.id} className="space-y-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2"><div className="grid gap-2 sm:grid-cols-[.7fr_1fr_1fr_auto]">
           <Input aria-label="Sheet number" value={sheet.number} onChange={(e) => update<DocumentationSheet>("sheets", sheet.id, { number: e.target.value })} />
           <Input aria-label="Sheet name" value={sheet.name} onChange={(e) => update<DocumentationSheet>("sheets", sheet.id, { name: e.target.value })} />
           <Input aria-label="Sheet title block" value={sheet.titleBlock ?? ""} placeholder="Title block override" onChange={(e) => update<DocumentationSheet>("sheets", sheet.id, { titleBlock: e.target.value })} />
-          <Select aria-label="Sheet views" value={sheet.viewIds[0] ?? ""} onChange={(e) => update<DocumentationSheet>("sheets", sheet.id, { viewIds: e.target.value ? [e.target.value] : [] })}><option value="">No view</option>{docs.views.map((view) => <option key={view.id} value={view.id}>{view.name}</option>)}</Select>
           <Button variant="danger" size="sm" onClick={() => remove("sheets", sheet.id)}>Delete</Button>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-slate-400"><span>Views:</span>{docs.views.map(view => <label key={view.id} className="flex items-center gap-1"><input type="checkbox" checked={sheet.viewIds.includes(view.id)} onChange={event => update<DocumentationSheet>("sheets", sheet.id, { viewIds: bindings(sheet.viewIds, view.id, event.target.checked) })} />{view.name}</label>)}</div>
+          <div className="flex flex-wrap gap-2 text-xs text-slate-400"><span>Schedules:</span><label className="flex items-center gap-1"><input type="checkbox" checked={sheet.scheduleIds === undefined} onChange={event => update<DocumentationSheet>("sheets", sheet.id, { scheduleIds: event.target.checked ? undefined : [] })} />Default on schedule sheets</label>{sheet.scheduleIds !== undefined && docs.schedules.map(schedule => <label key={schedule.id} className="flex items-center gap-1"><input type="checkbox" checked={sheet.scheduleIds!.includes(schedule.id)} onChange={event => update<DocumentationSheet>("sheets", sheet.id, { scheduleIds: bindings(sheet.scheduleIds ?? [], schedule.id, event.target.checked) })} />{schedule.name}</label>)}</div>
+          <div className="flex flex-wrap gap-2 text-xs text-slate-400"><span>Revisions:</span><label className="flex items-center gap-1"><input type="checkbox" checked={sheet.revisionIds === undefined} onChange={event => update<DocumentationSheet>("sheets", sheet.id, { revisionIds: event.target.checked ? undefined : [] })} />All project revisions</label>{sheet.revisionIds !== undefined && docs.revisions.map(revision => <label key={revision.id} className="flex items-center gap-1"><input type="checkbox" checked={sheet.revisionIds!.includes(revision.id)} onChange={event => update<DocumentationSheet>("sheets", sheet.id, { revisionIds: bindings(sheet.revisionIds ?? [], revision.id, event.target.checked) })} />{revision.number}</label>)}</div>
         </div>)}
       </DocSection>
       <DocSection title="Views, scales and orientation" addLabel="Add view" onAdd={addView}>
@@ -198,19 +217,18 @@ function DocumentationEditor({
         </div>)}
       </DocSection>
       <DocSection title="Annotations and tags" addLabel="Add annotation" onAdd={addAnnotation}>
+        <datalist id="documentation-targets">{inventory.slice(0, 200).map(record => <option key={`${record.scope}:${record.id}`} value={record.id}>{String(record.values.name)} / {record.scope}</option>)}</datalist>
         {docs.annotations.map((annotation) => <div key={annotation.id} className="grid gap-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2 sm:grid-cols-[auto_1fr_auto]">
           <Input aria-label="Annotation tag" value={annotation.tag ?? ""} placeholder="TAG" onChange={(e) => update<DocumentationAnnotation>("annotations", annotation.id, { tag: e.target.value })} className="w-24" />
           <Input aria-label="Annotation text" value={annotation.text} onChange={(e) => update<DocumentationAnnotation>("annotations", annotation.id, { text: e.target.value })} />
           <Button variant="danger" size="sm" onClick={() => remove("annotations", annotation.id)}>Delete</Button>
+          <Select aria-label="Annotation view" value={annotation.viewId ?? ""} onChange={event => update<DocumentationAnnotation>("annotations", annotation.id, { viewId: event.target.value || undefined })}><option value="">All views</option>{docs.views.map(view => <option key={view.id} value={view.id}>{view.name}</option>)}</Select>
+          <Input aria-label="Annotation model target" list="documentation-targets" placeholder="Optional model target ID" value={annotation.targetId ?? ""} onChange={event => update<DocumentationAnnotation>("annotations", annotation.id, { targetId: event.target.value || undefined })} />
         </div>)}
       </DocSection>
       <DocSection title="Schedules" addLabel="Add schedule" onAdd={addSchedule}>
-        {docs.schedules.map((schedule) => <div key={schedule.id} className="grid gap-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2 sm:grid-cols-[1fr_auto_1fr_auto]">
-          <Input aria-label="Schedule name" value={schedule.name} onChange={(e) => update<DocumentationSchedule>("schedules", schedule.id, { name: e.target.value })} />
-          <Select aria-label="Schedule category" value={schedule.category} onChange={(e) => update<DocumentationSchedule>("schedules", schedule.id, { category: e.target.value as DocumentationSchedule["category"] })}><option value="objects">Objects</option><option value="rooms">Rooms</option><option value="furniture">Furniture</option><option value="levels">Levels</option><option value="mep">MEP</option></Select>
-          <Input aria-label="Schedule fields" value={schedule.fields.join(", ")} onChange={(e) => update<DocumentationSchedule>("schedules", schedule.id, { fields: e.target.value.split(",").map((field) => field.trim()).filter(Boolean) })} />
-          <Button variant="danger" size="sm" onClick={() => remove("schedules", schedule.id)}>Delete</Button>
-        </div>)}
+        <p className="text-[11px] text-slate-500">Fields: {SCHEDULE_FIELDS.join(", ")}. Family values also accept TypeParameter:key and InstanceParameter:key. Quantities, lengths, areas, volumes and rated power sum when grouping; other differing values show “varies”.</p>
+        {docs.schedules.map(schedule => <LiveScheduleEditor key={schedule.id} design={design} schedule={schedule} inventory={inventory} stem={stem} update={patch => update<DocumentationSchedule>("schedules", schedule.id, patch)} remove={() => remove("schedules", schedule.id)} />)}
       </DocSection>
       <DocSection title="Revisions" addLabel="Add revision" onAdd={addRevision}>
         {docs.revisions.map((revision) => <div key={revision.id} className="grid gap-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2 sm:grid-cols-[auto_auto_1fr_auto_auto]">
@@ -223,6 +241,50 @@ function DocumentationEditor({
       </DocSection>
     </div>
   );
+}
+
+function LiveScheduleEditor({ design, schedule, inventory, stem, update, remove }: {
+  design: Design;
+  schedule: DocumentationSchedule;
+  inventory: ReturnType<typeof documentationInventory>;
+  stem: string;
+  update: (patch: Partial<DocumentationSchedule>) => void;
+  remove: () => void;
+}) {
+  const [fieldText, setFieldText] = useState(schedule.fields.join(", "));
+  useEffect(() => setFieldText(schedule.fields.join(", ")), [schedule.fields]);
+  const result = useMemo(() => buildDocumentationSchedule(design, schedule, inventory), [design, schedule, inventory]);
+  const filters = schedule.filters ?? [];
+  const filterPatch = (index: number, patch: Partial<NonNullable<DocumentationSchedule["filters"]>[number]>) => update({ filters: filters.map((filter, position) => position === index ? { ...filter, ...patch } : filter) });
+  const fileName = `${stem}-${schedule.name.replace(/[^\w-]+/g, "-").toLowerCase() || "schedule"}`;
+  return <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2">
+    <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr_auto]">
+      <Input aria-label="Schedule name" value={schedule.name} onChange={event => update({ name: event.target.value })} />
+      <Select aria-label="Schedule category" value={schedule.category} onChange={event => update({ category: event.target.value as DocumentationSchedule["category"] })}><option value="objects">All objects</option><option value="rooms">Rooms</option><option value="furniture">Furniture</option><option value="levels">Levels</option><option value="mep">MEP</option></Select>
+      <Input aria-label="Schedule fields" value={fieldText} placeholder="Name, Quantity" onChange={event => setFieldText(event.target.value)} onBlur={() => update({ fields: fieldText.split(",").map(field => field.trim()).filter(Boolean) })} />
+      <Button variant="danger" size="sm" onClick={remove}>Delete</Button>
+    </div>
+    <div className="grid gap-2 sm:grid-cols-3">
+      <Input label="Sort field" value={schedule.sortField ?? ""} placeholder="Name" onChange={event => update({ sortField: event.target.value || undefined })} />
+      <Select label="Sort direction" value={schedule.sortDirection ?? "asc"} onChange={event => update({ sortDirection: event.target.value as "asc" | "desc" })}><option value="asc">Ascending</option><option value="desc">Descending</option></Select>
+      <Input label="Group by field" value={schedule.groupBy ?? ""} placeholder="No grouping" onChange={event => update({ groupBy: event.target.value || undefined })} />
+    </div>
+    {filters.map((filter, index) => <div key={index} className="grid gap-2 sm:grid-cols-[1fr_auto_1fr_auto]">
+      <Input aria-label={`Filter ${index + 1} field`} value={filter.field} placeholder="Category" onChange={event => filterPatch(index, { field: event.target.value })} />
+      <Select aria-label={`Filter ${index + 1} operator`} value={filter.operator} onChange={event => filterPatch(index, { operator: event.target.value as NonNullable<DocumentationSchedule["filters"]>[number]["operator"] })}><option value="contains">Contains</option><option value="equals">Equals</option><option value="greater-than">Greater than</option><option value="less-than">Less than</option></Select>
+      <Input aria-label={`Filter ${index + 1} value`} value={filter.value} onChange={event => filterPatch(index, { value: event.target.value })} />
+      <Button size="sm" variant="danger" onClick={() => update({ filters: filters.filter((_, position) => position !== index) })}>Remove</Button>
+    </div>)}
+    <div className="flex flex-wrap items-center gap-2">
+      <Button size="sm" variant="outline" onClick={() => update({ filters: [...filters, { field: "Name", operator: "contains", value: "" }] })}>Add filter</Button>
+      <Button size="sm" variant="secondary" disabled={!result.fields.length} onClick={() => download(`${fileName}.csv`, documentationScheduleCsv(result), "text/csv;charset=utf-8")}>Download CSV</Button>
+      <Button size="sm" variant="outline" onClick={() => download(`${fileName}.json`, JSON.stringify({ schedule, result }, null, 2), "application/json")}>Download JSON</Button>
+      <span className="text-xs text-slate-500">{result.sourceCount} source records / {result.rows.length} rows</span>
+    </div>
+    {result.warnings.map(warning => <p key={warning} className="text-xs text-amber-300">{warning}</p>)}
+    <div className="max-h-52 overflow-auto"><table className="w-full text-left text-xs"><thead><tr>{result.fields.map((field, index) => <th key={`${field}:${index}`} className="whitespace-nowrap p-1 text-slate-400">{field}</th>)}</tr></thead><tbody>{result.rows.slice(0, 12).map(row => <tr key={row.id}>{row.cells.map((cell, index) => <td key={index} className="max-w-48 truncate border-t border-slate-800 p-1 text-slate-300" title={scheduleCellText(cell)}>{scheduleCellText(cell) || "—"}</td>)}</tr>)}</tbody></table></div>
+    {result.rows.length > 12 && <p className="text-[11px] text-slate-500">First 12 rows shown. CSV and JSON include all rows.</p>}
+  </div>;
 }
 
 function DocSection({ title, addLabel, onAdd, children }: { title: string; addLabel: string; onAdd: () => void; children: React.ReactNode }) {

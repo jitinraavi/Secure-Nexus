@@ -578,6 +578,8 @@ export interface DocumentationSheet {
   name: string;
   viewIds: string[];
   titleBlock?: string;
+  scheduleIds?: string[];
+  revisionIds?: string[];
 }
 
 export interface DocumentationRevision {
@@ -593,6 +595,7 @@ export interface DocumentationAnnotation {
   text: string;
   tag?: string;
   viewId?: string;
+  targetId?: string;
   x?: number;
   z?: number;
 }
@@ -602,6 +605,10 @@ export interface DocumentationSchedule {
   name: string;
   fields: string[];
   category: "rooms" | "furniture" | "levels" | "mep" | "objects";
+  filters?: { field: string; operator: "contains" | "equals" | "greater-than" | "less-than"; value: string }[];
+  sortField?: string;
+  sortDirection?: "asc" | "desc";
+  groupBy?: string;
 }
 
 export interface DocumentationMetadata {
