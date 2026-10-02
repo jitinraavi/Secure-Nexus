@@ -255,6 +255,20 @@ if (!projectCols.includes("revision")) {
 export type Db = typeof raw;
 export const db: Db = raw;
 
+/** Synchronous SQLite transaction for atomic revision and operation-log writes. */
+export function withTransaction<T>(work: () => T): T {
+  raw.exec("BEGIN IMMEDIATE");
+  try {
+    const result = work();
+    raw.exec("COMMIT");
+    return result;
+  } catch (error) {
+    raw.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export function now(): number {
   return Math.floor(Date.now() / 1000);
 }
+

@@ -25,6 +25,8 @@ import { TeamCollaborationPanel } from "../components/TeamCollaborationPanel";
 import { PerformancePanel } from "../components/PerformancePanel";
 import { VisualizationControls } from "../components/VisualizationControls";
 import { visualizationSettings } from "../lib/visualization";
+import { useAuth } from "../auth";
+import { clearPendingDraft, readPendingDraft, storePendingDraft, type PendingDraft } from "../lib/offlineDraft";
 
 const Canvas3D = lazy(() => import("../editor/Canvas3D").then((module) => ({ default: module.Canvas3D })));
 const CommunityEditor = lazy(() => import("./CommunityEditor").then((module) => ({ default: module.CommunityEditor })));
@@ -53,6 +55,9 @@ function landDimensionText(c: NonNullable<Design["community"]>): string {
 export function Editor() {
   const { id } = useParams<{ id: string }>();
   const toast = useToast();
+  const { user } = useAuth();
+  const [pendingDraft, setPendingDraft] = useState<PendingDraft | null>(null);
+  const [projectRole, setProjectRole] = useState<"owner" | "editor" | "viewer">("viewer");
 
   const [name, setName] = useState("");
   const [design, setDesign] = useState<Design>(defaultDesign);
@@ -81,12 +86,22 @@ export function Editor() {
   const [mobilePanel, setMobilePanel] = useState<MobilePanel | null>(null);
 
   const saveTimer = useRef<number | null>(null);
+  const revisionRef = useRef(0);
+  const saveInFlight = useRef(false);
+  const editGeneration = useRef(0);
+  const pendingBaseRevision = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     try {
       const project = await getProject(id!);
       setName(project.name);
       setRevision(project.revision ?? 0);
+      revisionRef.current = project.revision ?? 0;
+      setRemoteRevision(null);
+      setProjectRole(project.role ?? "owner");
+      const recovered = user ? readPendingDraft(user.id, id!) : null;
+      setPendingDraft(recovered);
+      pendingBaseRevision.current = recovered?.baseRevision ?? null;
       const pt = (project as { projectType?: ProjectType }).projectType ?? "house";
       setProjectType(pt);
       const base = project.design
@@ -119,7 +134,7 @@ export function Editor() {
     } catch (err) {
       toast.push({ title: "Could not open project", description: err instanceof Error ? err.message : undefined, tone: "error" });
     }
-  }, [id, toast]);
+  }, [id, toast, user?.id]);
 
   useEffect(() => {
     void load();
@@ -129,34 +144,71 @@ export function Editor() {
   }, [load]);
 
   const scheduleSave = useCallback(
-    (d: Design) => {
+    (d: Design, recovery?: PendingDraft): void => {
+      if (projectRole === "viewer") return;
+      editGeneration.current += 1;
+      const generation = editGeneration.current;
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(async () => {
+      const attempt = async (): Promise<void> => {
+        if (generation !== editGeneration.current) return;
+        saveTimer.current = null;
+        if (saveInFlight.current) { saveTimer.current = window.setTimeout(() => void attempt(), 200); return; }
+        saveInFlight.current = true;
+        const baseRevision = recovery?.baseRevision ?? pendingBaseRevision.current ?? revisionRef.current;
+        const draft: PendingDraft = { design: d, name: recovery?.name ?? name, projectType: recovery?.projectType ?? projectType, baseRevision, savedAt: Date.now() };
+        if (user && !storePendingDraft(user.id, id!, draft)) {
+          toast.push({ title: "Browser recovery storage is unavailable", description: "Keep this tab open or download the local design before leaving.", tone: "error" });
+        }
         try {
           setSaving(true);
           const saved = await patchProject(id!, {
-            name,
-            projectType,
+            name: draft.name,
+            projectType: draft.projectType,
             widthMm: d.room.widthMm,
             depthMm: d.room.depthMm,
             designData: JSON.stringify(d),
-            baseRevision: revision,
+            baseRevision,
           });
           setRevision(saved.revision);
+          revisionRef.current = saved.revision;
+          pendingBaseRevision.current = null;
+          if (generation === editGeneration.current) {
+            setPendingDraft(null);
+            if (user) clearPendingDraft(user.id, id!);
+          }
           setLastSaved(Date.now());
         } catch (err) {
+          pendingBaseRevision.current = baseRevision;
+          if (generation === editGeneration.current) setPendingDraft(draft);
           toast.push({ title: "Could not save design", description: err instanceof Error ? err.message : undefined, tone: "error" });
         } finally {
+          saveInFlight.current = false;
           setSaving(false);
         }
-      }, 1200);
+      };
+      saveTimer.current = window.setTimeout(() => void attempt(), 1200);
     },
-    [id, name, revision, toast, projectType],
+    [id, name, toast, projectType, user?.id, projectRole],
   );
 
   const onCollaborationEvent = useCallback((event: CollaborationEvent) => {
-    if (event.type === "design.updated" && event.revision > revision) setRemoteRevision(event.revision);
-  }, [revision]);
+    if (["design.updated", "operation.applied"].includes(event.type) && event.actorId !== user?.id && event.revision > revisionRef.current) setRemoteRevision(event.revision);
+  }, [user?.id]);
+
+  const recoveryControls = (pendingDraft || remoteRevision) ? <div className="flex flex-wrap items-center gap-2 text-xs text-amber-200">
+    <span>{pendingDraft ? "Unsaved local design available." : "Remote design update available."}</span>
+    <Button size="sm" variant="outline" onClick={() => download("local-design.json", JSON.stringify(pendingDraft?.design ?? design, null, 2), "application/json")}>Download local</Button>
+    {pendingDraft && <Button size="sm" variant="secondary" disabled={saving || projectRole === "viewer"} onClick={() => {
+      setDesign(pendingDraft.design); setName(pendingDraft.name); setProjectType(pendingDraft.projectType);
+      scheduleSave(pendingDraft.design, pendingDraft);
+    }}>Retry original revision</Button>}
+    <Button size="sm" variant="ghost" disabled={saving} onClick={() => {
+      if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      editGeneration.current += 1;
+      if (user) clearPendingDraft(user.id, id!);
+      setPendingDraft(null); void load();
+    }}>Discard local & reload</Button>
+  </div> : null;
 
   const changeDesign = useCallback(
     (d: Design) => {
@@ -311,10 +363,16 @@ export function Editor() {
   const cameraPath = visualizationSettings(design.visualization).cameraPath ?? [];
 
   const onHistoryRestore = (state: { design: Design | null; projectType: ProjectType; widthMm: number; depthMm: number }) => {
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    editGeneration.current += 1;
+    pendingBaseRevision.current = null;
+    if (user) clearPendingDraft(user.id, id!);
+    setPendingDraft(null);
     const restored = state.design ?? defaultDesign();
     setDesign({ ...restored, room: { ...restored.room, widthMm: state.widthMm, depthMm: state.depthMm } });
     setProjectType(state.projectType);
     setLastSaved(Date.now());
+    void load();
   };
 
   const catalogContent = (
@@ -485,6 +543,7 @@ export function Editor() {
            <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
            <TeamCollaborationPanel projectId={id!} />
            <PerformancePanel design={design} />
+           {recoveryControls}
            <Badge tone={residentialProject ? "emerald" : "cyan"}>
             {PROJECT_TYPE_LABELS[projectType] ?? projectType}
           </Badge>
@@ -529,6 +588,7 @@ export function Editor() {
            <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
            <TeamCollaborationPanel projectId={id!} />
            <PerformancePanel design={design} />
+           {recoveryControls}
            <Badge tone="amber">{INFRA_LABELS[infraKind]}</Badge>
         </div>
         <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner className="h-6 w-6 text-amber-300" /></div>}>
@@ -564,6 +624,7 @@ export function Editor() {
            <TeamCollaborationPanel projectId={id!} />
            <PerformancePanel design={design} />
           <Badge tone="slate">{design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} items</Badge>
+          {recoveryControls}
 
         <Button variant="secondary" size="sm" onClick={() => setCameraOpen(true)} disabled={!canUseCamera}>
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M9 3L7.3 5H4a2 2 0 00-2 2v11a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-3.3L15 3H9zm3 14a5 5 0 110-10 5 5 0 010 10zm0-8a3 3 0 100 6 3 3 0 000-6z" /></svg>
@@ -1026,3 +1087,4 @@ function CameraModal({
     </Modal>
   );
 }
+

@@ -2,10 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
 import { decryptAesGcm, deriveVaultKey, encryptAesGcm, randomId } from "../crypto.js";
-import { db, now } from "../db.js";
+import { db, now, withTransaction } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { canManageProject, canReadProject, canWriteProject, getProjectAccess } from "../projectAccess.js";
 import { collaborationItemId, emitProjectEvent, presenceSnapshot, replayProjectEvents, subscribeProject } from "../collaboration.js";
+import { conflictingDesignLock } from "../designLocks.js";
 
 const router = Router();
 const vaultKey = deriveVaultKey(MASTER_KEY);
@@ -69,10 +70,19 @@ router.get("/:projectId/events", (req: AuthedRequest, res) => {
   res.write(`event: ready\ndata: ${JSON.stringify({ projectId: req.params.projectId, role: access.role })}\n\n`);
   const unsubscribe = subscribeProject(req.params.projectId, req.user!.id, res);
   const requestedId = Number(req.get("Last-Event-ID") || req.query.after || 0);
-  replayProjectEvents(req.params.projectId, res, Number.isFinite(requestedId) ? requestedId : 0);
+  let lastEventId = replayProjectEvents(req.params.projectId, res, Number.isSafeInteger(requestedId) && requestedId >= 0 ? requestedId : 0);
   res.write(`event: presence\ndata: ${JSON.stringify(presenceSnapshot(req.params.projectId))}\n\n`);
-  const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 20_000);
-  req.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
+  const heartbeat = setInterval(() => {
+    if (!canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) { res.end(); return; }
+    res.write(": heartbeat\n\n");
+  }, 20_000);
+  // SQLite event-log polling delivers events produced by other workers sharing this DB.
+  const replay = setInterval(() => {
+    const session = resolveSession(req);
+    if (!session || session.status !== "active" || !canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) { res.end(); return; }
+    lastEventId = replayProjectEvents(req.params.projectId, res, lastEventId);
+  }, 2000);
+  res.on("close", () => { clearInterval(heartbeat); clearInterval(replay); unsubscribe(); });
 });
 
 router.get("/:projectId/presence", (req: AuthedRequest, res) => {
@@ -166,6 +176,7 @@ router.patch("/:projectId/members/:userId", asyncHandler(async (req: AuthedReque
   const result = db.prepare("UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?")
     .run(parsed.data.role, req.params.projectId, req.params.userId);
   if (!result.changes) { res.status(404).json({ error: "Project member not found" }); return; }
+  if (parsed.data.role === "viewer") db.prepare("DELETE FROM project_locks WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId);
   const project = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
   emitProjectEvent(req.params.projectId, req.user!.id, "member.updated", project.revision, { userId: req.params.userId, role: parsed.data.role });
   res.json({ ok: true });
@@ -175,6 +186,7 @@ router.delete("/:projectId/members/:userId", asyncHandler(async (req: AuthedRequ
   const access = getProjectAccess(req.params.projectId, req.user!.id);
   if (!canManageProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" }); return; }
   const result = db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId);
+  db.prepare("DELETE FROM project_locks WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId);
   if (!result.changes) { res.status(404).json({ error: "Project member not found" }); return; }
   const project = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
   emitProjectEvent(req.params.projectId, req.user!.id, "member.updated", project.revision, { userId: req.params.userId, removed: true });
@@ -248,16 +260,28 @@ function applyOperation(root: unknown, kind: "set" | "merge" | "delete", path: s
   for (let index = 0; index < path.length - 1; index += 1) {
     const key = path[index];
     const next = cursor[key];
-    if (!next || typeof next !== "object" || Array.isArray(next)) cursor[key] = {};
+    if (!next || typeof next !== "object") throw new Error("Operation parent path does not exist");
+    if (Array.isArray(cursor) && !/^(0|[1-9]\d*)$/.test(key)) throw new Error("Array path requires an index");
+    if (!Object.prototype.hasOwnProperty.call(cursor, key)) throw new Error("Operation parent path does not exist");
     cursor = cursor[key] as Record<string, unknown>;
   }
   const key = path[path.length - 1];
-  if (kind === "delete") delete cursor[key];
+  if (Array.isArray(cursor)) {
+    if (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= cursor.length) throw new Error("Array index is out of range");
+    if (kind === "delete") { cursor.splice(Number(key), 1); return cloned; }
+  }
+  if (kind === "delete") {
+    if (path.length === 1 && ["room", "furniture", "version"].includes(key)) throw new Error("Required design fields cannot be deleted");
+    delete cursor[key];
+  }
   else if (kind === "merge") {
     const current = cursor[key];
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Merge value must be an object");
     cursor[key] = { ...(current && typeof current === "object" && !Array.isArray(current) ? current as Record<string, unknown> : {}), ...(value as Record<string, unknown>) };
-  } else cursor[key] = value;
+  } else {
+    if (value === undefined) throw new Error("Set requires a value");
+    cursor[key] = value;
+  }
   return cloned;
 }
 
@@ -287,19 +311,28 @@ router.post("/:projectId/operations", asyncHandler(async (req: AuthedRequest, re
     return;
   }
   const serialized = JSON.stringify(next);
+  const lockedObject = conflictingDesignLock(req.params.projectId, req.user!.id, design, next);
+  if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
   if (serialized.length > 4_000_000) { res.status(413).json({ error: "Resulting design is too large" }); return; }
   const nextRevision = project.revision + 1;
+  const committed = withTransaction(() => {
   const updated = db.prepare("UPDATE projects SET design_data = ?, revision = ?, updated_at = ? WHERE id = ? AND revision = ?")
     .run(encryptProjectText(serialized, access.ownerId), nextRevision, now(), req.params.projectId, project.revision);
   if (!updated.changes) {
-    const latest = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
-    res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision });
-    return;
+    return false;
   }
   db.prepare("INSERT INTO project_operations (project_id, user_id, operation_id, base_revision, result_revision, kind, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .run(req.params.projectId, req.user!.id, parsed.data.operationId, project.revision, nextRevision, parsed.data.kind, JSON.stringify({ path: parsed.data.path }), now());
   emitProjectEvent(req.params.projectId, req.user!.id, "operation.applied", nextRevision, { operationId: parsed.data.operationId, kind: parsed.data.kind, path: parsed.data.path });
+  return true;
+  });
+  if (!committed) {
+    const latest = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
+    res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision });
+    return;
+  }
   res.status(201).json({ ok: true, revision: nextRevision, duplicate: false });
 }));
 
 export default router;
+

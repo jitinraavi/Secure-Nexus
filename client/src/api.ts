@@ -343,6 +343,7 @@ export interface CollaborationEvent {
   type: string;
   revision: number;
   createdAt: number;
+  actorId?: string;
 }
 
 export function subscribeToProject(
@@ -352,8 +353,14 @@ export function subscribeToProject(
   onPresence?: (presence: CollaborationPresence) => void,
 ) {
   const source = new EventSource(`/api/collaboration/${encodeURIComponent(id)}/events`);
+  let lastEventId = 0;
   source.addEventListener("ready", () => onStatus("connected"));
-  source.addEventListener("collaboration", (event) => onEvent(JSON.parse((event as MessageEvent).data) as CollaborationEvent));
+  source.addEventListener("collaboration", (event) => {
+    const item = JSON.parse((event as MessageEvent).data) as CollaborationEvent;
+    if (item.id <= lastEventId) return;
+    lastEventId = item.id;
+    onEvent(item);
+  });
   source.addEventListener("presence", (event) => onPresence?.(JSON.parse((event as MessageEvent).data) as CollaborationPresence));
   source.onerror = () => onStatus("disconnected");
   return () => source.close();
@@ -533,3 +540,4 @@ export function confirmDemoPayment(paymentId: string) {
 export function getPayment(id: string): Promise<{ payment: PaymentRecord }> {
   return request<{ payment: PaymentRecord }>(`/api/payments/${id}`, { method: "GET" });
 }
+

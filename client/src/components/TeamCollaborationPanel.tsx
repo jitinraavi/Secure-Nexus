@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   addProjectMember,
+  acquireProjectLock,
+  releaseProjectLock,
+  subscribeToProject,
   createCollaborationItem,
   listCollaborationItems,
   listProjectLocks,
@@ -25,6 +28,8 @@ export function TeamCollaborationPanel({ projectId }: { projectId: string }) {
   const [kind, setKind] = useState<"comment" | "issue">("comment");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [objectId, setObjectId] = useState("__project__");
+  const [presenceCount, setPresenceCount] = useState(0);
 
   const load = async () => {
     const [memberResult, nextItems, nextLocks] = await Promise.all([
@@ -41,6 +46,11 @@ export function TeamCollaborationPanel({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (!open) return;
     void load().catch((error) => toast.push({ title: "Could not load collaboration", description: error instanceof Error ? error.message : undefined, tone: "error" }));
+    const unsubscribe = subscribeToProject(projectId, () => {
+      void load().catch(() => {});
+    }, () => {}, presence => setPresenceCount(presence.count));
+    const timer = window.setInterval(() => void load().catch(() => {}), 15000);
+    return () => { unsubscribe(); window.clearInterval(timer); };
   }, [open, projectId]);
 
   const activeLocks = useMemo(() => locks.filter((lock) => lock.expiresAt * 1000 > Date.now()), [locks]);
@@ -100,6 +110,12 @@ export function TeamCollaborationPanel({ projectId }: { projectId: string }) {
 
         <section>
           <div className="flex items-center justify-between"><p className="gw-kicker">Presence & object locks</p><Badge tone={activeLocks.length ? "amber" : "slate"}>{activeLocks.length} active locks</Badge></div>
+          <p className="mt-2 text-xs text-slate-400">{presenceCount} connected collaborator(s)</p>
+          {currentRole !== "viewer" && <div className="mt-2 flex flex-wrap gap-2">
+            <Input label="Object ID (or __project__)" value={objectId} maxLength={200} onChange={e => setObjectId(e.target.value)} />
+            <Button size="sm" disabled={!objectId.trim()} onClick={() => void acquireProjectLock(projectId, objectId.trim(), 90).then(load).catch(error => toast.push({ title: "Lock failed", description: error instanceof Error ? error.message : undefined, tone: "error" }))}>Lock / renew for 90s</Button>
+            <Button size="sm" variant="ghost" disabled={!objectId.trim()} onClick={() => void releaseProjectLock(projectId, objectId.trim()).then(load).catch(error => toast.push({ title: "Unlock failed", description: error instanceof Error ? error.message : undefined, tone: "error" }))}>Release</Button>
+          </div>}
           <div className="mt-2 space-y-1 text-xs text-slate-400">
             {activeLocks.length === 0 ? <p>No active object locks.</p> : activeLocks.map((lock) => <p key={lock.objectId}>{lock.objectId} · user {lock.userId.slice(0, 8)} · expires {new Date(lock.expiresAt * 1000).toLocaleTimeString()}</p>)}
           </div>
@@ -116,7 +132,7 @@ export function TeamCollaborationPanel({ projectId }: { projectId: string }) {
             {items.map((item) => <div key={item.id} className="rounded-lg border border-slate-800 bg-slate-950/40 p-2">
               <div className="flex items-center gap-2"><Badge tone={item.kind === "issue" ? "amber" : "cyan"}>{item.kind}</Badge><Badge tone={item.status === "resolved" ? "emerald" : "slate"}>{item.status}</Badge></div>
               <p className="mt-1 text-sm text-slate-200">{item.body || "Encrypted collaboration item"}</p>
-              {item.kind === "issue" && currentRole !== "viewer" && <Button className="mt-2" size="sm" variant="ghost" onClick={() => void updateCollaborationItem(projectId, item.id, item.status === "resolved" ? "open" : "resolved").then(load)}>{item.status === "resolved" ? "Reopen" : "Resolve"}</Button>}
+              {item.kind === "issue" && currentRole !== "viewer" && <Button className="mt-2" size="sm" variant="ghost" onClick={() => void updateCollaborationItem(projectId, item.id, item.status === "resolved" ? "open" : "resolved").then(load).catch(error => toast.push({ title: "Issue update failed", description: error instanceof Error ? error.message : undefined, tone: "error" }))}>{item.status === "resolved" ? "Reopen" : "Resolve"}</Button>}
             </div>)}
           </div>
         </section>
@@ -124,3 +140,4 @@ export function TeamCollaborationPanel({ projectId }: { projectId: string }) {
     </Modal>
   </>;
 }
+

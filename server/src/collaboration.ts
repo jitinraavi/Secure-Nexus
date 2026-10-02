@@ -20,8 +20,11 @@ export type CollaborationType =
   | "member.updated";
 
 function writeEvent(response: Response, event: string, data: unknown, id?: number) {
+  if (response.destroyed || response.writableEnded) return;
+  try {
   if (id !== undefined) response.write(`id: ${id}\n`);
   response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  } catch { response.end(); }
 }
 
 function broadcast(projectId: string, event: string, data: unknown, id?: number) {
@@ -74,13 +77,15 @@ export function subscribeProject(projectId: string, userId: string, response: Re
 
 export function replayProjectEvents(projectId: string, response: Response, afterId: number) {
   const rows = db.prepare(
-    "SELECT id, user_id, event_type, revision, created_at FROM project_collaboration_events WHERE project_id = ? AND id > ? ORDER BY id ASC",
+    "SELECT id, user_id, event_type, revision, created_at FROM project_collaboration_events WHERE project_id = ? AND id > ? ORDER BY id ASC LIMIT 500",
   ).all(projectId, afterId) as { id: number; user_id: string; event_type: string; revision: number; created_at: number }[];
   for (const row of rows) {
     writeEvent(response, "collaboration", { id: row.id, projectId, type: row.event_type, revision: row.revision, createdAt: row.created_at, actorId: row.user_id }, row.id);
   }
+  return rows[rows.length - 1]?.id ?? afterId;
 }
 
 export function collaborationItemId() {
   return randomId();
 }
+

@@ -7,6 +7,7 @@ import { db, now } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { z } from "zod";
 import { emitProjectEvent } from "../collaboration.js";
+import { conflictingDesignLock } from "../designLocks.js";
 import { canManageProject, canReadProject, canWriteProject, getProjectAccess } from "../projectAccess.js";
 
 const router = Router();
@@ -245,6 +246,10 @@ router.patch(
         return;
       }
       designPayload = encryptForUser(parsed.data.designData, access.ownerId);
+      const stored = db.prepare("SELECT design_data FROM projects WHERE id = ?").get(req.params.id) as { design_data: string | null };
+      const before: unknown = stored.design_data ? JSON.parse(decryptForUser(stored.design_data, access.ownerId)) : null;
+      const lockedObject = conflictingDesignLock(req.params.id, req.user!.id, before, JSON.parse(parsed.data.designData));
+      if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
     }
 
     const fields: string[] = [];
@@ -353,6 +358,10 @@ router.post("/:id/revisions/:revisionId/restore", asyncHandler(async (req: Authe
     return;
   }
   // Keep the encrypted payload intact; it remains bound to the project owner's vault AAD.
+  const before = project.design_data ? JSON.parse(decryptForUser(project.design_data, project.ownerId)) : null;
+  const restored = JSON.parse(decryptForUser(revision.design_data, project.ownerId)) as unknown;
+  const lockedObject = conflictingDesignLock(project.id, req.user!.id, before, restored);
+  if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
   db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
     .run(revision.design_data, revision.project_type, revision.width_mm, revision.depth_mm, now(), project.id);
   const nextRevision = project.revision + 1;
@@ -523,3 +532,4 @@ router.delete(
 // Kept for reference: request typing helper
 export type { Request };
 export default router;
+
