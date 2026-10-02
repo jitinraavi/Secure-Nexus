@@ -78,7 +78,9 @@ export function sceneAllocationBytes(root: THREE.Object3D): { geometryBytes: num
   const count = (attribute: THREE.BufferAttribute | THREE.InterleavedBufferAttribute) => { const buffer = attribute instanceof THREE.InterleavedBufferAttribute ? attribute.data.array.buffer : attribute.array.buffer; if (!arrays.has(buffer)) { arrays.add(buffer); geometryBytes += buffer.byteLength; } };
   root.traverse(object => {
     if (!(object instanceof THREE.Mesh)) return;
-    for (const attribute of Object.values(object.geometry.attributes)) count(attribute);
+    for (const attribute of Object.values(object.geometry.attributes)) {
+      if (attribute instanceof THREE.BufferAttribute || attribute instanceof THREE.InterleavedBufferAttribute) count(attribute);
+    }
     if (object.geometry.index) count(object.geometry.index);
     if (object instanceof THREE.InstancedMesh) { count(object.instanceMatrix); if (object.instanceColor) count(object.instanceColor); }
     for (const material of Array.isArray(object.material) ? object.material : [object.material]) for (const value of Object.values(material)) if (value instanceof THREE.Texture) textures.add(value);
