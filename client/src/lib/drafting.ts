@@ -330,15 +330,59 @@ export function draftConstraintIssues(drafts: DraftElement[]): DraftConstraintIs
 /** Small, deterministic CAD edits./** Small, deterministic CAD edits. Missing optional metadata is never changed. */
 export function applyDraftOperation(
   draft: DraftElement,
-  operation: "trim" | "extend" | "offset" | "rotate" | "mirror",
+  operation: "trim" | "extend" | "offset" | "rotate" | "mirror" | "fillet" | "chamfer",
 ): Partial<DraftElement> {
-  const linear = draft.kind === "line" || draft.kind === "dimension";
+  const linear = draft.kind === "line" || draft.kind === "dimension" || draft.kind === "polyline" || draft.kind === "spline";
   const step = Math.max(Math.min(draft.w || draft.d, 1), 0.1);
-  if (operation === "trim") return linear ? { w: Math.max(draft.w - step, 0.1) } : { w: Math.max(draft.w - step, 0.1), d: Math.max(draft.d - step, 0.1) };
-  if (operation === "extend") return linear ? { w: draft.w + step } : { w: draft.w + step, d: draft.d + step };
-  if (operation === "offset") return linear ? { x: draft.x + step } : { w: draft.w + step * 2, d: draft.d + step * 2 };
-  if (operation === "rotate") return { rotationDeg: (draft.rotationDeg + 90) % 360 };
-  return { x: -draft.x, rotationDeg: (360 - draft.rotationDeg) % 360 };
+  const path = draft.points?.map((point) => ({ ...point }));
+
+  if (operation === "trim") {
+    if (path && path.length > 2) return { points: path.slice(0, -1) };
+    return linear ? { w: Math.max(draft.w - step, 0.1) } : { w: Math.max(draft.w - step, 0.1), d: Math.max(draft.d - step, 0.1) };
+  }
+  if (operation === "extend") {
+    if (path && path.length >= 2) {
+      const a = path[path.length - 2];
+      const b = path[path.length - 1];
+      const length = Math.max(Math.hypot(b.x - a.x, b.z - a.z), 0.001);
+      path.push({ x: b.x + ((b.x - a.x) / length) * step, z: b.z + ((b.z - a.z) / length) * step });
+      return { points: path };
+    }
+    return linear ? { w: draft.w + step } : { w: draft.w + step, d: draft.d + step };
+  }
+  if (operation === "offset") {
+    if (path && path.length >= 2) {
+      const a = path[0];
+      const b = path[path.length - 1];
+      const length = Math.max(Math.hypot(b.x - a.x, b.z - a.z), 0.001);
+      const nx = -(b.z - a.z) / length;
+      const nz = (b.x - a.x) / length;
+      return { points: path.map((point) => ({ x: point.x + nx * step, z: point.z + nz * step })) };
+    }
+    return linear ? { x: draft.x + step } : { w: draft.w + step * 2, d: draft.d + step * 2 };
+  }
+  if (operation === "rotate") return { rotationDeg: normalizeDegrees(draft.rotationDeg + 90) };
+  if (operation === "mirror") {
+    return {
+      x: -draft.x,
+      rotationDeg: normalizeDegrees(360 - draft.rotationDeg),
+      ...(path ? { points: path.map((point) => ({ x: -point.x, z: point.z })) } : {}),
+    };
+  }
+  if (operation === "fillet") {
+    const radius = Math.max(Math.min(draft.radiusM ?? step * 0.5, Math.max(draft.w, draft.d) / 2), 0.05);
+    return { radiusM: radius };
+  }
+  const bevel = Math.max(Math.min(step * 0.35, Math.max(draft.w, draft.d) / 3), 0.05);
+  if (path && path.length >= 2) {
+    const next = path.slice();
+    const first = next[0];
+    const last = next[next.length - 1];
+    next[0] = { x: first.x + bevel, z: first.z + bevel };
+    next[next.length - 1] = { x: last.x - bevel, z: last.z - bevel };
+    return { points: next, radiusM: 0 };
+  }
+  return { w: Math.max(draft.w - bevel, 0.1), d: Math.max(draft.d - bevel, 0.1), radiusM: 0 };
 }
 
 export function patchDraftGrip(draft: DraftElement, grip: DraftGrip, delta: number): Partial<DraftElement> {
