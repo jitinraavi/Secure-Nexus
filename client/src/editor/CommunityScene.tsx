@@ -237,6 +237,24 @@ function buildDraftMesh(draft: DraftElement, levels: BuildingLevel[] = [], selec
       new THREE.LineBasicMaterial({ color: draft.color, linewidth: 2 }),
     );
     g.add(line);
+  } else if (draft.kind === "polyline" || draft.kind === "spline") {
+    const stored = draft.points?.length ? draft.points : [{ x: -draft.w / 2, z: 0 }, { x: draft.w / 2, z: 0 }];
+    const source = stored.map((point) => new THREE.Vector3(point.x, 0.12, point.z));
+    const points = draft.kind === "spline" && source.length >= 3
+      ? new THREE.CatmullRomCurve3(source, false, "centripetal").getPoints(Math.max(24, source.length * 8))
+      : source;
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({ color: draft.color }),
+    );
+    g.add(line);
+  } else if (draft.kind === "arc") {
+    const radius = Math.max(draft.radiusM ?? Math.max(draft.w, draft.d) / 2, 0.05);
+    const start = ((draft.startAngleDeg ?? 0) * Math.PI) / 180;
+    const end = ((draft.endAngleDeg ?? 180) * Math.PI) / 180;
+    const curve = new THREE.EllipseCurve(0, 0, radius, radius, start, end, false, 0);
+    const points = curve.getPoints(48).map((point) => new THREE.Vector3(point.x, 0.12, point.y));
+    g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: draft.color })));
   } else if (draft.kind === "dimension") {
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
@@ -964,7 +982,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
 
     let drag: { id: string; kind: string; node: THREE.Object3D; startX: number; startZ: number; grabX: number; grabZ: number; moved: boolean } | null = null;
     let draw: { kind: DraftElementKind; startX: number; startZ: number; endX: number; endZ: number; rotationDeg: number } | null = null;
-    const drawTools = new Set(["line", "rectangle", "circle", "dimension", "wall", "slab", "column", "roof"]);
+    const drawTools = new Set(["line", "polyline", "arc", "spline", "rectangle", "circle", "dimension", "wall", "slab", "column", "roof"]);
 
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
@@ -1059,11 +1077,14 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
           kind: draw.kind,
           x: (draw.startX + draw.endX) / 2,
           z: (draw.startZ + draw.endZ) / 2,
-          w: draw.kind === "circle" ? Math.max(width, depth) : width,
-          d: draw.kind === "line" || draw.kind === "dimension" ? 0.1 : draw.kind === "circle" ? Math.max(width, depth) : draw.kind === "wall" ? 0.2 : depth,
+          w: draw.kind === "circle" || draw.kind === "arc" ? Math.max(width, depth) : width,
+          d: draw.kind === "line" || draw.kind === "polyline" || draw.kind === "spline" || draw.kind === "dimension" ? 0.1 : draw.kind === "circle" || draw.kind === "arc" ? Math.max(width, depth) : draw.kind === "wall" ? 0.2 : depth,
           h: draw.kind === "wall" ? 2.7 : draw.kind === "column" ? 3 : draw.kind === "slab" || draw.kind === "roof" ? 0.25 : undefined,
           rotationDeg: draw.kind === "line" || draw.kind === "dimension" ? constrained.rotationDeg : 0,
           color: "#d6a84a",
+          ...(draw.kind === "polyline" ? { points: [{ x: -width / 2, z: 0 }, { x: width / 2, z: 0 }] } : {}),
+          ...(draw.kind === "spline" ? { points: [{ x: -width / 2, z: 0 }, { x: 0, z: Math.max(depth, width * 0.2) }, { x: width / 2, z: 0 }] } : {}),
+          ...(draw.kind === "arc" ? { radiusM: Math.max(Math.max(width, depth) / 2, 0.1), startAngleDeg: 0, endAngleDeg: 180 } : {}),
           family: ["wall", "slab", "column", "roof"].includes(draw.kind) ? {
             ...familyMetadata(familyForId(`${draw.kind}-basic`)!),
             levelId: current.activeLevelId,
