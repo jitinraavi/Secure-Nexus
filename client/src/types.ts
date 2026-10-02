@@ -334,7 +334,13 @@ export interface LandSite {
 
 export type TerrainProfileAxis = "x" | "z";
 
-/** Local terrain controls. The elevation surface is deterministic when no DEM is available. */
+export interface TerrainSample {
+  x: number;
+  z: number;
+  elevationM: number;
+}
+
+/** Local terrain controls. Survey samples override the deterministic fallback surface. */
 export interface TerrainSettings {
   enabled: boolean;
   baseElevationM: number;
@@ -343,6 +349,11 @@ export interface TerrainSettings {
   contoursVisible: boolean;
   profileAxis: TerrainProfileAxis;
   profileOffsetM: number;
+  source?: "procedural" | "survey";
+  projectCrs?: string;
+  localOriginEasting?: number;
+  localOriginNorthing?: number;
+  samples?: TerrainSample[];
 }
 
 export interface UndergroundParking {
