@@ -20,6 +20,7 @@ export function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
+  const [organizationId, setOrganizationId] = useState("");
 
   const finishLogin = async (needsTwoFactor?: boolean) => {
     if (needsTwoFactor) {
@@ -236,6 +237,12 @@ export function Login() {
             </form>
           )}
 
+          <details className="mt-6 space-y-3 border-t border-slate-700 pt-4">
+            <summary className="cursor-pointer text-sm text-slate-300">Organization sign-in</summary>
+            <Input label="Organization ID" value={organizationId} maxLength={120} onChange={event => setOrganizationId(event.target.value)} />
+            <Button type="button" variant="secondary" disabled={!organizationId.trim() || loading} onClick={() => window.location.assign(`/api/sso/${encodeURIComponent(organizationId.trim())}/start`)}>Continue with organization SSO</Button>
+            <p className="text-xs text-slate-400">Use the ID supplied by your administrator. Link your existing account from Organizations before your first SSO sign-in.</p>
+          </details>
           <p className="mt-6 text-center text-sm text-slate-400">
             No account yet?{" "}
             <Link to="/signup" className="font-semibold text-emerald-400 hover:text-emerald-300">
@@ -250,3 +257,4 @@ export function Login() {
     </div>
   );
 }
+

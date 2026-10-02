@@ -360,6 +360,7 @@ export function subscribeToProject(
 ) {
   const source = new EventSource(`/api/collaboration/${encodeURIComponent(id)}/events`);
   let lastEventId = 0;
+  const distributedEvents = new Set<string>();
   source.addEventListener("ready", () => onStatus("connected"));
   source.addEventListener("collaboration", (event) => {
     const item = JSON.parse((event as MessageEvent).data) as CollaborationEvent;
@@ -368,6 +369,14 @@ export function subscribeToProject(
     onEvent(item);
   });
   source.addEventListener("presence", (event) => onPresence?.(JSON.parse((event as MessageEvent).data) as CollaborationPresence));
+  source.addEventListener("distributed", (event) => {
+    const item = JSON.parse((event as MessageEvent).data) as Omit<CollaborationEvent, "id"> & { eventId: string };
+    if (distributedEvents.has(item.eventId)) return;
+    distributedEvents.add(item.eventId);
+    if (distributedEvents.size > 2000) distributedEvents.delete(distributedEvents.values().next().value!);
+    onEvent({ ...item, id: 0 });
+  });
+  source.addEventListener("transport-status", () => onStatus("disconnected"));
   source.onerror = () => onStatus("disconnected");
   return () => source.close();
 }
