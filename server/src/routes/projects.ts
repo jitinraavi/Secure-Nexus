@@ -303,8 +303,8 @@ router.get("/:id/revisions", (req: AuthedRequest, res) => {
     return;
   }
   const rows = db.prepare(
-    "SELECT id, name, project_type, width_mm, depth_mm, created_at FROM project_revisions WHERE project_id = ? AND user_id = ? ORDER BY created_at DESC",
-  ).all(req.params.id, req.user!.id) as { id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number }[];
+    "SELECT id, name, project_type, width_mm, depth_mm, created_at FROM project_revisions WHERE project_id = ? ORDER BY created_at DESC",
+  ).all(req.params.id) as { id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number }[];
   res.json({ revisions: rows.map(revisionResponse) });
 });
 
@@ -352,7 +352,7 @@ router.post("/:id/revisions/:revisionId/restore", asyncHandler(async (req: Authe
     res.status(access && !canWriteProject(access) ? 403 : 404).json({ error: access && !canWriteProject(access) ? "Editor access required" : "Project or snapshot not found" });
     return;
   }
-  // Keep the encrypted payload intact; it remains bound to this user's vault AAD.
+  // Keep the encrypted payload intact; it remains bound to the project owner's vault AAD.
   db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
     .run(revision.design_data, revision.project_type, revision.width_mm, revision.depth_mm, now(), project.id);
   const nextRevision = project.revision + 1;
