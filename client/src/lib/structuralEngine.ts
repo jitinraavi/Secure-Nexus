@@ -39,6 +39,8 @@ export interface MemberDesignScreen {
   utilization: number;
   status: "pass" | "review";
   reinforcementRatio?: number;
+  demandKNm?: number;
+  capacityKNm?: number;
 }
 
 export interface FoundationDesignScreen {
@@ -101,14 +103,16 @@ export function buildStructuralFrameModel(design: CommunityDesign): StructuralFr
       const top = addNode({ id: `${draft.id}_top`, x: draft.x, y: base.y + height, z: draft.z, kind: "column-top" });
       members.push({ id: draft.id, kind: "column", startNodeId: base.id, endNodeId: top.id, levelId: level.id, widthM: Math.max(draft.w, 0.1), depthM: Math.max(draft.d, 0.1), lengthM: height, sourceId: draft.id });
     } else {
-      const start = addNode({ id: `${draft.id}_start`, x: draft.x - draft.w / 2, y: level.elevationM + (draft.elevationM ?? 0), z: draft.z, kind: "grid-intersection" });
-      const end = addNode({ id: `${draft.id}_end`, x: draft.x + draft.w / 2, y: start.y, z: draft.z, kind: "grid-intersection" });
+      const angle = draft.rotationDeg * Math.PI / 180;
+      const dx = Math.cos(angle) * draft.w / 2, dz = -Math.sin(angle) * draft.w / 2;
+      const start = addNode({ id: `${draft.id}_start`, x: draft.x - dx, y: level.elevationM + (draft.elevationM ?? 0), z: draft.z - dz, kind: "grid-intersection" });
+      const end = addNode({ id: `${draft.id}_end`, x: draft.x + dx, y: start.y, z: draft.z + dz, kind: "grid-intersection" });
       members.push({ id: draft.id, kind: draft.kind === "wall" ? "wall" : "slab", startNodeId: start.id, endNodeId: end.id, levelId: level.id, widthM: Math.max(draft.w, 0.1), depthM: Math.max(draft.d, 0.1), lengthM: Math.max(draft.w, 0.1), sourceId: draft.id });
     }
   }
 
   if (!members.some((item) => item.kind === "column") && gridsX.length && gridsZ.length) {
-    for (const level of levels.slice(0, -1)) {
+    for (const level of levels) {
       for (const gx of gridsX) for (const gz of gridsZ) {
         const base = addNode({ id: `auto_${level.id}_${gx.id}_${gz.id}_base`, x: gx.position, y: level.elevationM, z: gz.position, kind: "column-base" });
         const top = addNode({ id: `auto_${level.id}_${gx.id}_${gz.id}_top`, x: gx.position, y: level.elevationM + level.heightM, z: gz.position, kind: "column-top" });
@@ -116,6 +120,22 @@ export function buildStructuralFrameModel(design: CommunityDesign): StructuralFr
       }
     }
     warnings.push("Columns were inferred from structural-grid intersections because no explicit drafted columns were found.");
+  }
+  if (gridsX.length && gridsZ.length) {
+    const xs = [...gridsX].sort((a, b) => a.position - b.position), zs = [...gridsZ].sort((a, b) => a.position - b.position);
+    for (const level of levels) {
+      const y = level.elevationM + level.heightM;
+      const addBeam = (id: string, x1: number, z1: number, x2: number, z2: number) => {
+        const lengthM = Math.hypot(x2 - x1, z2 - z1);
+        if (lengthM < 1e-6) return;
+        const a = addNode({ id: `${id}_a`, x: x1, y, z: z1, kind: "grid-intersection" });
+        const b = addNode({ id: `${id}_b`, x: x2, y, z: z2, kind: "grid-intersection" });
+        members.push({ id, kind: "beam", startNodeId: a.id, endNodeId: b.id, levelId: level.id, widthM: settings.beamWidthM, depthM: settings.beamDepthM, lengthM });
+      };
+      for (const z of zs) for (let i = 1; i < xs.length; i++) addBeam(`beam-x-${level.id}-${xs[i - 1].id}-${xs[i].id}-${z.id}`, xs[i - 1].position, z.position, xs[i].position, z.position);
+      for (const x of xs) for (let i = 1; i < zs.length; i++) addBeam(`beam-z-${level.id}-${zs[i - 1].id}-${zs[i].id}-${x.id}`, x.position, zs[i - 1].position, x.position, zs[i].position);
+    }
+    warnings.push("Grid beams are inferred; joint connectivity, releases and tributary loading require engineer verification.");
   }
   if (!members.length) warnings.push("No structural framing geometry is available. Add grid lines or drafted structural elements.");
   return { nodes, members, levels, warnings };
@@ -130,22 +150,36 @@ export function screenStructuralDesign(design: CommunityDesign): StructuralDesig
   const live = towerFloorArea * settings.liveLoadKPa;
   const governing = Math.max(dead + live, ...combinations.map((combo) => combo.deadFactor * dead + combo.liveFactor * live));
   const columns = frame.members.filter((member) => member.kind === "column");
-  const columnDemand = governing / Math.max(columns.length, 1);
+  const nodeById = new Map(frame.nodes.map(node => [node.id, node]));
+  const lowestBase = columns.reduce((low, column) => Math.min(low, nodeById.get(column.startNodeId)?.y ?? Infinity), Infinity);
+  const baseColumns = columns.filter(column => Math.abs((nodeById.get(column.startNodeId)?.y ?? Infinity) - lowestBase) < 1e-4);
+  const columnDemand = governing / Math.max(baseColumns.length, 1);
+  const orderedLevels = [...frame.levels].sort((a, b) => a.elevationM - b.elevationM);
+  const storyCounts = new Map<string | undefined, number>();
+  for (const column of columns) storyCounts.set(column.levelId, (storyCounts.get(column.levelId) ?? 0) + 1);
+  const demandFor = (column: StructuralMember) => {
+    const levelIndex = Math.max(0, orderedLevels.findIndex(level => level.id === column.levelId));
+    const storyColumns = storyCounts.get(column.levelId) ?? 1;
+    return governing * (orderedLevels.length - levelIndex) / Math.max(orderedLevels.length, 1) / Math.max(storyColumns, 1);
+  };
 
   const members = frame.members.map((member): MemberDesignScreen => {
     const area = Math.max(member.widthM * member.depthM, 0.001);
     const lengthFactor = Math.max(member.lengthM / 3, 1);
-    const demandKN = member.kind === "column" ? columnDemand : (settings.deadLoadKPa + settings.liveLoadKPa) * Math.max(member.lengthM, 0.5) * Math.max(member.widthM, 0.5);
+    const demandKN = member.kind === "column" ? demandFor(member) : (settings.deadLoadKPa + settings.liveLoadKPa) * Math.max(member.lengthM, 0.5) * Math.max(member.kind === "slab" ? member.depthM : member.widthM, 0.5);
     const materialStrength = settings.material === "steel" ? 250 : settings.material === "masonry" ? 8 : settings.concreteStrengthMPa;
-    const capacityKN = member.kind === "column"
+    const flexural = member.kind === "beam" || member.kind === "slab";
+    const demandKNm = flexural ? demandKN * member.lengthM / 8 : undefined;
+    const capacityKNm = flexural ? materialStrength * member.widthM * member.depthM ** 2 * 1000 / Math.max(6 * settings.safetyFactor, 1) : undefined;
+    const capacityKN = !flexural
       ? materialStrength * area * 1000 / settings.safetyFactor / lengthFactor
-      : materialStrength * Math.max(member.widthM, 0.1) * Math.max(member.depthM, 0.1) ** 2 * 1000 / Math.max(6 * settings.safetyFactor, 1);
+      : (capacityKNm ?? 0) * 8 / Math.max(member.lengthM, 0.01);
     const utilization = demandKN / Math.max(capacityKN, 0.001);
     const reinforcementRatio = settings.material === "reinforced-concrete" ? Math.min(Math.max(0.008 + Math.max(utilization - 0.5, 0) * 0.012, 0.008), 0.04) : undefined;
-    return { memberId: member.id, kind: member.kind, demandKN, capacityKN, utilization, reinforcementRatio, status: utilization <= 1 ? "pass" : "review" };
+    return { memberId: member.id, kind: member.kind, demandKN, capacityKN, demandKNm, capacityKNm, utilization, reinforcementRatio, status: utilization <= 1 ? "pass" : "review" };
   });
 
-  const foundations = columns.map((column): FoundationDesignScreen => {
+  const foundations = baseColumns.map((column): FoundationDesignScreen => {
     const requiredAreaM2 = columnDemand / Math.max(settings.soilBearingKPa, 1);
     const providedAreaM2 = settings.footingWidthM * settings.footingDepthM;
     const bearingUtilization = requiredAreaM2 / Math.max(providedAreaM2, 0.001);
@@ -170,6 +204,7 @@ export function screenStructuralDesign(design: CommunityDesign): StructuralDesig
     warnings: [
       ...frame.warnings,
       "Member and foundation results are deterministic screening calculations, not code design.",
+      "Gravity load is distributed equally across stories and columns. Tributary areas and load paths are not solved.",
       "P-delta, response-spectrum, nonlinear behavior, reinforcement detailing and connections require verification in a qualified structural solver.",
     ],
     verification: { externalSolverRequired: true, supportedTargets: ["OpenSees", "ETABS", "STAAD", "Robot"], status: "not-verified" },
@@ -178,14 +213,24 @@ export function screenStructuralDesign(design: CommunityDesign): StructuralDesig
 
 export function buildStructuralSolverExchange(design: CommunityDesign): string {
   const pkg = screenStructuralDesign(design);
+  const columns = pkg.frame.members.filter(member => member.kind === "column");
+  const byId = new Map(pkg.frame.nodes.map(node => [node.id, node]));
+  const low = columns.reduce((min, column) => Math.min(min, byId.get(column.startNodeId)?.y ?? Infinity), Infinity);
+  const supportNodes = [...new Set(columns.filter(column => Math.abs((byId.get(column.startNodeId)?.y ?? Infinity) - low) < 1e-4).map(column => column.startNodeId))];
   return JSON.stringify({
     format: "groundwork-structural-analysis-model",
     version: 1,
     units: "SI",
     nodes: pkg.frame.nodes,
     members: pkg.frame.members,
+    supportNodes: supportNodes.map(nodeId => ({ nodeId, assumedRestraint: "fixed", requiresVerification: true })),
+    memberScreens: pkg.members,
+    foundationScreens: pkg.foundations,
+    warnings: pkg.warnings,
+    formatScope: "Generic SI JSON. Native solver input adapters are not included.",
     loadCombinations: pkg.combinations,
     assumptions: structuralSettings(design.structural),
     verification: pkg.verification,
   }, null, 2);
 }
+

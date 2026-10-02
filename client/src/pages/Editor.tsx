@@ -67,7 +67,6 @@ export function Editor() {
   const [tourPlaying, setTourPlaying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
-  const [revision, setRevision] = useState(0);
   const [remoteRevision, setRemoteRevision] = useState<number | null>(null);
 
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
@@ -95,7 +94,6 @@ export function Editor() {
     try {
       const project = await getProject(id!);
       setName(project.name);
-      setRevision(project.revision ?? 0);
       revisionRef.current = project.revision ?? 0;
       setRemoteRevision(null);
       setProjectRole(project.role ?? "owner");
@@ -169,7 +167,6 @@ export function Editor() {
             designData: JSON.stringify(d),
             baseRevision,
           });
-          setRevision(saved.revision);
           revisionRef.current = saved.revision;
           pendingBaseRevision.current = null;
           if (generation === editGeneration.current) {

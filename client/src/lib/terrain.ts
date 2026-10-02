@@ -205,11 +205,15 @@ export function buildTerrainVisualization(width: number, depth: number, value?: 
 
 export function parseTerrainCsv(csv: string): TerrainSample[] {
   const samples: TerrainSample[] = [];
+  const coordinates = new Set<string>();
   for (const [index, raw] of csv.replace(/\r\n?/g, "\n").split("\n").entries()) {
     const line = raw.trim().replace(/^\uFEFF/, "");
     if (!line || /^#/.test(line) || /^(x|easting)[,;\t]/i.test(line)) continue;
     const parts = line.split(/[,;\t]/).map(v => v.trim());
     if (parts.length !== 3 || parts.some(v => !v || !Number.isFinite(Number(v)))) throw new Error(`Invalid survey row ${index + 1}; expected x,z,elevation in metres.`);
+    const coordinate = `${Number(parts[0])}:${Number(parts[1])}`;
+    if (coordinates.has(coordinate)) throw new Error(`Duplicate plan coordinate at survey row ${index + 1}.`);
+    coordinates.add(coordinate);
     samples.push({ x: Number(parts[0]), z: Number(parts[1]), elevationM: Number(parts[2]) });
     if (samples.length > MAX_SURVEY_POINTS) throw new Error(`Import at most ${MAX_SURVEY_POINTS} points per terrain study.`);
   }

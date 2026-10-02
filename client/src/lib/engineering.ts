@@ -17,17 +17,26 @@ const finite = (value: unknown, fallback: number, minimum = 0) => {
   return Number.isFinite(number) ? Math.max(number, minimum) : fallback;
 };
 
+function numericDefaults<T extends object>(value: T, defaults: T): T {
+  const result = { ...value };
+  const fields = result as Record<string, unknown>;
+  for (const [key, fallback] of Object.entries(defaults)) {
+    if (typeof fallback === "number") fields[key] = finite(fields[key], fallback);
+  }
+  return result;
+}
+
 export function engineeringProfile(value?: Partial<EngineeringCodeProfile>): EngineeringCodeProfile {
   const next = value ?? {};
   return {
     ...DEFAULT_ENGINEERING_PROFILE,
     ...next,
-    loadFactors: { ...DEFAULT_ENGINEERING_PROFILE.loadFactors, ...next.loadFactors },
-    wind: { ...DEFAULT_ENGINEERING_PROFILE.wind, ...next.wind },
-    seismic: { ...DEFAULT_ENGINEERING_PROFILE.seismic, ...next.seismic },
-    materials: { ...DEFAULT_ENGINEERING_PROFILE.materials, ...next.materials },
-    occupancy: { ...DEFAULT_ENGINEERING_PROFILE.occupancy, ...next.occupancy },
-    assumptions: { ...DEFAULT_ENGINEERING_PROFILE.assumptions, ...next.assumptions },
+    loadFactors: numericDefaults({ ...DEFAULT_ENGINEERING_PROFILE.loadFactors, ...next.loadFactors }, DEFAULT_ENGINEERING_PROFILE.loadFactors),
+    wind: numericDefaults({ ...DEFAULT_ENGINEERING_PROFILE.wind, ...next.wind }, DEFAULT_ENGINEERING_PROFILE.wind),
+    seismic: numericDefaults({ ...DEFAULT_ENGINEERING_PROFILE.seismic, ...next.seismic }, DEFAULT_ENGINEERING_PROFILE.seismic),
+    materials: numericDefaults({ ...DEFAULT_ENGINEERING_PROFILE.materials, ...next.materials }, DEFAULT_ENGINEERING_PROFILE.materials),
+    occupancy: numericDefaults({ ...DEFAULT_ENGINEERING_PROFILE.occupancy, ...next.occupancy }, DEFAULT_ENGINEERING_PROFILE.occupancy),
+    assumptions: numericDefaults({ ...DEFAULT_ENGINEERING_PROFILE.assumptions, ...next.assumptions }, DEFAULT_ENGINEERING_PROFILE.assumptions),
   };
 }
 
@@ -47,12 +56,22 @@ export function validateEngineeringProfile(profile: Partial<EngineeringCodeProfi
   const errors: string[] = [];
   if (!profile.id?.trim()) errors.push("Profile id is required.");
   if (!profile.name?.trim()) errors.push("Profile name is required.");
-  if (profile.unitSystem !== undefined && !["SI", "imperial"].includes(profile.unitSystem)) errors.push("Unit system must be SI or imperial.");
+  if (profile.unitSystem !== undefined && profile.unitSystem !== "SI") errors.push("Engineering calculations currently require SI inputs.");
   const numericPaths: [string, unknown, number][] = [
     ["wind.pressureKPa", profile.wind?.pressureKPa, 0], ["seismic.coefficient", profile.seismic?.coefficient, 0],
     ["materials.concreteMPa", profile.materials?.concreteMPa, 0], ["materials.soilBearingKPa", profile.materials?.soilBearingKPa, 0],
     ["assumptions.driftLimitRatio", profile.assumptions?.driftLimitRatio, 0], ["assumptions.safetyFactor", profile.assumptions?.safetyFactor, 1],
   ];
   for (const [path, value, minimum] of numericPaths) if (value !== undefined && finite(value, NaN, minimum) !== Number(value)) errors.push(`${path} must be a finite number >= ${minimum}.`);
+  for (const group of ["loadFactors", "wind", "seismic", "materials", "occupancy", "assumptions"] as const) {
+    for (const [key, fallback] of Object.entries(DEFAULT_ENGINEERING_PROFILE[group])) {
+      if (typeof fallback !== "number") continue;
+      const value = (profile[group] as unknown as Record<string, unknown> | undefined)?.[key];
+      if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) errors.push(`${group}.${key} must be a finite non-negative number.`);
+    }
+  }
+  if (profile.seismic?.responseFactor !== undefined && profile.seismic.responseFactor <= 0) errors.push("Seismic response factor must be positive.");
+  if (profile.assumptions?.electricalDemandFactor !== undefined && profile.assumptions.electricalDemandFactor > 1) errors.push("Electrical demand factor must be at most 1.");
   return errors;
 }
+
