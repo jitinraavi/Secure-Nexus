@@ -15,7 +15,7 @@ import type {
   UnitSystem,
   ReviewSeverity,
 } from "../types";
-import { Button, Input, Modal, Select, Toggle } from "../components/ui";
+import { Badge, Button, Input, Modal, Select, Toggle } from "../components/ui";
 import { ParametricControls } from "../components/ParametricControls";
 import { CadToolPalette, type CadTool } from "../components/CadToolPalette";
 import { CommunityScene, type SceneContextTarget } from "../editor/CommunityScene";
