@@ -35,6 +35,7 @@ import { communityReviewFindings, reviewMarkers, reviewRiskScore } from "../lib/
 import { applyDraftOperation, constrainedDraftSize, duplicateDraftArray, draftingSettings, patchDraftGrip, solveDraftConstraintGraph } from "../lib/drafting";
 import { familyForId, familyMetadata } from "../lib/families";
 import { analyzeCommunity, buildStructuralReport, structuralSettings } from "../lib/structural";
+import { buildStructuralSolverExchange, screenStructuralDesign } from "../lib/structuralEngine";
 import { describeObject, furnitureDimMm, parseObjectQuery } from "../lib/objects";
 import { MepPanel } from "../components/MepPanel";
 import { DesignExportMenu } from "../components/DesignExportMenu";
@@ -228,6 +229,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
 
   const takeoff = useMemo(() => computeTakeoff(c), [c]);
   const structuralAnalysis = useMemo(() => analyzeCommunity(c), [c]);
+  const structuralDesign = useMemo(() => screenStructuralDesign(c), [c]);
   const assistantPreviews = useMemo(() => assistantPlan ? previewAssistantActions(assistantPlan.actions, c, branch) : [], [assistantPlan, c, branch]);
 
   const commitDesign = (next: CommunityDesign) => {
@@ -714,7 +716,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
     <Section title="Preliminary structural analysis">
        <div className="flex items-start justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3"><p className="text-xs leading-relaxed text-amber-200">
          Planning-level estimates only. This is not certified engineering, a code check, or a substitute for a licensed structural engineer, geotechnical report, sealed drawings, or site-specific loads.
-       </p><Button size="sm" variant="secondary" onClick={() => { const blob = new Blob([buildStructuralReport(c)], { type: "text/plain;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "preliminary-structural-report.txt"; link.click(); URL.revokeObjectURL(url); }}>Report</Button></div>
+       </p><div className="flex gap-1"><Button size="sm" variant="secondary" onClick={() => { const blob = new Blob([buildStructuralReport(c)], { type: "text/plain;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "preliminary-structural-report.txt"; link.click(); URL.revokeObjectURL(url); }}>Report</Button><Button size="sm" variant="outline" onClick={() => download("structural-analysis-model.json", buildStructuralSolverExchange(c), "application/json")}>Solver model</Button></div></div>
       {(() => {
         const settings = structuralSettings(c.structural);
         const setStructural = (patch: Partial<typeof settings>) => update({ structural: { ...settings, ...patch } });
@@ -754,6 +756,11 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
       })()}
       <div className="grid grid-cols-2 gap-2">
          {[['Total floor area', `${structuralAnalysis.totalAreaM2.toFixed(0)} m²`], ['Estimated gravity load', `${structuralAnalysis.totalLoadKN.toFixed(0)} kN`], ['Wind base shear screen', `${structuralAnalysis.totalWindBaseShearKN.toFixed(0)} kN`], ['Seismic base shear screen', `${structuralAnalysis.totalSeismicBaseShearKN.toFixed(0)} kN`]].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2"><p className="text-[11px] text-slate-500">{label}</p><p className="text-sm font-semibold text-slate-200">{value}</p></div>)}
+      </div>
+      <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-semibold text-slate-300">Analysis model / member screening</p><Badge tone={structuralDesign.governingUtilization <= 1 ? "emerald" : "amber"}>{(structuralDesign.governingUtilization * 100).toFixed(0)}% governing</Badge></div>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-400"><p>Nodes <strong className="text-slate-200">{structuralDesign.frame.nodes.length}</strong></p><p>Members <strong className="text-slate-200">{structuralDesign.frame.members.length}</strong></p><p>Foundation screens <strong className="text-slate-200">{structuralDesign.foundations.length}</strong></p><p>External solver <strong className="text-amber-300">{structuralDesign.verification.status}</strong></p></div>
+        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Exchange target adapters: {structuralDesign.verification.supportedTargets.join(", ")}. External solver verification is still required before engineering use.</p>
       </div>
       <div className="space-y-2">
         {structuralAnalysis.results.map((result) => <div key={result.tower.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
