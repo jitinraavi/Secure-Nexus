@@ -80,15 +80,24 @@ export function disposeObject3D(root: THREE.Object3D, disposeMaterials = true): 
   const materials = new Set<THREE.Material>();
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    if (mesh.geometry) geometries.add(mesh.geometry);
+    if (!mesh.geometry && !mesh.material) return;
+    // Sprite geometry is shared internally by Three.js; lines/points own their geometry.
+    if (mesh.geometry && !(object instanceof THREE.Sprite)) geometries.add(mesh.geometry);
     const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const mat of list) {
+      if (!mat) continue;
       materials.add(mat);
-      const texture = (mat as THREE.MeshStandardMaterial).map;
-      texture?.dispose();
     }
+    if (object instanceof THREE.InstancedMesh) object.dispose();
   });
   for (const geometry of geometries) geometry.dispose();
-  if (disposeMaterials) for (const material of materials) material.dispose();
+  const cached = new Set(matCache.values());
+  for (const mat of materials) {
+    if (!disposeMaterials && cached.has(mat as THREE.MeshStandardMaterial)) continue;
+    const texture = (mat as THREE.MeshStandardMaterial).map;
+    texture?.dispose();
+    mat.dispose();
+    if (disposeMaterials) for (const [key, value] of matCache) if (value === mat) matCache.delete(key);
+  }
 }
+

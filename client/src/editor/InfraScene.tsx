@@ -8,6 +8,7 @@ import { buildInfraScene, infraExtent } from "../lib/infra";
 import { sectionClippingPlanes } from "../lib/section";
 import { constrainedDraftPatch } from "../lib/drafting";
 import { disposeObject3D } from "../lib/modelcore";
+import { sceneMetricsReporter } from "../lib/sceneMetrics";
 
 /**
  * Infrastructure scene.
@@ -184,6 +185,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
     renderer.domElement.addEventListener("pointercancel", onPointerUp);
 
     let raf = 0;
+    const reportMetrics = sceneMetricsReporter("infrastructure", renderer);
     const animate = () => {
       raf = requestAnimationFrame(animate);
       if (document.hidden) return;
@@ -194,6 +196,7 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
       }
       controls.update();
       renderer.render(scene, camera);
+      reportMetrics();
     };
     animate();
 
@@ -240,3 +243,4 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
 
   return <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: "none" }} data-scene="infra" />;
 }
+

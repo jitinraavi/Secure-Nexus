@@ -11,6 +11,7 @@ import { buildMapGround } from "../lib/mapGround";
 import { sectionClippingPlanes } from "../lib/section";
 import { constrainDraftEnd, constrainedDraftSize, draftingSettings, snapDraftPoint, solveDraftConstraintGraph } from "../lib/drafting";
 import { buildTerrainVisualization } from "../lib/terrain";
+import { sceneMetricsReporter } from "../lib/sceneMetrics";
 import { buildMepScene } from "../lib/mep";
 import { resolveDraft, resolveTowerOpening } from "../lib/parametric";
 import { familyMetadata, familyForId } from "../lib/families";
@@ -926,6 +927,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     renderer.domElement.addEventListener("wheel", onSkip, { once: true });
 
      let raf = 0;
+     const reportMetrics = sceneMetricsReporter("community", renderer);
      const animate = () => {
        raf = requestAnimationFrame(animate);
        if (document.hidden) return;
@@ -942,6 +944,7 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
       }
       controls.update();
       renderer.render(scene, camera);
+      reportMetrics();
     };
     animate();
 
@@ -1175,3 +1178,4 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: "none" }} data-scene="community" />
   );
 }
+
