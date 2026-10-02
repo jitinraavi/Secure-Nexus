@@ -367,6 +367,13 @@ export function createCollaborationItem(id: string, kind: "comment" | "issue", b
   return request<CollaborationItem>(`/api/collaboration/${id}/items`, { method: "POST", body: JSON.stringify({ kind, body }) });
 }
 
+export function updateCollaborationItem(id: string, itemId: string, status: "open" | "resolved") {
+  return request<{ ok: boolean; status: string; updatedAt: number }>(`/api/collaboration/${id}/items/${encodeURIComponent(itemId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
 export async function listProjectMembers(id: string): Promise<{ members: ProjectMember[]; currentRole: ProjectMember["role"] }> {
   return request<{ members: ProjectMember[]; currentRole: ProjectMember["role"] }>(`/api/collaboration/${id}/members`, { method: "GET" });
 }
