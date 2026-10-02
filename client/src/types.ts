@@ -51,6 +51,7 @@ export interface Project {
   updatedAt: number;
   hasPhoto: boolean;
   revision: number;
+  role?: "owner" | "editor" | "viewer";
 }
 
 export interface ProjectDetail extends Project {
@@ -90,10 +91,34 @@ export interface VisualizationSettings {
 
 export interface CollaborationItem {
   id: string;
+  userId?: string;
   kind: "comment" | "issue";
+  body?: string;
   status: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ProjectMember {
+  userId: string;
+  email: string;
+  username: string | null;
+  role: "owner" | "editor" | "viewer";
+  createdAt?: number;
+}
+
+export interface ProjectObjectLock {
+  objectId: string;
+  userId: string;
+  token?: string;
+  expiresAt: number;
+  updatedAt: number;
+}
+
+export interface CollaborationPresence {
+  projectId: string;
+  count: number;
+  users: { userId: string; connections: number }[];
 }
 
 export interface ProjectRevision {
