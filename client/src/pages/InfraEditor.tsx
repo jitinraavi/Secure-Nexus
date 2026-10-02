@@ -31,6 +31,7 @@ import {
 } from "../lib/infra";
 import { applyInfrastructureAssistantActions, isInfrastructureActionPreviewOnly, previewInfrastructureAssistantActions } from "../lib/assistant";
 import { visualizationSettings } from "../lib/visualization";
+import type { PresentationApi } from "../lib/presentation";
 
 type StepId = "location" | "design" | "takeoff" | "review";
 
@@ -157,6 +158,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
   const historyRef = useRef<{ past: InfraDesign[]; future: InfraDesign[] }>({ past: [], future: [] });
   const [reviewText, setReviewText] = useState("");
   const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
+  const [presentationApi, setPresentationApi] = useState<PresentationApi | null>(null);
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
   const [assistantPlan, setAssistantPlan] = useState<AssistantPlan | null>(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
@@ -720,8 +722,8 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
         </div>
 
         <div className="relative min-h-[420px] flex-1">
-           <InfraScene infra={infra} activeTool={activeTool} onSelect={setSelectedId} onChange={commitInfra} visualization={visualization} />
-           {design && <div className="pointer-events-auto absolute bottom-3 left-3 z-10"><VisualizationControls design={design} onChange={(next) => onVisualizationChange?.(next)} /></div>}
+           <InfraScene infra={infra} activeTool={activeTool} onSelect={setSelectedId} onChange={commitInfra} visualization={visualization} onPresentationReady={setPresentationApi} />
+           {design && <div className="pointer-events-auto absolute bottom-3 left-3 z-10"><VisualizationControls design={design} presentationApi={presentationApi} onChange={(next) => onVisualizationChange?.(next)} /></div>}
            <div className="pointer-events-none absolute left-3 top-3 rounded-xl bg-slate-950/80 px-3 py-2 text-xs text-slate-300 backdrop-blur">
              {INFRA_LABELS[kind]} · {infra.section?.enabled ? `Section ${infra.section.axis.toUpperCase()} / ${infra.section.depth} m` : "Full model"}
           </div>

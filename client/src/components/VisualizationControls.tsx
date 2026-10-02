@@ -4,8 +4,10 @@ import type { Design } from "../types";
 import { cachedConstructionSchedule, latestVisibleConstructionPhase, visualizationSettings } from "../lib/visualization";
 import { constructionScheduleDayAtTime } from "../lib/constructionSchedule";
 import { ConstructionSchedulePanel } from "./ConstructionSchedulePanel";
+import { PresentationControls } from "./PresentationControls";
+import type { PresentationApi } from "../lib/presentation";
 
-export function VisualizationControls({ design, onChange }: { design: Design; onChange: (next: Design) => void }) {
+export function VisualizationControls({ design, onChange, presentationApi = null }: { design: Design; onChange: (next: Design) => void; presentationApi?: PresentationApi | null }) {
   const value = visualizationSettings(design.visualization);
   const [playing, setPlaying] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -49,6 +51,7 @@ export function VisualizationControls({ design, onChange }: { design: Design; on
       </div>
       {dependencyTimeline && report && !report.valid && <p role="status" className="mt-2 text-amber-300">The dependency schedule has errors. All model phases remain visible; open the schedule to resolve them.</p>}
       {scheduleOpen && <ConstructionSchedulePanel design={design} value={value} onChange={onChange} />}
+      <PresentationControls api={presentationApi} design={design} onChange={onChange} />
     </div>
   );
 }

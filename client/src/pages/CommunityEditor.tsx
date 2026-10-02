@@ -47,6 +47,7 @@ import { requestAssistantPlan } from "../api";
 import { applyCommunityAssistantActions, isAssistantActionPreviewOnly, previewAssistantActions } from "../lib/assistant";
 import type { AssistantPlan } from "../types";
 import { visualizationSettings } from "../lib/visualization";
+import type { PresentationApi } from "../lib/presentation";
 import {
   AMENITIES,
   DOOR_FACING_LABELS,
@@ -196,6 +197,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const [assistantPreviewOpen, setAssistantPreviewOpen] = useState(false);
   const [reviewText, setReviewText] = useState("");
   const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
+  const [presentationApi, setPresentationApi] = useState<PresentationApi | null>(null);
   const c = community;
   const visualization = visualizationSettings(design?.visualization);
   const phaseOptions = visualization.phases.slice(0, 1000);
@@ -1456,6 +1458,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
         {/* Right: 3D scene */}
         <div className="relative min-h-[420px] flex-1">
            <CommunityScene
+             onPresentationReady={setPresentationApi}
             design={c}
             selectedId={selectedId}
             onSelect={setSelectedId}
@@ -1467,7 +1470,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
               setContext(t);
             }}
            />
-           {design && <div className="absolute bottom-3 left-3 z-10"><VisualizationControls design={design} onChange={(next) => onVisualizationChange?.(next)} /></div>}
+           {design && <div className="absolute bottom-3 left-3 z-10"><VisualizationControls design={design} presentationApi={presentationApi} onChange={(next) => onVisualizationChange?.(next)} /></div>}
           <div className="pointer-events-none absolute left-3 top-3 rounded-xl bg-slate-950/80 px-3 py-2 text-xs text-slate-300 backdrop-blur">
             {branch === "residential" ? "Residential community" : "Commercial complex"} · drag objects to move · right-click for actions
           </div>
