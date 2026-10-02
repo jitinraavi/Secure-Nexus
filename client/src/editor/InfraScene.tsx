@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { createPresentationController, type PresentationApi } from "../lib/presentation";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { DraftElement, DraftElementKind, InfraDesign, VisualizationSettings } from "../types";
@@ -18,7 +19,7 @@ import { isSceneObjectVisible, updateScenePhaseVisibility } from "../lib/phaseVi
  * a shared orbit view. Rebuilt whenever the design changes; the camera is
  * framed from the site extents on mount.
  */
-export function InfraScene({ infra, activeTool = "select", onSelect, onChange, visualization }: { infra: InfraDesign; activeTool?: CadTool; onSelect?: (id: string | null) => void; onChange?: (next: InfraDesign) => void; visualization?: VisualizationSettings }) {
+export function InfraScene({ infra, activeTool = "select", onSelect, onChange, visualization, onPresentationReady }: { infra: InfraDesign; activeTool?: CadTool; onSelect?: (id: string | null) => void; onChange?: (next: InfraDesign) => void; visualization?: VisualizationSettings; onPresentationReady?: (api: PresentationApi | null) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -28,11 +29,11 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
   const rebuildRef = useRef<(() => void) | null>(null);
   const infraRef = useRef(infra);
   const toolRef = useRef(activeTool);
-  const handlersRef = useRef({ onSelect, onChange });
+  const handlersRef = useRef({ onSelect, onChange, onPresentationReady });
   const visualizationRef = useRef(visualization);
   infraRef.current = infra;
   toolRef.current = activeTool;
-  handlersRef.current = { onSelect, onChange };
+  handlersRef.current = { onSelect, onChange, onPresentationReady };
   visualizationRef.current = visualization;
 
   useEffect(() => {
@@ -187,11 +188,17 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
     renderer.domElement.addEventListener("pointercancel", onPointerUp);
 
     let raf = 0;
+    const presentation = createPresentationController(renderer, scene, camera, controls, () => {
+      const quality = visualizationRef.current?.renderQuality ?? "balanced";
+      return { width: container.clientWidth || 1, height: container.clientHeight || 1, pixelRatio: quality === "performance" ? 1 : Math.min(window.devicePixelRatio || 1, quality === "presentation" ? 2 : 1.5) };
+    });
+    handlersRef.current.onPresentationReady?.(presentation.api);
     const reportMetrics = sceneMetricsReporter("infrastructure", renderer);
     const animate = () => {
       raf = requestAnimationFrame(animate);
       if (document.hidden) return;
-      if (visualizationRef.current?.walkthrough) {
+      const authoredFrame = presentation.update();
+      if (visualizationRef.current?.walkthrough && !authoredFrame) {
         const t = (visualizationRef.current.time / 100) * Math.PI * 2;
         camera.position.set(Math.cos(t) * span * 0.9, span * 0.35, Math.sin(t) * span * 0.9);
         controls.target.set(0, 0, 0);
@@ -212,6 +219,8 @@ export function InfraScene({ infra, activeTool = "select", onSelect, onChange, v
     window.addEventListener("resize", onResize);
 
     return () => {
+      presentation.dispose();
+      handlersRef.current.onPresentationReady?.(null);
       window.removeEventListener("resize", onResize);
       cancelAnimationFrame(raf);
       scene.environment?.dispose();

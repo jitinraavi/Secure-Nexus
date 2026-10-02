@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { createPresentationController, type PresentationApi } from "../lib/presentation";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { CadTool } from "../components/CadToolPalette";
@@ -800,9 +801,10 @@ interface CommunitySceneProps {
   onContextTarget?: (target: SceneContextTarget) => void;
   activeTool?: CadTool;
   visualization?: VisualizationSettings;
+  onPresentationReady?: (api: PresentationApi | null) => void;
 }
 
-export function CommunityScene({ design, selectedId, onSelect, onChange, onContextTarget, activeTool = "select", visualization }: CommunitySceneProps) {
+export function CommunityScene({ design, selectedId, onSelect, onChange, onContextTarget, activeTool = "select", visualization, onPresentationReady }: CommunitySceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -813,13 +815,13 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
 
   const designRef = useRef(design);
   const selectedRef = useRef<string | null>(selectedId ?? null);
-  const handlersRef = useRef({ onSelect, onChange, onContextTarget });
+  const handlersRef = useRef({ onSelect, onChange, onContextTarget, onPresentationReady });
   const toolRef = useRef(activeTool);
   const visualizationRef = useRef(visualization);
   const mapToken = useRef(0);
   designRef.current = design;
   selectedRef.current = selectedId ?? null;
-  handlersRef.current = { onSelect, onChange, onContextTarget };
+  handlersRef.current = { onSelect, onChange, onContextTarget, onPresentationReady };
   toolRef.current = activeTool;
   visualizationRef.current = visualization;
 
@@ -934,6 +936,16 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     const introDur = 1100;
     const finishIntro = () => { if (!introDone) { introDone = true; controls.enabled = true; } };
     const onSkip = () => { introStart = 0; finishIntro(); };
+    const presentation = createPresentationController(renderer, scene, camera, controls, () => {
+      const quality = visualizationRef.current?.renderQuality ?? "balanced";
+      return { width: container.clientWidth || 1, height: container.clientHeight || 1, pixelRatio: quality === "performance" ? 1 : Math.min(window.devicePixelRatio || 1, quality === "presentation" ? 2 : 1.5) };
+    });
+    handlersRef.current.onPresentationReady?.({
+      ...presentation.api,
+      showCameraWaypoint(point) { finishIntro(); presentation.api.showCameraWaypoint(point); },
+      playCameraPath(path, duration) { finishIntro(); presentation.api.playCameraPath(path, duration); },
+      recordVideo(duration, fps, path) { finishIntro(); return presentation.api.recordVideo(duration, fps, path); },
+    });
     renderer.domElement.addEventListener("pointerdown", onSkip, { once: true });
     renderer.domElement.addEventListener("wheel", onSkip, { once: true });
 
@@ -942,7 +954,8 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
      const animate = () => {
        raf = requestAnimationFrame(animate);
        if (document.hidden) return;
-       if (visualizationRef.current?.walkthrough) {
+       const authoredFrame = presentation.update();
+       if (visualizationRef.current?.walkthrough && !authoredFrame) {
          const t = (visualizationRef.current.time / 100) * Math.PI * 2;
          camera.position.set(Math.cos(t) * 220, 110, Math.sin(t) * 220);
          controls.target.set(0, 20, 0);
@@ -1146,6 +1159,8 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     window.addEventListener("resize", onResize);
 
     return () => {
+      presentation.dispose();
+      handlersRef.current.onPresentationReady?.(null);
       window.removeEventListener("resize", onResize);
       cancelAnimationFrame(raf);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);

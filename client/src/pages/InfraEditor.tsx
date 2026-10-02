@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AirportDesign, AssistantPlan, DamDesign, DraftElement, HighwayDesign, InfraDesign, InfraFacility, InfraKind, PortDesign, ReviewSeverity } from "../types";
+import type { AirportDesign, AssistantPlan, DamDesign, DraftElement, HighwayDesign, InfraDesign, InfraFacility, InfraKind, PortDesign } from "../types";
 import { Button, Modal, Select, Toggle } from "../components/ui";
 import { ParametricControls } from "../components/ParametricControls";
 import { CadToolPalette, type CadTool } from "../components/CadToolPalette";
@@ -20,6 +20,7 @@ import { buildBoqCsv, boqFilename, copyToClipboard, notesFilename, shareText } f
 import { reviewMarkers, reviewRiskScore } from "../lib/review";
 import { useReviewFindings } from "../lib/useReviewFindings";
 import { ReviewAnalysisState } from "../components/ReviewAnalysisState";
+import { CoordinationPanel } from "../components/CoordinationPanel";
 import { applyDraftOperation, constrainedDraftPatch, duplicateDraftArray, patchDraftGrip } from "../lib/drafting";
 import { syncDraftFamilyParameters } from "../lib/parametric";
 import {
@@ -31,6 +32,7 @@ import {
 } from "../lib/infra";
 import { applyInfrastructureAssistantActions, isInfrastructureActionPreviewOnly, previewInfrastructureAssistantActions } from "../lib/assistant";
 import { visualizationSettings } from "../lib/visualization";
+import type { PresentationApi } from "../lib/presentation";
 
 type StepId = "location" | "design" | "takeoff" | "review";
 
@@ -155,8 +157,8 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
   const [layersOpen, setLayersOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const historyRef = useRef<{ past: InfraDesign[]; future: InfraDesign[] }>({ past: [], future: [] });
-  const [reviewText, setReviewText] = useState("");
-  const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
+
+  const [presentationApi, setPresentationApi] = useState<PresentationApi | null>(null);
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([]);
   const [assistantPlan, setAssistantPlan] = useState<AssistantPlan | null>(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
@@ -247,11 +249,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
   const reviewFindings = reviewAnalysis.findings;
   const reviewReady = reviewAnalysis.status === "ready" || reviewAnalysis.status === "fallback-ready";
   const markers = reviewMarkers(infra.review);
-  const addReviewMarker = () => {
-    if (!reviewText.trim()) return;
-    update({ review: { markers: [...markers, { id: `review-${Date.now()}`, text: reviewText.trim(), severity: reviewSeverity, status: "open", x: 0, z: 0, targetIds: selectedId ? [selectedId] : undefined }] } });
-    setReviewText("");
-  };
+
   const patchDraft = (id: string, patch: Partial<DraftElement>) =>
     update({ drafts: (infra.drafts ?? []).map((draft) => draft.id === id ? { ...draft, ...syncDraftFamilyParameters(draft, constrainedDraftPatch(draft, patch, infra.drafts ?? [])) } : draft) });
 
@@ -653,12 +651,9 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
         {reviewReady && reviewFindings.length === 0 && <p className="text-xs text-emerald-300">No basic site-fit clashes detected.</p>}
          {reviewFindings.map((finding) => <button key={finding.id} onClick={() => setSelectedId(finding.targetIds[0])} className="block w-full rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-left text-xs text-amber-200"><span className="font-semibold">{finding.severity} · {finding.score}/100</span> · {finding.category} · {finding.text}<span className="mt-1 block text-[10px] text-amber-300/70">Approximation: {finding.approximation}</span></button>)}
       </div>
-      <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
-        <p className="text-xs font-semibold text-slate-300">Add coordination markup</p>
-        <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} placeholder="e.g. Confirm utility crossing at chainage 1+200" className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500" />
-        <div className="flex gap-2"><Select label="Severity" value={reviewSeverity} onChange={(e) => setReviewSeverity(e.target.value as ReviewSeverity)}><option value="note">Note</option><option value="warning">Warning</option><option value="blocker">Blocker</option></Select><Button size="sm" className="mt-6" onClick={addReviewMarker} disabled={!reviewText.trim()}>Add markup</Button></div>
-      </div>
-      <div className="space-y-2"><p className="text-xs font-semibold text-slate-300">Saved markups ({markers.length})</p>{markers.length === 0 && <p className="text-xs text-slate-600">No saved coordination markups.</p>}{markers.map((marker) => <div key={marker.id} className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs"><div className="flex items-start justify-between gap-2"><span className="text-slate-200">{marker.text}</span><button className="text-rose-400" onClick={() => update({ review: { markers: markers.filter((m) => m.id !== marker.id) } })}>Remove</button></div><button className="mt-1 text-slate-500 hover:text-emerald-300" onClick={() => update({ review: { markers: markers.map((m) => m.id === marker.id ? { ...m, status: m.status === "open" ? "resolved" : "open" } : m) } })}>{marker.severity} · {marker.status}</button></div>)}</div>
+      <CoordinationPanel markers={markers} findings={reviewReady ? reviewFindings : []} onChange={(next) => update({ review: { markers: next } })}
+        modelIds={[...infra.facilities, ...(infra.drafts ?? []), ...(infra.mep?.elements ?? [])].map(item => item.id)} selectedId={selectedId} selectedPosition={selectedDraft}
+        onSelect={setSelectedId} presentationApi={presentationApi} projectName={projectName} />
     </Section>
   );
 
@@ -720,8 +715,8 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
         </div>
 
         <div className="relative min-h-[420px] flex-1">
-           <InfraScene infra={infra} activeTool={activeTool} onSelect={setSelectedId} onChange={commitInfra} visualization={visualization} />
-           {design && <div className="pointer-events-auto absolute bottom-3 left-3 z-10"><VisualizationControls design={design} onChange={(next) => onVisualizationChange?.(next)} /></div>}
+           <InfraScene infra={infra} activeTool={activeTool} onSelect={setSelectedId} onChange={commitInfra} visualization={visualization} onPresentationReady={setPresentationApi} />
+           {design && <div className="pointer-events-auto absolute bottom-3 left-3 z-10"><VisualizationControls design={design} presentationApi={presentationApi} onChange={(next) => onVisualizationChange?.(next)} /></div>}
            <div className="pointer-events-none absolute left-3 top-3 rounded-xl bg-slate-950/80 px-3 py-2 text-xs text-slate-300 backdrop-blur">
              {INFRA_LABELS[kind]} · {infra.section?.enabled ? `Section ${infra.section.axis.toUpperCase()} / ${infra.section.depth} m` : "Full model"}
           </div>

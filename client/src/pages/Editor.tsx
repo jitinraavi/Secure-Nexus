@@ -709,7 +709,7 @@ export function Editor() {
             </div>
            )}
            <div className="pointer-events-auto absolute bottom-3 right-3 z-10 max-w-full">
-             <VisualizationControls design={design} onChange={changeDesign} />
+             <VisualizationControls design={design} presentationApi={api} onChange={changeDesign} />
            </div>
           {uploading && (
             <div className="pointer-events-none absolute left-1/2 top-4 flex -translate-x-1/2 items-center gap-2 rounded-full border border-emerald-500/40 bg-slate-950/90 px-3 py-1.5 text-[11px] text-emerald-300 backdrop-blur">

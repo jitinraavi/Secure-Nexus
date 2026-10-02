@@ -5,26 +5,23 @@ import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { ARButton } from "three/examples/jsm/webxr/ARButton.js";
 import { VRButton } from "three/examples/jsm/webxr/VRButton.js";
-import type { CameraWaypoint, Design, FurnitureItem } from "../types";
+import type { Design, FurnitureItem } from "../types";
 import { addTechnicalEdges } from "../lib/modelcore";
 import { buildFurniture, catalogEntry, furnitureMount } from "../lib/catalog";
 import { buildMepScene } from "../lib/mep";
 import { phaseVisible, visualizationSettings } from "../lib/visualization";
+import { createPresentationController, type PresentationApi } from "../lib/presentation";
 
 const MM = 0.001;
 const WALL_THICKNESS = 120;
 
-export interface EditorApi {
+export interface EditorApi extends PresentationApi {
   resetView(): void;
   topView(): void;
   frontView(): void;
   detailView(): void;
   togglePresentationTour(): boolean;
-  captureCameraWaypoint(label: string): CameraWaypoint;
-  playCameraPath(path: CameraWaypoint[]): void;
-  stopCameraPath(): void;
   toggleSection(): boolean;
-  capturePng(): Promise<Blob>;
   exportGlb(): Promise<Blob>;
 }
 
@@ -418,7 +415,16 @@ export function Canvas3D({
     ro.observe(container);
 
     let tour: { curve: THREE.CatmullRomCurve3; startedAt: number; durationMs: number; target: THREE.Vector3 } | null = null;
-    let authoredTour: { camera: THREE.CatmullRomCurve3; target: THREE.CatmullRomCurve3; startedAt: number; durationMs: number } | null = null;
+    const presentation = createPresentationController(renderer, scene, camera, controls, () => {
+      const quality = designRef.current.visualization?.renderQuality ?? "balanced";
+      return { width: container.clientWidth || 1, height: container.clientHeight || 1, pixelRatio: quality === "performance" ? 1 : Math.min(window.devicePixelRatio || 1, quality === "presentation" ? 2 : 1.5) };
+    });
+    const stopCameraActions = () => {
+      tour = null;
+      transitionRef.current = null;
+      presentation.api.stopCameraPath();
+      presentation.api.cancelVideo();
+    };
     const loop = () => {
       if (document.hidden && !renderer.xr.isPresenting) return;
       const transition = transitionRef.current;
@@ -433,18 +439,10 @@ export function Canvas3D({
         controls.target.copy(tour.target);
         camera.lookAt(tour.target);
       }
-      if (authoredTour) {
-        const progress = Math.min((performance.now() - authoredTour.startedAt) / authoredTour.durationMs, 1);
-        camera.position.copy(authoredTour.camera.getPointAt(progress));
-        controls.target.copy(authoredTour.target.getPointAt(progress));
-        if (progress >= 1) {
-          authoredTour = null;
-          controls.enabled = true;
-        }
-      }
+      const authoredFrame = presentation.update();
       const walkthrough = Boolean(designRef.current.visualization?.walkthrough);
-      controls.enabled = !walkthrough && !tour && !authoredTour;
-      if (walkthrough && keys.size) {
+      controls.enabled = !walkthrough && !tour && !presentation.api.isCameraPathPlaying();
+      if (walkthrough && keys.size && !authoredFrame) {
         const direction = new THREE.Vector3();
         camera.getWorldDirection(direction);
         direction.y = 0;
@@ -464,21 +462,28 @@ export function Canvas3D({
     renderer.setAnimationLoop(loop);
 
     onApiReady({
+      ...presentation.api,
       resetView() {
+        stopCameraActions();
         camera.position.set(5.5, 4.2, 6.2);
         controls.target.set(0, 0, 0);
       },
       topView() {
+        stopCameraActions();
         camera.position.set(0, 11.5, 0.01);
         controls.target.set(0, 0, 0);
       },
       frontView() {
+        stopCameraActions();
         transitionRef.current = { position: new THREE.Vector3(0, 2.2, 9.5), target: new THREE.Vector3(0, 1.2, 0) };
       },
       detailView() {
+        stopCameraActions();
         transitionRef.current = { position: new THREE.Vector3(3.2, 2.25, 3.4), target: new THREE.Vector3(0, 1.15, 0) };
       },
       togglePresentationTour() {
+        presentation.api.stopCameraPath();
+        presentation.api.cancelVideo();
         if (tour) {
           tour = null;
           controls.enabled = true;
@@ -500,32 +505,12 @@ export function Canvas3D({
         controls.enabled = false;
         return true;
       },
-      captureCameraWaypoint(label) {
-        const target = controls.target;
-        return {
-          id: `camera-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          label,
-          position: [camera.position.x, camera.position.y, camera.position.z],
-          target: [target.x, target.y, target.z],
-        };
+      playCameraPath(path, durationSeconds) {
+        stopCameraActions();
+        presentation.api.playCameraPath(path, durationSeconds);
       },
-      playCameraPath(path) {
-        if (path.length < 2) return;
-        tour = null;
-        const cameraPoints = path.map((point) => new THREE.Vector3(...point.position));
-        const targetPoints = path.map((point) => new THREE.Vector3(...point.target));
-        authoredTour = {
-          camera: new THREE.CatmullRomCurve3(cameraPoints, false, "centripetal"),
-          target: new THREE.CatmullRomCurve3(targetPoints, false, "centripetal"),
-          startedAt: performance.now(),
-          durationMs: Math.max((path.length - 1) * 3500, 3500),
-        };
-        controls.enabled = false;
-      },
-      stopCameraPath() {
-        authoredTour = null;
-        controls.enabled = true;
-      },
+      showCameraWaypoint(point) { stopCameraActions(); presentation.api.showCameraWaypoint(point); },
+      recordVideo(duration, fps, path) { stopCameraActions(); return presentation.api.recordVideo(duration, fps, path); },
       toggleSection() {
         sectionRef.current = !sectionRef.current;
         const room = roomGroupRef.current;
@@ -533,10 +518,6 @@ export function Canvas3D({
           if (child.userData.sectionWall) child.visible = !sectionRef.current;
         });
         return sectionRef.current;
-      },
-      async capturePng() {
-        renderer.render(scene, camera);
-        return new Promise((resolve, reject) => renderer.domElement.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not capture the viewport")), "image/png"));
       },
       async exportGlb() {
         const ring = selectionRingRef.current;
@@ -571,6 +552,8 @@ export function Canvas3D({
     });
 
     return () => {
+      presentation.dispose();
+      onApiReady(null);
       cancelAnimationFrame(pendingItemRaf.current);
       renderer.setAnimationLoop(null);
       ro.disconnect();

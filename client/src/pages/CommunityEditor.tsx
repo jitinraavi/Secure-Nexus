@@ -13,7 +13,6 @@ import type {
   TowerOpening,
   ResidentialStyle,
   UnitSystem,
-  ReviewSeverity,
 } from "../types";
 import { Badge, Button, Input, Modal, Select, Toggle } from "../components/ui";
 import { ParametricControls } from "../components/ParametricControls";
@@ -34,6 +33,7 @@ import { buildBoqCsv, buildNotesText, boqFilename, copyToClipboard, notesFilenam
 import { reviewMarkers, reviewRiskScore } from "../lib/review";
 import { useReviewFindings } from "../lib/useReviewFindings";
 import { ReviewAnalysisState } from "../components/ReviewAnalysisState";
+import { CoordinationPanel } from "../components/CoordinationPanel";
 import { applyDraftOperation, constrainedDraftSize, duplicateDraftArray, draftingSettings, patchDraftGrip, solveDraftConstraintGraph } from "../lib/drafting";
 import { familyForId, familyMetadata } from "../lib/families";
 import { analyzeCommunity, buildStructuralReport, structuralSettings } from "../lib/structural";
@@ -47,6 +47,7 @@ import { requestAssistantPlan } from "../api";
 import { applyCommunityAssistantActions, isAssistantActionPreviewOnly, previewAssistantActions } from "../lib/assistant";
 import type { AssistantPlan } from "../types";
 import { visualizationSettings } from "../lib/visualization";
+import type { PresentationApi } from "../lib/presentation";
 import {
   AMENITIES,
   DOOR_FACING_LABELS,
@@ -194,8 +195,8 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
   const [assistantPlan, setAssistantPlan] = useState<AssistantPlan | null>(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantPreviewOpen, setAssistantPreviewOpen] = useState(false);
-  const [reviewText, setReviewText] = useState("");
-  const [reviewSeverity, setReviewSeverity] = useState<ReviewSeverity>("note");
+
+  const [presentationApi, setPresentationApi] = useState<PresentationApi | null>(null);
   const c = community;
   const visualization = visualizationSettings(design?.visualization);
   const phaseOptions = visualization.phases.slice(0, 1000);
@@ -311,14 +312,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
 
   const assistantHasInvalidActions = assistantPreviews.some((item) => !item.applicable && !isAssistantActionPreviewOnly(item.action));
 
-  const addReviewMarker = () => {
-    const text = reviewText.trim();
-    if (!text) return;
-    const target = selectedTower ?? selectedAmenity;
-    const marker = { id: uid("review"), text, severity: reviewSeverity, status: "open" as const, x: target?.x ?? 0, z: target?.z ?? 0, targetIds: target ? [target.id] : undefined };
-    update({ review: { markers: [...markers, marker] } });
-    setReviewText("");
-  };
+
 
   const addSiteObject = (recipe: ReturnType<typeof parseObjectQuery>, x: number, z: number) => {
     if (!recipe) return;
@@ -1277,26 +1271,10 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
           </button>
         ))}
       </div>
-      <div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
-        <p className="text-xs font-semibold text-slate-300">Add markup {selectedId ? "for selected object" : "at site origin"}</p>
-        <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} placeholder="e.g. Confirm fire access clearance" className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500" />
-        <div className="flex gap-2">
-          <Select label="Severity" value={reviewSeverity} onChange={(e) => setReviewSeverity(e.target.value as ReviewSeverity)}>
-            <option value="note">Note</option><option value="warning">Warning</option><option value="blocker">Blocker</option>
-          </Select>
-          <Button size="sm" className="mt-6" onClick={addReviewMarker} disabled={!reviewText.trim()}>Add markup</Button>
-        </div>
-      </div>
-      <div className="space-y-2">
-        <p className="text-xs font-semibold text-slate-300">Saved markups ({markers.length})</p>
-        {markers.length === 0 && <p className="text-xs text-slate-600">No saved coordination markups.</p>}
-        {markers.map((marker) => (
-          <div key={marker.id} className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs">
-            <div className="flex items-start justify-between gap-2"><span className="text-slate-200">{marker.text}</span><button className="text-rose-400" onClick={() => update({ review: { markers: markers.filter((m) => m.id !== marker.id) } })}>Remove</button></div>
-            <button className="mt-1 text-slate-500 hover:text-emerald-300" onClick={() => update({ review: { markers: markers.map((m) => m.id === marker.id ? { ...m, status: m.status === "open" ? "resolved" : "open" } : m) } })}>{marker.severity} · {marker.status}</button>
-          </div>
-        ))}
-      </div>
+      <CoordinationPanel markers={markers} findings={reviewReady ? reviewFindings : []} onChange={(next) => update({ review: { markers: next } })}
+        modelIds={[...c.towers, ...c.amenities, ...c.interiors, ...c.exteriors, ...(c.drafts ?? []), ...(c.mep?.elements ?? []), ...(c.structuralGrid ?? []), ...c.towers.flatMap(tower => tower.openings ?? []), ...c.interiors.flatMap(room => [...(room.openings ?? []), ...(room.furniture ?? []), ...(room.mep?.elements ?? [])])].map(item => item.id)}
+        gridIds={(c.structuralGrid ?? []).map(grid => grid.id)} selectedId={selectedId} selectedPosition={selectedTower ?? selectedAmenity ?? selectedDraft}
+        onSelect={setSelectedId} presentationApi={presentationApi} projectName={projectName} />
     </Section>
   );
 
@@ -1456,6 +1434,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
         {/* Right: 3D scene */}
         <div className="relative min-h-[420px] flex-1">
            <CommunityScene
+             onPresentationReady={setPresentationApi}
             design={c}
             selectedId={selectedId}
             onSelect={setSelectedId}
@@ -1467,7 +1446,7 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
               setContext(t);
             }}
            />
-           {design && <div className="absolute bottom-3 left-3 z-10"><VisualizationControls design={design} onChange={(next) => onVisualizationChange?.(next)} /></div>}
+           {design && <div className="absolute bottom-3 left-3 z-10"><VisualizationControls design={design} presentationApi={presentationApi} onChange={(next) => onVisualizationChange?.(next)} /></div>}
           <div className="pointer-events-none absolute left-3 top-3 rounded-xl bg-slate-950/80 px-3 py-2 text-xs text-slate-300 backdrop-blur">
             {branch === "residential" ? "Residential community" : "Commercial complex"} · drag objects to move · right-click for actions
           </div>

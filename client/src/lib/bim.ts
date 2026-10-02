@@ -211,6 +211,11 @@ function ifcGuid(key: string): string {
   return result;
 }
 
+/** Stable IFC product GUID used by source-linked coordination exchanges. */
+export function ifcSourceGuid(sourceId: string, grid = false): string {
+  return ifcGuid(`groundwork-ifc4:${grid ? "grid" : "product"}:${sourceId}`);
+}
+
 export interface BimValidationIssue {
   id: string;
   message: string;

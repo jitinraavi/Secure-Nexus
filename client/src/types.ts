@@ -553,6 +553,34 @@ export interface ReviewMarker {
   x: number;
   z: number;
   targetIds?: string[];
+  category?: string;
+  assignee?: string;
+  dueDate?: string;
+  workflowStatus?: "open" | "in-progress" | "resolved";
+  createdAt?: string;
+  updatedAt?: string;
+  sourceFindingId?: string;
+  groupKey?: string;
+  bcfTopicGuid?: string;
+  comments?: ReviewComment[];
+  viewpoint?: ReviewViewpoint;
+}
+
+export interface ReviewComment {
+  id: string;
+  text: string;
+  author?: string;
+  createdAt: string;
+}
+
+export interface ReviewViewpoint {
+  position: [number, number, number];
+  direction: [number, number, number];
+  up: [number, number, number];
+  fieldOfView?: number;
+  viewToWorldScale?: number;
+  cameraType?: "perspective" | "orthographic";
+  componentGuids?: string[];
 }
 
 export interface DesignReview {
@@ -578,6 +606,8 @@ export interface DocumentationSheet {
   name: string;
   viewIds: string[];
   titleBlock?: string;
+  scheduleIds?: string[];
+  revisionIds?: string[];
 }
 
 export interface DocumentationRevision {
@@ -593,6 +623,7 @@ export interface DocumentationAnnotation {
   text: string;
   tag?: string;
   viewId?: string;
+  targetId?: string;
   x?: number;
   z?: number;
 }
@@ -602,6 +633,10 @@ export interface DocumentationSchedule {
   name: string;
   fields: string[];
   category: "rooms" | "furniture" | "levels" | "mep" | "objects";
+  filters?: { field: string; operator: "contains" | "equals" | "greater-than" | "less-than"; value: string }[];
+  sortField?: string;
+  sortDirection?: "asc" | "desc";
+  groupBy?: string;
 }
 
 export interface DocumentationMetadata {
