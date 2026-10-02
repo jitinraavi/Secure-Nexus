@@ -22,6 +22,7 @@ import { CollaborationStatus } from "../components/CollaborationStatus";
 import { SheetHeader } from "../components/SheetHeader";
 import { ProjectHistory } from "../components/ProjectHistory";
 import { TeamCollaborationPanel } from "../components/TeamCollaborationPanel";
+import { PerformancePanel } from "../components/PerformancePanel";
 import { VisualizationControls } from "../components/VisualizationControls";
 import { visualizationSettings } from "../lib/visualization";
 
@@ -483,6 +484,7 @@ export function Editor() {
            <div className="flex-1" />
            <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
            <TeamCollaborationPanel projectId={id!} />
+           <PerformancePanel design={design} />
            <Badge tone={residentialProject ? "emerald" : "cyan"}>
             {PROJECT_TYPE_LABELS[projectType] ?? projectType}
           </Badge>
@@ -526,6 +528,7 @@ export function Editor() {
            <div className="flex-1" />
            <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
            <TeamCollaborationPanel projectId={id!} />
+           <PerformancePanel design={design} />
            <Badge tone="amber">{INFRA_LABELS[infraKind]}</Badge>
         </div>
         <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner className="h-6 w-6 text-amber-300" /></div>}>
@@ -559,6 +562,7 @@ export function Editor() {
 
           <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
            <TeamCollaborationPanel projectId={id!} />
+           <PerformancePanel design={design} />
           <Badge tone="slate">{design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} items</Badge>
 
         <Button variant="secondary" size="sm" onClick={() => setCameraOpen(true)} disabled={!canUseCamera}>
