@@ -148,6 +148,44 @@ CREATE TABLE IF NOT EXISTS project_collaboration_items (
 
 CREATE INDEX IF NOT EXISTS idx_project_collaboration_items_project ON project_collaboration_items(project_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS project_members (
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role        TEXT NOT NULL CHECK(role IN ('editor','viewer')),
+  invited_by  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (project_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS project_locks (
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  object_id   TEXT NOT NULL,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token       TEXT NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (project_id, object_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_locks_expiry ON project_locks(expires_at);
+
+CREATE TABLE IF NOT EXISTS project_operations (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  operation_id    TEXT NOT NULL,
+  base_revision   INTEGER NOT NULL,
+  result_revision INTEGER NOT NULL,
+  kind            TEXT NOT NULL,
+  payload         TEXT NOT NULL,
+  created_at      INTEGER NOT NULL,
+  UNIQUE(project_id, operation_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_operations_project ON project_operations(project_id, id DESC);
+
 CREATE TABLE IF NOT EXISTS payments (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
