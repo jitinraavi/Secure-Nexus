@@ -1,17 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import {
   createProject,
   deleteProject,
+  duplicateProject,
   getAuditStats,
   getPlans,
   listProjects,
+  patchProject,
   type PlansResponse,
 } from "../api";
 import type { AuditStats, Project, ProjectType } from "../types";
 import { PROJECT_TYPE_LABELS } from "../types";
-import { Badge, Button, Card, Input, Modal, Spinner } from "../components/ui";
+import { Badge, Button, Card, Input, Modal, Select, Spinner, Toggle } from "../components/ui";
 import { useToast } from "../components/Toast";
 import { formatMoney, timeAgo } from "../lib/format";
 import { cn } from "../lib/cn";
@@ -52,6 +54,18 @@ export function Dashboard() {
   const [creating, setCreating] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Project | null>(null);
+  const [search, setSearch] = useState("");
+  const [libraryView, setLibraryView] = useState("active");
+  const [folderFilter, setFolderFilter] = useState("all");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [libraryProject, setLibraryProject] = useState<Project | null>(null);
+  const [folder, setFolder] = useState("");
+  const [isTemplate, setIsTemplate] = useState(false);
+  const [libraryBusy, setLibraryBusy] = useState(false);
+  const [copyProject, setCopyProject] = useState<Project | null>(null);
+  const [copyName, setCopyName] = useState("");
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const deleting = useRef(false);
 
   const load = useCallback(async () => {
@@ -60,8 +74,9 @@ export function Dashboard() {
       setStats(s);
       setPlans(p);
       setProjects(proj);
-    } catch {
-      /* handled by global error state fallback */
+      setLoadError("");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Could not load your workspace");
     }
   }, []);
 
@@ -101,6 +116,52 @@ export function Dashboard() {
     }
   };
 
+  const folders = useMemo(() => [...new Set((projects ?? []).map((project) => project.folder?.trim()).filter((value): value is string => Boolean(value)))].sort(), [projects]);
+  const visibleProjects = useMemo(() => (projects ?? []).filter((project) => {
+    const matchesView = libraryView === "all" || (libraryView === "archive" ? Boolean(project.archived) : libraryView === "templates" ? Boolean(project.isTemplate) : !project.archived);
+    const matchesFolder = folderFilter === "all" || (project.folder ?? "") === folderFilter.slice(7);
+    const matchesRole = roleFilter === "all" || (roleFilter === "owned" ? project.role === "owner" : project.role !== "owner");
+    return matchesView && matchesFolder && matchesRole && `${project.name} ${project.folder ?? ""} ${PROJECT_TYPE_LABELS[project.projectType]}`.toLowerCase().includes(search.trim().toLowerCase());
+  }), [projects, libraryView, folderFilter, roleFilter, search]);
+
+  const organize = async () => {
+    if (!libraryProject || libraryBusy) return;
+    setLibraryBusy(true);
+    try {
+      await patchProject(libraryProject.id, { folder: folder.trim(), isTemplate, baseRevision: libraryProject.revision });
+      setLibraryProject(null);
+      await load();
+      toast.push({ title: "Project library updated", tone: "success" });
+    } catch (err) {
+      toast.push({ title: "Library update failed", description: err instanceof Error ? err.message : undefined, tone: "error" });
+    } finally { setLibraryBusy(false); }
+  };
+
+  const archive = async (project: Project) => {
+    if (libraryBusy) return;
+    setLibraryBusy(true);
+    try {
+      await patchProject(project.id, { archived: !project.archived, baseRevision: project.revision });
+      await load();
+      toast.push({ title: project.archived ? "Project restored to active work" : "Project archived", tone: "info" });
+    } catch (err) {
+      toast.push({ title: "Archive update failed", description: err instanceof Error ? err.message : undefined, tone: "error" });
+    } finally { setLibraryBusy(false); }
+  };
+
+  const duplicate = async () => {
+    if (!copyProject || !copyName.trim() || copyBusy) return;
+    setCopyBusy(true);
+    try {
+      const created = await duplicateProject(copyProject.id, copyName.trim());
+      setCopyProject(null);
+      await load();
+      navigate(`/editor/${created.id}`);
+    } catch (err) {
+      toast.push({ title: "Could not copy project", description: err instanceof Error ? err.message : undefined, tone: "error" });
+    } finally { setCopyBusy(false); }
+  };
+
   const planBadge =
     user?.plan === "studio" ? (
       <Badge tone="emerald">Studio</Badge>
@@ -131,6 +192,8 @@ export function Dashboard() {
         </Button>
       </div>
 
+      {loadError && <Card className="p-4 text-sm text-rose-300"><p>{loadError}</p><Button className="mt-3" variant="secondary" onClick={() => void load()}>Retry loading</Button></Card>}
+
       {stats ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard label="Projects" value={stats.projectsCount} accent="bg-emerald-500/10 text-emerald-400" icon="M4 13h6V4H4v9zm0 7h6v-5H4v5zm10 0h6v-9h-6v9zm0-16v5h6V4h-6z" />
@@ -138,6 +201,7 @@ export function Dashboard() {
           <StatCard label="Logins (24h)" value={stats.logins24h} accent="bg-emerald-500/10 text-emerald-400" icon="M16 13l-4 4-2-2m2 2V7" />
           <StatCard label="Failed logins (24h)" value={stats.failedLogins24h} accent={stats.failedLogins24h > 0 ? "bg-rose-500/10 text-rose-400" : "bg-emerald-500/10 text-emerald-400"} icon="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" />
         </div>
+
       ) : (
         <div className="flex h-24 items-center justify-center"><Spinner className="h-6 w-6 text-emerald-400" /></div>
       )}
@@ -151,6 +215,20 @@ export function Dashboard() {
             </Link>
           ) : null}
         </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Input label="Search projects" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, folder or project type" />
+          <Select label="Library view" value={libraryView} onChange={(event) => setLibraryView(event.target.value)}>
+            <option value="active">Active projects</option><option value="archive">Archived projects</option><option value="templates">Templates</option><option value="all">All projects</option>
+          </Select>
+          <Select label="Folder" value={folderFilter} onChange={(event) => setFolderFilter(event.target.value)}>
+            <option value="all">All folders</option><option value="folder:">Unfiled</option>{folders.map((name) => <option key={name} value={`folder:${name}`}>{name}</option>)}
+          </Select>
+          <Select label="Access" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+            <option value="all">All accessible projects</option><option value="owned">Owned by me</option><option value="shared">Shared with me</option>
+          </Select>
+        </div>
+        <p className="text-xs text-slate-500">Archiving organizes the library and preserves design access, collaborators and share links. Free accounts can keep one owned project active.</p>
 
         {projects === null ? (
           <div className="flex h-40 items-center justify-center"><Spinner className="h-6 w-6 text-emerald-400" /></div>
@@ -170,7 +248,8 @@ export function Dashboard() {
           </Card>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.map((p) => (
+            {visibleProjects.length === 0 && <Card className="p-6 text-sm text-slate-400">No projects match these library filters.</Card>}
+            {visibleProjects.map((p) => (
               <Card key={p.id} className="group overflow-hidden">
                 <Link to={`/editor/${p.id}`} className="block">
                   {p.hasPhoto ? (
@@ -196,8 +275,14 @@ export function Dashboard() {
                           {p.widthMm / 1000} × {p.depthMm / 1000} m · updated {timeAgo(p.updatedAt)}
                         </p>
                       </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <Badge tone="slate">{p.role ?? "owner"}</Badge>
+                        {p.folder && <Badge tone="slate">{p.folder}</Badge>}
+                        {p.archived && <Badge tone="amber">Archived</Badge>}
+                        {p.isTemplate && <Badge tone="emerald">Template</Badge>}
+                      </div>
                     </div>
-                    <button
+                    {p.role === "owner" && <button
                       onClick={() => setConfirmDelete(p)}
                       className="rounded-lg p-1.5 text-slate-400 opacity-60 transition hover:bg-rose-500/10 hover:text-rose-400 sm:opacity-0 sm:group-hover:opacity-100"
                       aria-label={`Delete ${p.name}`}
@@ -205,7 +290,14 @@ export function Dashboard() {
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M3 6h18M8 6V4h8v2m1 0v14a2 2 0 01-2 2H9a2 2 0 01-2-2V6" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
-                    </button>
+                    </button>}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => { setCopyProject(p); setCopyName(`${p.name} copy`.slice(0, 80)); }}>{p.isTemplate ? "Use template" : "Duplicate"}</Button>
+                    {p.role === "owner" && <>
+                      <Button size="sm" variant="ghost" onClick={() => { setLibraryProject(p); setFolder(p.folder ?? ""); setIsTemplate(Boolean(p.isTemplate)); }}>Organize</Button>
+                      <Button size="sm" variant="ghost" disabled={libraryBusy} onClick={() => void archive(p)}>{p.archived ? "Restore" : "Archive"}</Button>
+                    </>}
                   </div>
                 </div>
               </Card>
@@ -255,6 +347,24 @@ export function Dashboard() {
         </form>
       </Modal>
 
+      <Modal open={Boolean(libraryProject)} onClose={() => setLibraryProject(null)} title={`Organize ${libraryProject?.name ?? "project"}`}>
+        <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void organize(); }}>
+          <Input label="Folder" value={folder} onChange={(event) => setFolder(event.target.value)} maxLength={80} placeholder="Campus / Building A" list="project-folders" />
+          <datalist id="project-folders">{folders.map((name) => <option key={name} value={name} />)}</datalist>
+          <Toggle checked={isTemplate} onChange={setIsTemplate} label="Use this project as a template" />
+          <p className="text-xs text-slate-400">Templates remain accessible to their existing project members. Using a template creates a separate owned design without its photos, permissions, history or share links.</p>
+          <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setLibraryProject(null)}>Cancel</Button><Button type="submit" loading={libraryBusy}>Save library settings</Button></div>
+        </form>
+      </Modal>
+
+      <Modal open={Boolean(copyProject)} onClose={() => setCopyProject(null)} title={copyProject?.isTemplate ? "Create from template" : "Duplicate project"}>
+        <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void duplicate(); }}>
+          <Input label="New project name" value={copyName} onChange={(event) => setCopyName(event.target.value)} minLength={1} maxLength={80} required />
+          <p className="text-xs text-slate-400">Copies the saved design and dimensions into your account. Photos, team access, history and share links remain with the source.</p>
+          <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setCopyProject(null)}>Cancel</Button><Button type="submit" loading={copyBusy}>Create & open</Button></div>
+        </form>
+      </Modal>
+
       <Modal open={Boolean(confirmDelete)} onClose={() => setConfirmDelete(null)} title="Delete project?">
         <p className="text-sm text-slate-300">
           "{confirmDelete?.name}" and its design data will be permanently deleted. This cannot be undone.
@@ -267,3 +377,4 @@ export function Dashboard() {
     </div>
   );
 }
+

@@ -323,13 +323,19 @@ export function createProject(name: string, projectType: string = "house") {
   });
 }
 
+export function duplicateProject(id: string, name: string): Promise<Project> {
+  return request<Project>(`/api/projects/${encodeURIComponent(id)}/duplicate`, {
+    method: "POST", body: JSON.stringify({ name }),
+  });
+}
+
 export async function getProject(id: string): Promise<ProjectDetail> {
   return request<ProjectDetail>(`/api/projects/${id}`, { method: "GET" });
 }
 
 export function patchProject(
   id: string,
-  patch: { name?: string; projectType?: string; widthMm?: number; depthMm?: number; designData?: string; baseRevision?: number },
+  patch: { name?: string; projectType?: string; widthMm?: number; depthMm?: number; designData?: string; baseRevision?: number; folder?: string; archived?: boolean; isTemplate?: boolean },
 ) {
   return request<{ ok: boolean; revision: number }>(`/api/projects/${id}`, {
     method: "PATCH",
@@ -484,6 +490,27 @@ export function getSharedProject(token: string): Promise<SharedProject> {
 }
 
 /* ---------------------------------- Audit --------------------------------- */
+
+export interface AuditQuery {
+  limit?: number;
+  action?: string;
+  beforeId?: number;
+  snapshotId?: number;
+  from?: number;
+  to?: number;
+}
+
+export interface AuditPage {
+  events: AuditEvent[];
+  snapshotId: number;
+  nextBeforeId: number | null;
+}
+
+export function getAuditPage(query: AuditQuery = {}): Promise<AuditPage> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
+  return request<AuditPage>(`/api/audit?${params.toString()}`, { method: "GET" });
+}
 
 export async function getAuditLog(limit = 100): Promise<AuditEvent[]> {
   const res = await request<{ events: AuditEvent[] }>(`/api/audit?limit=${limit}`, { method: "GET" });

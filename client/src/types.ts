@@ -52,6 +52,9 @@ export interface Project {
   hasPhoto: boolean;
   revision: number;
   role?: "owner" | "editor" | "viewer";
+  folder?: string;
+  archived?: boolean;
+  isTemplate?: boolean;
 }
 
 export interface ProjectDetail extends Project {

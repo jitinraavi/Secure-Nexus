@@ -3,6 +3,7 @@ import { randomInt } from "node:crypto";
 import qrcode from "qrcode";
 import { logAudit } from "../audit.js";
 import {
+  COOKIE_SESSION,
   IS_PROD,
   LOCK_SECONDS,
   MAIL,
@@ -10,6 +11,7 @@ import {
   OTP_MAX_ATTEMPTS,
   OTP_RESEND_COOLDOWN_SECONDS,
   OTP_TTL_SECONDS,
+  SESSION_TTL_SECONDS,
 } from "../config.js";
 import { hashPassword, randomId, randomToken, sha256Hex, verifyPassword } from "../crypto.js";
 import { db, now } from "../db.js";
@@ -21,7 +23,9 @@ import {
   clearSessionCookie,
   createSession,
   resolveSession,
+  requireSession,
   setCsrfCookie,
+  setSessionCookie,
 } from "../security.js";
 import { generateTotpSecret, totpIssuerUri, verifyTotp } from "../totp.js";
 import {
@@ -509,13 +513,15 @@ router.post(
     }
 
     db.prepare(
-      "UPDATE sessions SET status = 'active', expires_at = ?, updated_at = ? WHERE id = ?",
-    ).run(now() + 60 * 60 * 24 * 7, now(), session.id);
+      "UPDATE sessions SET status = 'active', expires_at = ?, last_seen_at = ? WHERE id = ?",
+    ).run(now() + SESSION_TTL_SECONDS, now(), session.id);
     logAudit(user.id, "auth.2fa_verified", "Two-factor authentication passed", req);
 
     const csrf = randomToken(24);
     db.prepare("UPDATE sessions SET csrf_token = ? WHERE id = ?").run(csrf, session.id);
     setCsrfCookie(res, csrf);
+    const rawToken = (req.cookies as Record<string, unknown> | undefined)?.[COOKIE_SESSION];
+    if (typeof rawToken === "string") setSessionCookie(res, rawToken, SESSION_TTL_SECONDS);
 
     res.json({
       user: publicUser(user),
@@ -570,6 +576,10 @@ router.get("/me", (req, res) => {
   }
   res.json({ user: publicUser(user), csrfToken: session.csrf_token });
 });
+
+// Account changes and session management require the completed authentication flow.
+// Login, verification, logout and pending-session status routes above remain reachable.
+router.use(requireSession);
 
 /* PATCH /api/auth/profile — update country / phone / account type / GSTIN */
 router.patch(
@@ -860,3 +870,4 @@ router.post(
 );
 
 export default router;
+

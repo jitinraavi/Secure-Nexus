@@ -49,7 +49,14 @@ app.use(
 );
 
 app.use(cookieParser());
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({
+  limit: "256kb",
+  verify: (req, _res, buffer) => {
+    if ((req.url ?? "").split("?")[0] === "/api/payments/webhook") {
+      (req as express.Request & { paymentWebhookBody?: Buffer }).paymentWebhookBody = Buffer.from(buffer);
+    }
+  },
+}));
 
 app.use("/api", apiLimiter);
 app.use("/api", csrfProtection);
@@ -134,3 +141,4 @@ app.listen(PORT, () => {
     console.log(`[groundwork] Serving static client from ${CLIENT_DIST}`);
   }
 });
+

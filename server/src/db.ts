@@ -251,6 +251,15 @@ if (!projectCols.includes("project_type")) {
 if (!projectCols.includes("revision")) {
   raw.exec("ALTER TABLE projects ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;");
 }
+if (!projectCols.includes("folder")) {
+  raw.exec("ALTER TABLE projects ADD COLUMN folder TEXT NOT NULL DEFAULT '';");
+}
+if (!projectCols.includes("archived")) {
+  raw.exec("ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;");
+}
+if (!projectCols.includes("is_template")) {
+  raw.exec("ALTER TABLE projects ADD COLUMN is_template INTEGER NOT NULL DEFAULT 0;");
+}
 
 export type Db = typeof raw;
 export const db: Db = raw;

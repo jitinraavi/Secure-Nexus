@@ -12,7 +12,7 @@ const AAD = "groundwork:vault";
 
 router.use((req: AuthedRequest, res, next) => {
   const session = resolveSession(req);
-  if (!session) {
+  if (!session || session.status !== "active") {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
