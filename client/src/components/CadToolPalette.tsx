@@ -6,6 +6,9 @@ export type CadTool =
   | "rotate"
   | "measure"
   | "line"
+  | "polyline"
+  | "arc"
+  | "spline"
   | "rectangle"
   | "circle"
   | "dimension"
@@ -16,6 +19,8 @@ export type CadTool =
   | "offset"
   | "trim"
   | "extend"
+  | "fillet"
+  | "chamfer"
   | "mirror"
   | "array"
   | "extrude"
@@ -28,6 +33,9 @@ const TOOLS: { id: CadTool; label: string; shortcut: string }[] = [
   { id: "rotate", label: "Rotate", shortcut: "R" },
   { id: "measure", label: "Measure", shortcut: "D" },
   { id: "line", label: "Line", shortcut: "L" },
+  { id: "polyline", label: "Polyline", shortcut: "PL" },
+  { id: "arc", label: "Arc", shortcut: "A" },
+  { id: "spline", label: "Spline", shortcut: "SPL" },
   { id: "rectangle", label: "Rectangle", shortcut: "REC" },
   { id: "circle", label: "Circle", shortcut: "C" },
   { id: "dimension", label: "Dimension", shortcut: "DI" },
@@ -38,6 +46,8 @@ const TOOLS: { id: CadTool; label: string; shortcut: string }[] = [
   { id: "offset", label: "Offset", shortcut: "O" },
   { id: "trim", label: "Trim", shortcut: "TR" },
   { id: "extend", label: "Extend", shortcut: "EX" },
+  { id: "fillet", label: "Fillet", shortcut: "F" },
+  { id: "chamfer", label: "Chamfer", shortcut: "CHA" },
   { id: "mirror", label: "Mirror", shortcut: "MI" },
   { id: "array", label: "Array", shortcut: "AR" },
   { id: "extrude", label: "Extrude", shortcut: "EXT" },
