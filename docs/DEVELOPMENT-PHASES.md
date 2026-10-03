@@ -57,3 +57,9 @@ The next coherent increment connects supported Community Editor structural excha
 [Coordinated MEP](MEP-SYSTEM-ASSESSMENT.md) links authored water/air/fire terminals, one-driver duty paths, supplied catalog curves, motor efficiency/nameplate power, circuit power mappings and protection criteria. Nonconverged or inconsistent duties cannot pass; fire storage follows simultaneous demand and duration. National classification, wiring tables, thermal HVAC sizing and manufacturer approval remain unsupported.
 
 Engineering workspace version 3 adds these three inputs and captured reports while recovering versions 1 and 2 without recalculation. Strict new-module parsers reject unsupported fields and ambiguous referenced criteria. Source review covers formulas, data contracts, finite limits and recovery; compilation, numerical fixtures and all executed acceptance remain deferred. Phase 3 remains in progress and Phases 4-9 retain their pending positions.
+
+## Indian national clause increment
+
+The [IS 456 flexure/reinforcement subset](NATIONAL-STRUCTURAL-CHECKS.md) evaluates declared rectangular singly reinforced ordinary beams with zero axial force, fixed code steel modulus, published stress-block/strain rules and reinforcement limits. Overreinforced/non-yielding scope receives no accepted capacity. [Table 18 gravity/wind recipes](NATIONAL-LOAD-RECIPES.md) generate sourced collapse and optional short-term serviceability factors against exactly mapped characteristic actions, without structural analysis or inferred hazards/directions.
+
+Workspace version 4 adds these modules with legacy version 1-3 recovery. The country's matching adopted 2000 edition, reviewer and explicit amendment scope govern availability. US/other national algorithms, seismic/hazard generators and broader design/detailing remain required work; no Indian rules are substituted for another country. Every report remains unverified and whole-code compliance unassessed.
