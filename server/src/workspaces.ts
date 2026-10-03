@@ -145,7 +145,7 @@ export function saveWorkspace(projectId: string, kind: WorkspaceKind, actor: Wor
 export function pruneWorkspaceHistory(projectId: string, kind: WorkspaceKind, actor: WorkspaceActor, beforeRevision: number): WorkspaceState & { deleted: number } {
   return withTransaction(() => {
     const { access, project } = authorize(projectId, actor, true);
-    const deleted = Number(db.prepare("DELETE FROM project_workspace_snapshots WHERE project_id=? AND kind=? AND revision<? AND revision<>COALESCE((SELECT current_revision FROM project_workspaces WHERE project_id=? AND kind=?),0)")
+    const deleted = Number(db.prepare("DELETE FROM project_workspace_snapshots WHERE project_id=? AND kind=? AND revision<? AND revision<>COALESCE((SELECT current_revision FROM project_workspaces WHERE project_id=? AND kind=?),0) AND NOT EXISTS (SELECT 1 FROM project_native_jobs j WHERE j.project_id=project_workspace_snapshots.project_id AND j.workspace_kind=project_workspace_snapshots.kind AND j.source_workspace_revision=project_workspace_snapshots.revision)")
       .run(projectId, kind, beforeRevision, projectId, kind).changes);
     tenantAudit(access, actor, "workspace.prune", { kind, beforeRevision, deleted });
     return { ...state(project, access, kind), deleted };
@@ -219,9 +219,9 @@ export function deleteWorkspaceArtifact(projectId: string, artifactId: string, a
     const { access } = authorize(projectId, actor, true);
     const artifact = db.prepare("SELECT kind,size FROM project_workspace_artifacts WHERE id=? AND project_id=?").get(artifactId, projectId) as { kind: WorkspaceKind; size: number } | undefined;
     if (!artifact) throw new WorkspaceError(404, "Artifact not found", "ARTIFACT_NOT_FOUND");
-    const referenced = db.prepare("SELECT 1 AS found FROM project_workspace_snapshots WHERE project_id=? AND payload_artifact_id=? UNION ALL SELECT 1 AS found FROM project_workspace_artifact_refs WHERE project_id=? AND artifact_id=? LIMIT 1")
-      .get(projectId, artifactId, projectId, artifactId);
-    if (referenced) throw new WorkspaceError(409, "Artifact is referenced by saved workspace history", "ARTIFACT_REFERENCED");
+    const referenced = db.prepare("SELECT 1 AS found FROM project_workspace_snapshots WHERE project_id=? AND payload_artifact_id=? UNION ALL SELECT 1 AS found FROM project_workspace_artifact_refs WHERE project_id=? AND artifact_id=? UNION ALL SELECT 1 AS found FROM project_native_jobs WHERE project_id=? AND input_artifact_id=? UNION ALL SELECT 1 AS found FROM project_native_job_artifacts WHERE project_id=? AND artifact_id=? LIMIT 1")
+      .get(projectId, artifactId, projectId, artifactId, projectId, artifactId, projectId, artifactId);
+    if (referenced) throw new WorkspaceError(409, "Artifact is referenced by saved workspace history or a native job", "ARTIFACT_REFERENCED");
     db.prepare("DELETE FROM project_workspace_artifacts WHERE id=? AND project_id=?").run(artifactId, projectId);
     tenantAudit(access, actor, "workspace.artifact.delete", { artifactId, kind: artifact.kind, size: artifact.size });
   });

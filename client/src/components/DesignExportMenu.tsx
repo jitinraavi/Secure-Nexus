@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { Badge, Button, Input, Modal, Select } from "./ui";
 import { useToast } from "./Toast";
 import { download, downloadBlob } from "../lib/download";
@@ -12,6 +13,7 @@ import { buildBcfZip } from "../lib/bcf";
 import { technicalGraphicsSettings } from "../lib/technicalGraphics";
 
 export function DesignExportMenu({ design, projectName, onChange }: { design: Design; projectName?: string; onChange?: (design: Design) => void }) {
+  const { id: projectId } = useParams<{ id: string }>();
   const [open, setOpen] = useState(false);
   const [cadStatus, setCadStatus] = useState<CadExchangeStatusResponse | null>(null);
   const docs = documentationFor(design);
@@ -24,7 +26,7 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
   const toast = useToast();
   const stem = (projectName || "design").trim().replace(/[^\w-]+/g, "-").toLowerCase() || "design";
   useEffect(() => { getCadExchangeStatus().then(setCadStatus).catch(() => setCadStatus(null)); }, []);
-  const dwgProvider = cadStatus?.providers[0];
+  const dwgCapability = cadStatus?.nativeCapabilities?.find(item => item.kind === "dxf-to-dwg");
   const updateDocs = (patch: Partial<typeof docs>) => onChange?.({ ...design, documentation: { ...docs, ...patch } });
   const updateProfile = (profileId: string) => onChange?.({ ...design, compliance: { profileId } });
   const update = <T extends { id: string }>(key: "views" | "sheets" | "annotations" | "schedules" | "revisions", id: string, patch: Partial<T>) => {
@@ -38,6 +40,7 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
   } as Partial<typeof docs>);
   const add = (key: "views" | "sheets" | "annotations" | "schedules" | "revisions", value: DocumentationView | DocumentationSheet | DocumentationAnnotation | DocumentationSchedule | DocumentationRevision) => updateDocs({ [key]: [...docs[key], value] } as Partial<typeof docs>);
   const exportFile = async (format: "dxf" | "ifc") => {
+    try {
     if (format === "dxf") {
       const { buildDxf } = await import("../lib/dxf");
       download(`${stem}.dxf`, buildDxf(design), "application/dxf");
@@ -50,6 +53,9 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
     }
     toast.push({ title: `${format.toUpperCase()} downloaded`, description: "Planning and coordination geometry is marked as approximate.", tone: "success" });
     setOpen(false);
+    } catch (error) {
+      toast.push({ title: `${format.toUpperCase()} export failed`, description: error instanceof Error ? error.message : "Could not export this design.", tone: "error" });
+    }
   };
   const exportSheets = async () => {
     try {
@@ -130,8 +136,8 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           <p className="mt-1 text-sm leading-relaxed text-slate-300">{projectName || "Untitled project"} exports a 2D drafting projection and a minimal IFC4 coordination model.</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">Proxy geometry, section cuts, infrastructure forms, and BOQ quantities are approximate planning outputs. Confirm dimensions in authoring software.</p>
           <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-950/40 p-2 text-xs text-slate-400">
-            <span className={dwgProvider?.available ? "text-emerald-300" : "text-amber-300"}>DWG: {dwgProvider?.available ? "licensed provider ready" : "unavailable"}</span>
-            <span className="ml-2">{dwgProvider?.message || "Provider status is loading."}</span>
+            <span className={dwgCapability?.available ? "text-emerald-300" : "text-amber-300"}>DWG: {dwgCapability?.available ? "conversion worker configured" : "unavailable"}</span>
+            <span className="ml-2">{dwgCapability?.reason || "Provider status is loading."}</span>
            </div>
            <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-950/40 p-2 text-xs">
              <div className="flex flex-wrap items-center gap-2"><Badge tone={ifcReport.valid ? "emerald" : "rose"}>{ifcReport.valid ? "IFC validation passed" : "IFC validation blocked"}</Badge><Badge tone={ifcProfile.valid ? "emerald" : "amber"}>{ifcProfile.valid ? "Reference-view preflight passed" : "Reference-view preflight needs work"}</Badge><span className="text-slate-500">{ifcReport.parsedEntities} entities · {ifcReport.guidCount} GUIDs · round-trip {ifcReport.normalized ? "stable" : "changed"}</span></div>
@@ -141,7 +147,8 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
         <div className="grid gap-2 sm:grid-cols-2">
           <Button onClick={() => void exportFile("dxf")}>Download DXF</Button>
            <Button variant="secondary" disabled={!ifcReport.valid} title={ifcReport.valid ? "" : "Resolve IFC validation errors first"} onClick={() => void exportFile("ifc")}>Download IFC STEP</Button>
-          <Button className="sm:col-span-2" variant="outline" disabled={!dwgProvider?.available} title={dwgProvider?.message || "Licensed DWG provider unavailable"}>Download DWG (licensed provider)</Button>
+          <Link className="rounded-xl border border-slate-700 p-3 text-center text-sm sm:col-span-2" to={`/exchange${projectId ? `?project=${encodeURIComponent(projectId)}` : ""}`} onClick={() => setOpen(false)}>Open DWG conversion jobs</Link>
+          <p className="text-xs text-slate-400 sm:col-span-2">Download the current DXF, then submit it in the exchange workbench. LibreDWG conversion preserves the captured source; review the drawing for unsupported entities.</p>
           <Button variant="secondary" onClick={() => void exportBcf()}>Download BCF coordination package</Button>
           <Button variant="outline" onClick={() => download(`${stem}-ifc-validation.json`, JSON.stringify({ roundTrip: ifcReport, profile: ifcProfile }, null, 2), "application/json")}>Download IFC validation report</Button>
           <p className="text-xs text-slate-500">{ifcReport.sourceRoundTrip?.scope} {ifcReport.sourceRoundTrip?.checkedEntities ?? 0} source entities checked.</p>

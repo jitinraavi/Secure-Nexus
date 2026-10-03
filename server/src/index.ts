@@ -14,6 +14,8 @@ import secretRoutes from "./routes/secrets.js";
 import auditRoutes from "./routes/audit.js";
 import projectRoutes from "./routes/projects.js";
 import workspaceRoutes from "./routes/workspaces.js";
+import nativeJobRoutes from "./routes/nativeJobs.js";
+import { startNativeJobWorker } from "./nativeJobWorker.js";
 import paymentRoutes from "./routes/payments.js";
 import assistantRoutes from "./routes/assistant.js";
 import shareRoutes from "./routes/share.js";
@@ -80,6 +82,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/secrets", secretRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/projects/:projectId/workspaces", workspaceRoutes);
+app.use("/api/projects/:projectId/jobs", nativeJobRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/share", shareRoutes);
 app.use("/api/payments", paymentRoutes);
@@ -145,11 +148,23 @@ app.use(
   },
 );
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[groundwork] API listening on http://localhost:${PORT}`);
   console.log(`[groundwork] Environment: ${IS_PROD ? "production" : "development"}`);
   if (fs.existsSync(path.join(CLIENT_DIST, "index.html"))) {
     console.log(`[groundwork] Serving static client from ${CLIENT_DIST}`);
   }
 });
+
+const nativeWorker = startNativeJobWorker();
+let stopping = false;
+async function stopServer(): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  server.close();
+  await nativeWorker.stop();
+  process.exit(0);
+}
+process.once("SIGTERM", () => { void stopServer(); });
+process.once("SIGINT", () => { void stopServer(); });
 

@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link } from "react-router-dom";
 import { Badge, Button, Card, Input, Select } from "../components/ui";
 import { ProjectWorkspacePanel } from "../components/ProjectWorkspacePanel";
+import { ProjectJobsPanel } from "../components/ProjectJobsPanel";
 import type { ProjectDetail } from "../types";
 import { buildIfcStep } from "../lib/bim";
 import { exportIfcMeshObj, exportIfcRoundTrip, importIfcGeometry, type IfcDocument } from "../lib/ifcGeometry";
@@ -129,6 +130,7 @@ export function ExchangeWorkbench() {
   return <main className="mx-auto max-w-6xl space-y-5 p-4 md:p-8">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">BIM and survey exchange</h1><p className="text-sm text-slate-400">Bounded source geometry, information requirements, survey surfaces and civil alignment studies.</p></div><Link to="/dashboard" className="text-sm text-cyan-300">Projects</Link></div>
     <ProjectWorkspacePanel kind="exchange" payload={workspace} onRestore={applyWorkspace} onImportProject={importProject} />
+    <ProjectJobsPanel workspaceKind="exchange" kinds={["dwg-to-dxf", "dxf-to-dwg"]} />
     <div className="flex gap-2">{(["bim", "survey", "civil"] as const).map(value => <Button key={value} variant={tab === value ? "primary" : "secondary"} onClick={() => { setTab(value); setError(""); }}>{value === "bim" ? "IFC / IDS" : value === "survey" ? "Survey / DEM" : "Civil alignment"}</Button>)}</div>
     {error && <p role="alert" className="rounded-xl border border-rose-800 bg-rose-950/40 p-3 text-rose-200">{error}</p>}
     {tab === "bim" && <Card className="space-y-4 p-5">

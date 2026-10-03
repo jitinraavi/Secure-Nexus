@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { ProjectDetail } from "../types";
 import { ProjectWorkspacePanel } from "../components/ProjectWorkspacePanel";
+import { ProjectJobsPanel } from "../components/ProjectJobsPanel";
 import { Badge, Button, Card, Input, Select } from "../components/ui";
 import { download, downloadBlob, zipFiles } from "../lib/download";
 import { engineeringRecord, identifier, requireFinite } from "../lib/engineeringNumerics";
@@ -10,6 +11,7 @@ import { analyzeElectricalCircuit, assessFireFlow, parseFluidNetwork, selectEqui
 import { exportEpanetNetwork, exportOpenSees2D, exportStaadPlane, type SolverDeck } from "../lib/solverAdapters";
 import { importRoutedMepNetwork, importStructuralExchange2D, type FrameBridgeOptions } from "../lib/engineeringModelBridge";
 import { buildStructuralSolverExchange } from "../lib/structuralEngine";
+import { createNativeFrameInput } from "../lib/nativeResults";
 
 type Module = "frame" | "water" | "air" | "electrical" | "fire" | "equipment";
 interface MepBridgeSettings { endpointToleranceM: number; sourceElementId: string; waterSourceHeadM: number; airSourcePressurePa: number; waterTerminalDemandM3s: number; airTerminalDemandM3s: number; roughnessM: number; minorLossKPerSegment: number }
@@ -324,6 +326,12 @@ export default function EngineeringWorkbench() {
       <div className="flex items-center gap-3"><Badge tone="amber">Independent verification required</Badge><Link to="/dashboard" className="text-sm text-amber-300">Projects</Link></div>
     </div>
     <ProjectWorkspacePanel kind="engineering" payload={payload} onRestore={restoreWorkspace} onImportProject={importProject} />
+    <ProjectJobsPanel workspaceKind="engineering" kinds={["opensees-static"]} preparedInputLabel="Queuing captures the structural frame JSON and selected combination shown on this page, even when another browser module is selected. Edit supports, loads and section properties before submission." prepareInput={() => {
+      const model = parseFrameModel(parseInput(inputs.frame)), selectedCombination = combinationId.trim() || undefined;
+      const bytes = createNativeFrameInput(model, selectedCombination), buffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(buffer).set(bytes);
+      return { name: "frame-native-input.json", blob: new Blob([buffer], { type: "application/json" }) };
+    }} />
     <Card className="space-y-3 p-4">
       <Select label="Module" value={module} onChange={event => { importGeneration.current++; setModule(event.target.value as Module); setError(null); }}>{modules.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</Select>
       <p className="text-sm text-slate-300">{description.description}</p>
@@ -391,7 +399,7 @@ export default function EngineeringWorkbench() {
           <div className="flex flex-wrap gap-2"><Button loading={exporting} variant="secondary" size="sm" onClick={() => { void exportDeck("opensees"); }}>OpenSees bundle</Button><Button disabled={exporting} variant="secondary" size="sm" onClick={() => { void exportDeck("staad"); }}>STAAD linear bundle</Button></div>
         </div>}
         {(module === "water" || module === "fire") && <Button loading={exporting} variant="secondary" size="sm" onClick={() => { void exportDeck("epanet"); }}>EPANET input bundle</Button>}
-        <p className="text-xs text-slate-500">Native export writes a deck, original input, tag mapping and limitations. Native executables are run separately by the engineer.</p>
+        <p className="text-xs text-slate-500">Native export writes a deck, original input, tag mapping and limitations. OpenSees can also be queued in Native project jobs when the server worker is configured. STAAD and EPANET bundles require an external native run.</p>
       </Card>
       <Card className="space-y-4 p-4">
         <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">Analysis report</h2><Button variant="secondary" size="sm" disabled={!activeResult} onClick={() => { if (activeResult) download(`engineering-${module}-report.json`, JSON.stringify({ module, sourceInput: parseInput(activeResult.source), report: activeResult.data }, null, 2), "application/json"); }}>Export report</Button></div>

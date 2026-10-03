@@ -20,6 +20,7 @@ import type {
   ProjectMember,
   ProjectObjectLock,
 } from "./types";
+import type { NativeCapability } from "./lib/jobsApi";
 
 export class ApiError extends Error {
   status: number;
@@ -41,6 +42,7 @@ export interface CadProviderStatus {
 
 export interface CadExchangeStatusResponse {
   providers: CadProviderStatus[];
+  nativeCapabilities?: NativeCapability[];
   openFallbacks: string[];
   message: string;
 }
