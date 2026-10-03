@@ -569,8 +569,9 @@ export function buildIfcStep(design: Design): string {
   const boxShape = (item: ExchangeEntity, dims: { width: number; depth: number; height: number }) => {
     if (!dims.width || !dims.depth || !dims.height) return undefined;
     const profilePoint = add("IFCCARTESIANPOINT", "(0.,0.)");
-    const profile = add("IFCRECTANGLEPROFILEDEF", `.AREA.,$,#${profilePoint},${number(dims.width).toFixed(3)},${number(dims.depth).toFixed(3)}`);
-    const solidPlacement = add("IFCAXIS2PLACEMENT3D", `#${origin},$,#${up}`);
+    const profileAxis = add("IFCAXIS2PLACEMENT2D", `#${profilePoint},$`);
+    const profile = add("IFCRECTANGLEPROFILEDEF", `.AREA.,$,#${profileAxis},${number(dims.width).toFixed(3)},${number(dims.depth).toFixed(3)}`);
+    const solidPlacement = add("IFCAXIS2PLACEMENT3D", `#${origin},#${up},#${east}`);
     const solid = add("IFCEXTRUDEDAREASOLID", `#${profile},#${solidPlacement},#${up},${number(dims.height).toFixed(3)}`);
     const representations = [add("IFCSHAPEREPRESENTATION", `#${context},'Body','SweptSolid',(#${solid})`)];
     const points = item.geometry?.points;

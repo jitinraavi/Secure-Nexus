@@ -262,6 +262,92 @@ CREATE TABLE IF NOT EXISTS project_sync_operations (
   UNIQUE(project_id,operation_id)
 );
 CREATE INDEX IF NOT EXISTS idx_project_sync_sequence ON project_sync_operations(project_id,sequence);
+CREATE TABLE IF NOT EXISTS project_workspace_artifacts (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('engineering','exchange','geometry')),
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL CHECK(size > 0 AND size <= 67108864),
+  sha256 TEXT NOT NULL,
+  iv BLOB NOT NULL,
+  tag BLOB NOT NULL,
+  ciphertext BLOB NOT NULL,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(id,project_id,kind)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_artifacts_project ON project_workspace_artifacts(project_id,created_at DESC,id);
+CREATE TABLE IF NOT EXISTS project_workspace_snapshots (
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('engineering','exchange','geometry')),
+  revision INTEGER NOT NULL CHECK(revision > 0),
+  source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+  payload_artifact_id TEXT NOT NULL,
+  referenced_artifact_ids TEXT NOT NULL DEFAULT '[]',
+  updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(project_id,kind,revision),
+  FOREIGN KEY(payload_artifact_id,project_id,kind) REFERENCES project_workspace_artifacts(id,project_id,kind)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_snapshot_payload ON project_workspace_snapshots(payload_artifact_id,project_id,kind);
+CREATE TABLE IF NOT EXISTS project_workspace_artifact_refs (
+  project_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  artifact_id TEXT NOT NULL,
+  PRIMARY KEY(project_id,kind,revision,artifact_id),
+  FOREIGN KEY(project_id,kind,revision) REFERENCES project_workspace_snapshots(project_id,kind,revision) ON DELETE CASCADE,
+  FOREIGN KEY(artifact_id,project_id,kind) REFERENCES project_workspace_artifacts(id,project_id,kind)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_artifact_refs_artifact ON project_workspace_artifact_refs(artifact_id,project_id,kind);
+CREATE TABLE IF NOT EXISTS project_workspaces (
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('engineering','exchange','geometry')),
+  current_revision INTEGER NOT NULL CHECK(current_revision > 0),
+  PRIMARY KEY(project_id,kind),
+  FOREIGN KEY(project_id,kind,current_revision) REFERENCES project_workspace_snapshots(project_id,kind,revision)
+);
+CREATE TABLE IF NOT EXISTS project_native_jobs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('dwg-to-dxf','dxf-to-dwg','opensees-static')),
+  workspace_kind TEXT NOT NULL CHECK(workspace_kind IN ('engineering','exchange')),
+  state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','cancelled')),
+  input_artifact_id TEXT NOT NULL,
+  input_sha256 TEXT NOT NULL,
+  source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+  source_workspace_revision INTEGER,
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 2),
+  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
+  claim_token TEXT,
+  claim_until INTEGER NOT NULL DEFAULT 0,
+  error_code TEXT,
+  error_message TEXT,
+  summary_json TEXT,
+  UNIQUE(project_id,created_by,idempotency_key),
+  UNIQUE(id,project_id,workspace_kind),
+  FOREIGN KEY(input_artifact_id,project_id,workspace_kind) REFERENCES project_workspace_artifacts(id,project_id,kind)
+);
+CREATE INDEX IF NOT EXISTS idx_native_jobs_due ON project_native_jobs(state,claim_until,created_at,id);
+CREATE INDEX IF NOT EXISTS idx_native_jobs_project ON project_native_jobs(project_id,created_at DESC,id);
+CREATE TABLE IF NOT EXISTS project_native_job_artifacts (
+  job_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  workspace_kind TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  PRIMARY KEY(job_id,artifact_id),
+  FOREIGN KEY(job_id,project_id,workspace_kind) REFERENCES project_native_jobs(id,project_id,workspace_kind) ON DELETE CASCADE,
+  FOREIGN KEY(artifact_id,project_id,workspace_kind) REFERENCES project_workspace_artifacts(id,project_id,kind)
+);
+CREATE INDEX IF NOT EXISTS idx_native_job_artifacts_artifact ON project_native_job_artifacts(artifact_id,project_id);
 CREATE TABLE IF NOT EXISTS project_event_outbox (
   event_id INTEGER PRIMARY KEY REFERENCES project_collaboration_events(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
