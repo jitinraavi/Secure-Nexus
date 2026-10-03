@@ -19,15 +19,16 @@ import { analyzeStructuralLoads, parseStructuralLoadInput, structuralLoadExample
 import { assessMepSystems, mepSystemExample, parseMepSystemInput, validateMepSystemReport } from "../lib/mepSystemAssessment";
 import { assessNationalStructure, nationalStructuralExample, parseNationalStructuralInput, validateNationalStructuralReport } from "../lib/nationalStructuralChecks";
 import { generateNationalLoadRecipes, nationalLoadRecipeExample, parseNationalLoadRecipeInput, validateNationalLoadRecipeReport } from "../lib/nationalLoadRecipes";
+import { assessUSSteelCompression, parseUSSteelCompressionInput, usSteelCompressionExample, validateUSSteelCompressionReport } from "../lib/usSteelCompression";
 import { EngineeringBasisPanel } from "../components/EngineeringBasisPanel";
 import { createEngineeringDesignBasis, engineeringBasisFingerprint, parseEngineeringDesignBasis, validateEngineeringDesignBasis, type EngineeringDesignBasis } from "../lib/engineeringBasis";
 
-type Module = "frame" | "frame3d" | "water" | "air" | "electrical" | "fire" | "equipment" | "structural-design" | "loads-drift" | "mep-systems" | "national-structure" | "national-loads";
+type Module = "frame" | "frame3d" | "water" | "air" | "electrical" | "fire" | "equipment" | "structural-design" | "loads-drift" | "mep-systems" | "national-structure" | "national-loads" | "us-steel-compression";
 interface MepBridgeSettings { endpointToleranceM: number; sourceElementId: string; waterSourceHeadM: number; airSourcePressurePa: number; waterTerminalDemandM3s: number; airTerminalDemandM3s: number; roughnessM: number; minorLossKPerSegment: number }
 interface StoredReport { module: Module; source: string; data: unknown; designBasis: EngineeringDesignBasis | null }
 interface ConversionWarnings { module: Module; warnings: string[] }
 interface EngineeringWorkspace {
-  version: 4; designBasis: EngineeringDesignBasis; activeModule: Module; inputs: Record<Module, string>; combinationId: string;
+  version: 5; designBasis: EngineeringDesignBasis; activeModule: Module; inputs: Record<Module, string>; combinationId: string;
   frameBridge: FrameBridgeOptions; frameBridge3d: FrameBridgeOptions3D; mepBridge: MepBridgeSettings;
   conversionWarnings: ConversionWarnings | null; reports: Partial<Record<Module, StoredReport>>;
 }
@@ -44,8 +45,9 @@ const modules: { id: Module; label: string; description: string }[] = [
   { id: "mep-systems", label: "Coordinated MEP systems", description: "Linked water/air/fire networks, catalog equipment duties, motor power and electrical protection assessments with explicit mappings and source data." },
   { id: "national-structure", label: "National structural clauses", description: "Declared-country clause coverage: Indian IS 456:2000 singly reinforced rectangular beam flexure and reinforcement subset; unsupported country/edition/section scope stays explicit." },
   { id: "national-loads", label: "National load combinations", description: "Indian IS 456:2000 Table 18 gravity/wind factor subset applied to explicitly mapped characteristic actions. Generates an editable 3D draft without calculating structural response." },
+  { id: "us-steel-compression", label: "US steel flexural compression", description: "ANSI/AISC 360-22 E3 flexural buckling of declared nonslender rolled I sections, with sourced effective lengths and LRFD/ASD demands. Other column limit states require separate assessment." },
 ];
-const nationalModules = new Set<Module>(["national-structure", "national-loads"]);
+const nationalModules = new Set<Module>(["national-structure", "national-loads", "us-steel-compression"]);
 const advancedModules = new Set<Module>(["structural-design", "loads-drift", "mep-systems", ...nationalModules]);
 
 const waterExample = {
@@ -54,6 +56,7 @@ const waterExample = {
   links: [{ id: "pipe-1", from: "source", to: "terminal", lengthM: 80, diameterM: 0.05, roughnessM: 0.0001, minorLossK: 3, maximumVelocityMps: 2 }],
 };
 const examples: Record<Module, unknown> = {
+  "us-steel-compression": usSteelCompressionExample(),
   "national-structure": nationalStructuralExample(),
   "national-loads": nationalLoadRecipeExample(),
   "structural-design": structuralDesignExample(),
@@ -105,6 +108,7 @@ function parseInput(text: string): unknown {
   return JSON.parse(text) as unknown;
 }
 function calculate(module: Module, value: unknown, basis: EngineeringDesignBasis): unknown {
+  if (module === "us-steel-compression") return assessUSSteelCompression(parseUSSteelCompressionInput(value), basis);
   if (module === "national-structure") return assessNationalStructure(parseNationalStructuralInput(value), basis);
   if (module === "national-loads") return generateNationalLoadRecipes(parseNationalLoadRecipeInput(value), basis);
   if (module === "structural-design") return analyzeStructuralDesign(parseStructuralDesignInput(value), basis);
@@ -151,6 +155,7 @@ function warnings(value: unknown): string[] {
 }
 // Restoring a report validates data without running a solver or recomputing results.
 function validateReportSource(module: Module, value: unknown): void {
+  if (module === "us-steel-compression") { parseUSSteelCompressionInput(value); return; }
   if (module === "national-structure") { parseNationalStructuralInput(value); return; }
   if (module === "national-loads") { parseNationalLoadRecipeInput(value); return; }
   if (module === "structural-design") { parseStructuralDesignInput(value); return; }
@@ -279,6 +284,7 @@ function validateFrameReport3D(report: Record<string, unknown>, source: unknown)
 function validateReport(module: Module, data: unknown, source: unknown, basis: EngineeringDesignBasis | null): void {
   validateReportSource(module, source);
   if (advancedModules.has(module) && basis === null) throw new Error("This report requires its captured engineering design basis.");
+  if (module === "us-steel-compression") { if (!basis || !validateUSSteelCompressionReport(data, parseUSSteelCompressionInput(source), basis)) throw new Error("Saved US E3 report differs from its implemented clause, source or adopted basis."); return; }
   if (module === "national-structure") { if (!basis || !validateNationalStructuralReport(data, parseNationalStructuralInput(source), basis)) throw new Error("Saved national clause report differs from its implemented scope, source or adopted basis."); return; }
   if (module === "national-loads") { if (!basis || !validateNationalLoadRecipeReport(data, parseNationalLoadRecipeInput(source), basis)) throw new Error("Saved national load recipe report differs from its source or adopted basis."); return; }
   if (module === "structural-design") { if (!basis || !validateStructuralDesignReport(data, parseStructuralDesignInput(source), basis)) throw new Error("Saved structural design report does not match its source and declared basis."); return; }
@@ -334,8 +340,8 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
   };
   visit(value, 0);
   const workspace = record(value, "Engineering workspace");
-  if ((workspace.version !== 1 && workspace.version !== 2 && workspace.version !== 3 && workspace.version !== 4) || !isModule(workspace.activeModule)) throw new Error("Engineering workspace version/module is unsupported.");
-  const savedModules = modules.filter(item => workspace.version === 4 || workspace.version === 3 && !nationalModules.has(item.id) || !advancedModules.has(item.id) && (workspace.version !== 1 || item.id !== "frame3d"));
+  if ((workspace.version !== 1 && workspace.version !== 2 && workspace.version !== 3 && workspace.version !== 4 && workspace.version !== 5) || !isModule(workspace.activeModule)) throw new Error("Engineering workspace version/module is unsupported.");
+  const savedModules = modules.filter(item => workspace.version === 5 || (workspace.version === 4 && item.id !== "us-steel-compression") || (workspace.version === 3 && !nationalModules.has(item.id)) || (!advancedModules.has(item.id) && (workspace.version !== 1 || item.id !== "frame3d")));
   if (!savedModules.some(item => item.id === workspace.activeModule)) throw new Error("Active module is not available in the saved workspace version.");
   const designBasis = workspace.version === 1 ? createEngineeringDesignBasis() : parseEngineeringDesignBasis(workspace.designBasis);
   const savedInputs = record(workspace.inputs, "Module inputs"), inputs = {} as Record<Module, string>;
@@ -362,7 +368,7 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
     const reportBasis = workspace.version === 1 || saved.designBasis === null ? null : parseEngineeringDesignBasis(saved.designBasis);
     validateReport(key, saved.data, parseInput(source), reportBasis); reports[key] = { module: key, source, data: saved.data, designBasis: reportBasis };
   }
-  return { version: 4, designBasis, frameBridge3d: frame3d, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
+  return { version: 5, designBasis, frameBridge3d: frame3d, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
 }
 
 function convertGeometry(value: unknown, module: Module, frame: FrameBridgeOptions, mep: MepBridgeSettings, frame3d: FrameBridgeOptions3D) {
@@ -395,7 +401,7 @@ export default function EngineeringWorkbench() {
   const storedResult = reports[module];
   const activeResult = storedResult && storedResult.source === inputs[module] && storedResult.designBasis !== null && engineeringBasisFingerprint(storedResult.designBasis) === basisFingerprint ? storedResult : null;
   const hasGeneratedFrame = !!activeResult && engineeringRecord(activeResult.data) && engineeringRecord(activeResult.data.generatedFrameModel);
-  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 4, designBasis, activeModule: module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports, designBasis]);
+  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 5, designBasis, activeModule: module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports, designBasis]);
   const restoreWorkspace = useCallback((value: unknown) => {
     const restored = parseWorkspace(value);
     importGeneration.current++;
@@ -475,7 +481,7 @@ export default function EngineeringWorkbench() {
       <p className="text-xs text-slate-400">Results use supplied geometry, demands, capacities and criteria. Examples are editable datasets with unverified results. Each report states its mathematical scope and missing design checks.</p>
       {module === "frame3d" && <p className="text-xs text-slate-400">3D input uses explicit member local axes and six support restraints per node. This browser analysis is linear elastic; the native job panel captures the separate planar frame input.</p>}
       {advancedModules.has(module) && <p className="text-xs text-slate-400">Declare the adopted code clauses or approved user criteria and their sources in the input. These modules evaluate their stated bounded methods; country selection does not supply unimplemented hazards, material rules or manufacturer data.</p>}
-      {nationalModules.has(module) && <p className="text-xs text-amber-200">The current national subset requires matching confirmed Indian IS 456:2000 adoption and explicit amendment-scope review. USA and other countries retain their selected basis and receive an unsupported-basis report; Indian rules are not substituted.</p>}
+      {nationalModules.has(module) && <p className="text-xs text-amber-200">{module === "us-steel-compression" ? "This E3 subset requires confirmed US ANSI/AISC 360:2022 adoption, sourced classification/effective lengths and explicit amendment/errata applicability review. E4 and complete governing column capacity remain separate checks." : "These Indian subsets require matching confirmed IS 456:2000 adoption and explicit amendment-scope review."} A different country or unsupported edition retains its selected basis and receives an unsupported-basis report.</p>}
       {basisIssues.length > 0 && <p className="text-xs text-amber-200">Design basis has {basisIssues.length} incomplete declaration fields. Complete the declaration and review this module's supported adoption requirements before applying a result.</p>}
     </Card>
     <div className="grid gap-5 lg:grid-cols-2">

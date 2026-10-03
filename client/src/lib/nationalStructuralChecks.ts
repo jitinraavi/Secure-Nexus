@@ -1,4 +1,4 @@
-import { ENGINEERING_BASIS_PROFILE_VERSION, ENGINEERING_STANDARD_REFERENCES, engineeringBasisFingerprint, parseEngineeringDesignBasis, validateEngineeringDesignBasis, type EngineeringDesignBasis } from "./engineeringBasis";
+import { ENGINEERING_BASIS_PROFILE_VERSION, ENGINEERING_STANDARD_REFERENCES, engineeringBasisFingerprint, isEngineeringSourceUrl, parseEngineeringDesignBasis, validateEngineeringDesignBasis, type EngineeringDesignBasis } from "./engineeringBasis";
 import { engineeringRecord, finiteNumber, identifier, requireFinite } from "./engineeringNumerics";
 
 export interface IS456RectangularCheck {
@@ -99,7 +99,15 @@ function basisGates(source: NationalStructuralInput, basis: EngineeringDesignBas
   for (const check of source.checks) if (check.steelElasticModulusPa.criterionId) {
     const matching = basis.criteria.filter(criterion => criterion.id === check.steelElasticModulusPa.criterionId), criterion = matching[0];
     if (matching.length !== 1 || !criterion || criterion.module !== "frame" || criterion.unit !== "Pa" || criterion.value !== check.steelElasticModulusPa.value || criterion.source !== check.steelElasticModulusPa.source) issues.push(`${check.id}: the steel modulus must exactly match a unique captured frame criterion.`);
-    else if (criterion.standardId && (!standardIds.includes(criterion.standardId) || !criterion.clause?.trim())) issues.push(`${check.id}: the referenced modulus criterion must identify an adopted standard and clause.`);
+    else if (criterion.standardId) {
+      const adoptedMatches = basis.standards.filter(item => item.id === criterion.standardId), adopted = adoptedMatches[0];
+      if (adoptedMatches.length !== 1 || !adopted || !criterion.clause?.trim()) issues.push(`${check.id}: the referenced modulus criterion must identify a unique adopted standard and clause.`);
+      else {
+        if (!adopted.code.trim() || !adopted.edition.trim() || !adopted.adoptionReference.trim() || !adopted.amendments.trim() || !isEngineeringSourceUrl(adopted.sourceUrl)) issues.push(`${check.id}: the modulus criterion's standard requires complete edition, adoption, amendments and HTTPS source.`);
+        const catalog = ENGINEERING_STANDARD_REFERENCES.find(item => item.id === adopted.id);
+        if (catalog && (catalog.countryCode !== basis.countryCode || catalog.code !== adopted.code || catalog.domain !== adopted.domain || !catalog.editions.includes(adopted.edition) || catalog.sourceUrl !== adopted.sourceUrl)) issues.push(`${check.id}: the modulus criterion's catalog reference differs from its country, code, domain, edition or publisher.`);
+      }
+    }
   }
   return issues;
 }
@@ -188,7 +196,7 @@ export function validateNationalStructuralReport(value: unknown, input: National
     if (JSON.stringify(parseNationalStructuralInput(raw.source)) !== JSON.stringify(source) || engineeringBasisFingerprint(parseEngineeringDesignBasis(raw.basis)) !== engineeringBasisFingerprint(basis)) return false;
     const gates = basisGates(source, basis), supported = gates.length === 0;
     if (raw.status !== (supported ? "assessed-subset" : "unsupported-basis")) return false;
-    const clauses = textList(raw.implementedClauses, "implementedClauses", 10), basisIssues = textList(raw.basisIssues, "basisIssues", 500); textList(raw.warnings, "warnings", 30);
+    const clauses = textList(raw.implementedClauses, "implementedClauses", 10), basisIssues = textList(raw.basisIssues, "basisIssues", 1000); textList(raw.warnings, "warnings", 30);
     if (JSON.stringify(basisIssues) !== JSON.stringify([...gates, ...validateEngineeringDesignBasis(basis)])) return false;
     if (JSON.stringify(clauses) !== JSON.stringify(supported ? CLAUSES : []) || !Array.isArray(raw.results) || raw.results.length !== (supported ? source.checks.length : 0)) return false;
     for (let i = 0; i < raw.results.length; i++) {
