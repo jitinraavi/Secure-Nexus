@@ -1,3 +1,5 @@
+import type { EngineeringDesignBasis } from "./lib/engineeringBasis";
+
 export const PROJECT_TYPES = [
   "house",
   "residential",
@@ -998,6 +1000,8 @@ export interface Design {
   /** Optional Revit/Archicad-style documentation package; absent in legacy designs. */
   documentation?: DocumentationMetadata;
   compliance?: { profileId: string };
+  /** Authored project country, adopted editions and user criteria; absent in legacy projects. */
+  engineeringBasis?: EngineeringDesignBasis;
   technicalGraphics?: TechnicalGraphicsSettings;
   visualization?: VisualizationSettings;
 }

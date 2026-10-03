@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { access, chmod, chown, lstat, open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { engineeringDesignBasisSchema } from "./engineeringBasis.js";
 
 export type NativeJobKind = "dwg-to-dxf" | "dxf-to-dwg" | "opensees-static";
 export interface NativeAdapterConfig {
@@ -67,7 +68,7 @@ const frameSchema = z.object({
   combinations: z.array(z.object({ id, factors: z.record(bounded(-100, 100)) }).strict()).min(1).max(20).optional(),
   options: z.object({ tolerance: bounded(1e-10, 0.01).optional(), maxIterations: bounded(2, 40).int().optional() }).strict().optional(),
 }).strict();
-const solverInputSchema = z.object({ version: z.literal(1), model: frameSchema, combinationId: id.optional() }).strict();
+const solverInputSchema = z.object({ version: z.literal(1), model: frameSchema, combinationId: id.optional(), designBasis: engineeringDesignBasisSchema.optional() }).strict();
 type SolverInput = z.infer<typeof solverInputSchema>;
 function parseSolverInput(bytes: Uint8Array): SolverInput {
   try {
@@ -283,7 +284,8 @@ export async function runNativeJob(request: NativeJobRequest): Promise<{ artifac
     add("secure-nexus-execution-log.txt", "text/plain", Buffer.from(`stdout\n${log.stdout}\nstderr\n${log.stderr}`, "utf8"));
     summary.dimension = "planar-2d"; summary.combinationId = deck.combinationId;
     summary.warnings = ["Planar 2D elastic static subset and one explicit load combination only; this does not verify a 3D CAD/BIM model or certify design.", "PDelta and browser initial-stress approximations differ. Independently check units, restraints, force signs, mesh, equilibrium and user design assumptions.", "Native output was parsed, not independently validated against engineering benchmarks. Design criteria on the input are not assessed by this adapter.", "Browser relative tolerance/maxIterations options do not transfer to the native NormDispIncr test. Native convergence settings are fixed and declared in the manifest."];
-    manifest = { version: 1, ...summary, runtimeVersion: OPENSEES_VERSION, units: "SI-N-m-Pa-rad", analysis: input.model.analysis ?? "linear", deckSha256: hash(deck.bytes), nodes: deck.nodes.map((item, index) => ({ ...item, restraints: input.model.nodes[index].restraints })), members: deck.members, nativeSettings: { test: "NormDispIncr", displacementIncrementTolerance: 1e-10, maximumIterations: 40, integrator: "LoadControl", loadIncrement: 0.1, loadSteps: 10, constraints: "Plain", numberer: "RCM", system: "BandGeneral", algorithm: input.model.analysis === "p-delta" ? "Newton" : "Linear", browserOptionsUsed: false, codeCriteriaAssessed: false } };
+    if (input.designBasis) summary.warnings.push("The captured country, adopted standards and user criteria are provenance only. This native adapter does not perform national-code checks.");
+    manifest = { version: 1, ...summary, runtimeVersion: OPENSEES_VERSION, units: "SI-N-m-Pa-rad", analysis: input.model.analysis ?? "linear", ...(input.designBasis ? { designBasis: input.designBasis } : {}), deckSha256: hash(deck.bytes), nodes: deck.nodes.map((item, index) => ({ ...item, restraints: input.model.nodes[index].restraints })), members: deck.members, nativeSettings: { test: "NormDispIncr", displacementIncrementTolerance: 1e-10, maximumIterations: 40, integrator: "LoadControl", loadIncrement: 0.1, loadSteps: 10, constraints: "Plain", numberer: "RCM", system: "BandGeneral", algorithm: input.model.analysis === "p-delta" ? "Newton" : "Linear", browserOptionsUsed: false, codeCriteriaAssessed: false } };
   } else {
     const toDxf = request.kind === "dwg-to-dxf", inputFile = toDxf ? "input.dwg" : "input.dxf", outputFile = toDxf ? "input.dxf" : "input.dwg";
     const executable = await trustedExecutable(toDxf ? request.config.libreDwg!.dwg2dxfPath : request.config.libreDwg!.dxf2dwgPath, request.config), allowed = new Set([inputFile, outputFile]);

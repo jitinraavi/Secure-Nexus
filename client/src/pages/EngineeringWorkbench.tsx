@@ -12,18 +12,22 @@ import { exportEpanetNetwork, exportOpenSees2D, exportStaadPlane, type SolverDec
 import { importRoutedMepNetwork, importStructuralExchange2D, type FrameBridgeOptions } from "../lib/engineeringModelBridge";
 import { buildStructuralSolverExchange } from "../lib/structuralEngine";
 import { createNativeFrameInput } from "../lib/nativeResults";
+import { analyzeFrame3D, parseFrameModel3D } from "../lib/frameAnalysis3D";
+import { EngineeringBasisPanel } from "../components/EngineeringBasisPanel";
+import { createEngineeringDesignBasis, engineeringBasisFingerprint, parseEngineeringDesignBasis, validateEngineeringDesignBasis, type EngineeringDesignBasis } from "../lib/engineeringBasis";
 
-type Module = "frame" | "water" | "air" | "electrical" | "fire" | "equipment";
+type Module = "frame" | "frame3d" | "water" | "air" | "electrical" | "fire" | "equipment";
 interface MepBridgeSettings { endpointToleranceM: number; sourceElementId: string; waterSourceHeadM: number; airSourcePressurePa: number; waterTerminalDemandM3s: number; airTerminalDemandM3s: number; roughnessM: number; minorLossKPerSegment: number }
-interface StoredReport { module: Module; source: string; data: unknown }
+interface StoredReport { module: Module; source: string; data: unknown; designBasis: EngineeringDesignBasis | null }
 interface ConversionWarnings { module: Module; warnings: string[] }
 interface EngineeringWorkspace {
-  version: 1; activeModule: Module; inputs: Record<Module, string>; combinationId: string;
+  version: 2; designBasis: EngineeringDesignBasis; activeModule: Module; inputs: Record<Module, string>; combinationId: string;
   frameBridge: FrameBridgeOptions; mepBridge: MepBridgeSettings;
   conversionWarnings: ConversionWarnings | null; reports: Partial<Record<Module, StoredReport>>;
 }
 const modules: { id: Module; label: string; description: string }[] = [
   { id: "frame", label: "Structural frame", description: "2D elastic frame, user load combinations, geometric stiffness and explicit section criteria." },
+  { id: "frame3d", label: "3D structural frame", description: "Linear elastic space frame with six degrees of freedom, supplied member axes, load combinations and result envelopes." },
   { id: "water", label: "Hydraulics", description: "Steady water flow, total heads, friction/minor losses, pressure-dependent emitters and nodal mass balance." },
   { id: "air", label: "HVAC airflow", description: "Steady airflow and static-pressure balancing with supplied terminal demands and fixed fan/source pressures." },
   { id: "electrical", label: "Electrical protection", description: "Demand current, voltage drop, supplied-impedance fault currents and explicit protection criteria." },
@@ -43,6 +47,13 @@ const examples: Record<Module, unknown> = {
     members: [{ id: "column", start: "base", end: "top", areaM2: 0.02, inertiaM4: 0.00008, elasticModulusPa: 200e9, design: { sectionModulusM3: 0.0008, allowableStressPa: 150e6, effectiveLengthFactor: 2, bucklingSafetyFactor: 1.5, allowableDeflectionRatio: 0.005 } }],
     loadCases: [{ id: "gravity", nodal: [{ node: "top", fxN: 0, fyN: -100000, mzNm: 0 }], uniform: [] }, { id: "lateral", nodal: [{ node: "top", fxN: 10000, fyN: 0, mzNm: 0 }], uniform: [] }],
     combinations: [{ id: "user-combination", factors: { gravity: 1, lateral: 1 } }], options: { tolerance: 1e-7, maxIterations: 30 },
+  },
+  frame3d: {
+    version: 1, analysis: "linear",
+    nodes: [{ id: "base", xM: 0, yM: 0, zM: 0, restraints: [true, true, true, true, true, true] }, { id: "tip", xM: 3, yM: 0, zM: 0, restraints: [false, false, false, false, false, false] }],
+    members: [{ id: "cantilever", start: "base", end: "tip", areaM2: 0.01, inertiaYM4: 0.00002, inertiaZM4: 0.00004, torsionConstantM4: 0.00001, elasticModulusPa: 200e9, shearModulusPa: 77e9, localYAxis: [0, 1, 0] }],
+    loadCases: [{ id: "supplied-load", nodal: [{ node: "tip", fxN: 0, fyN: 0, fzN: -10000, mxNm: 1000, myNm: 0, mzNm: 0 }], uniform: [] }],
+    combinations: [{ id: "user-combination", factors: { "supplied-load": 1 } }],
   },
   water: waterExample,
   air: {
@@ -76,6 +87,7 @@ function parseInput(text: string): unknown {
 }
 function calculate(module: Module, value: unknown): unknown {
   if (module === "frame") return analyzeFrame2D(parseFrameModel(value));
+  if (module === "frame3d") return analyzeFrame3D(parseFrameModel3D(value));
   if (module === "water" || module === "air") {
     const network = parseFluidNetwork(value);
     if (network.medium !== (module === "water" ? "water" : "air")) throw new Error(`Choose a ${module === "water" ? "water" : "air"} input for this module.`);
@@ -116,6 +128,7 @@ function warnings(value: unknown): string[] {
 // Restoring a report validates data without running a solver or recomputing results.
 function validateReportSource(module: Module, value: unknown): void {
   if (module === "frame") { parseFrameModel(value); return; }
+  if (module === "frame3d") { parseFrameModel3D(value); return; }
   if (module === "water" || module === "air") {
     if (parseFluidNetwork(value).medium !== (module === "water" ? "water" : "air")) throw new Error("Saved fluid report has a different medium.");
     return;
@@ -181,6 +194,59 @@ function validateFluidReport(value: unknown, source: unknown): void {
   }
   for (const row of reportRows(report.links, "linkId", new Set(network.links.map(link => link.id)), ["flowM3s", "velocityMps", "frictionFactor", "reynolds", "potentialLoss", "energyResidual"])) if (row.satisfiesMaximumVelocity !== undefined) booleans(row, ["satisfiesMaximumVelocity"]);
 }
+function reportFields(value: Record<string, unknown>, allowed: string[], label: string): void {
+  if (Object.keys(value).some(key => !allowed.includes(key))) throw new Error(`${label} contains an unsupported report field.`);
+}
+function validateFrameReport3D(report: Record<string, unknown>, source: unknown): void {
+  const model = parseFrameModel3D(source), combinationIds = new Set((model.combinations ?? model.loadCases).map(item => item.id));
+  const nodeIds = new Set(model.nodes.map(node => node.id)), memberIds = new Set(model.members.map(member => member.id));
+  const supportedNodeIds = new Set(model.nodes.filter(node => node.restraints.some(Boolean)).map(node => node.id));
+  const memberPeaks = ["maxAxialTensionN", "maxAxialCompressionN", "maxShearYN", "maxShearZN", "maxTorsionNm", "maxMomentYNm", "maxMomentZNm", "maxChordDeflectionM", "chordDeflectionUpperBoundM"];
+  reportFields(report, ["version", "method", "verification", "results", "envelopes", "warnings"], "3D frame report");
+  if (report.version !== 1) throw new Error("Saved 3D frame report version is unsupported.");
+  if (!boundedText(report.method, "3D frame method", 1000).trim()) throw new Error("Saved 3D frame report requires an analysis method.");
+  for (const result of reportRows(report.results, "combinationId", combinationIds, ["maxFreeForceResidualN", "maxFreeMomentResidualNm"])) {
+    reportFields(result, ["combinationId", "status", "maxFreeForceResidualN", "maxFreeMomentResidualNm", "equilibrium", "displacements", "reactions", "members"], "3D combination");
+    if (result.status !== "converged") throw new Error("Saved 3D frame result status is unsupported.");
+    for (const key of ["maxFreeForceResidualN", "maxFreeMomentResidualNm"]) requireFinite(result[key], key, 0, 1e250);
+    const equilibrium = record(result.equilibrium, "3D equilibrium"), components = ["fxN", "fyN", "fzN", "mxNm", "myNm", "mzNm"];
+    reportFields(equilibrium, ["originM", ...components, "relativeForceResidual", "relativeMomentResidual"], "3D equilibrium");
+    numericFields(equilibrium, components);
+    requireFinite(equilibrium.relativeForceResidual, "Relative force residual", 0, 1e-7); requireFinite(equilibrium.relativeMomentResidual, "Relative moment residual", 0, 1e-7);
+    const expectedOrigin = [model.nodes[0].xM, model.nodes[0].yM, model.nodes[0].zM];
+    if (!Array.isArray(equilibrium.originM) || equilibrium.originM.length !== 3 || equilibrium.originM.some((coordinate, index) => coordinate !== expectedOrigin[index])) throw new Error("Saved 3D equilibrium origin differs from its source model.");
+    const displacementKeys = ["uxM", "uyM", "uzM", "rxRad", "ryRad", "rzRad"];
+    for (const row of reportRows(result.displacements, "nodeId", nodeIds, displacementKeys)) reportFields(row, ["nodeId", ...displacementKeys], "3D displacement");
+    for (const row of reportRows(result.reactions, "nodeId", supportedNodeIds, components)) reportFields(row, ["nodeId", ...components], "3D reaction");
+    for (const row of reportRows(result.members, "memberId", memberIds, memberPeaks)) {
+      reportFields(row, ["memberId", "localEndForces", ...memberPeaks, "design"], "3D member result");
+      for (const key of memberPeaks) requireFinite(row[key], key, 0, 1e250);
+      if (!Array.isArray(row.localEndForces) || row.localEndForces.length !== 12) throw new Error("Saved 3D frame end forces require twelve components.");
+      row.localEndForces.forEach(force => requireFinite(force, "3D end force", -1e250, 1e250));
+      const member = model.members.find(item => item.id === row.memberId)!;
+      if ((row.design === undefined) !== (member.design === undefined)) throw new Error("Saved 3D member criteria differ from its source model.");
+      if (row.design !== undefined) {
+        const design = record(row.design, "3D member criteria"), keys = ["axialBendingUtilization", "shearYUtilization", "shearZUtilization", "torsionUtilization", "deflectionUtilization"];
+        reportFields(design, [...keys, "satisfiesUserCriteria", "basis"], "3D member criteria");
+        for (const key of keys) requireFinite(design[key], key, 0, 1e250);
+        booleans(design, ["satisfiesUserCriteria"]); boundedText(design.basis, "3D criteria basis", 4000);
+        if (design.satisfiesUserCriteria !== (Math.max(...keys.map(key => Number(design[key]))) <= 1)) throw new Error("Saved 3D member criteria status differs from its reported utilization.");
+      }
+    }
+  }
+  const envelopes = record(report.envelopes, "3D result envelopes");
+  reportFields(envelopes, ["nodes", "members"], "3D result envelopes");
+  const validatePeaks = (row: Record<string, unknown>, idKey: string, keys: string[]) => {
+    reportFields(row, [idKey, ...keys], "3D envelope row");
+    for (const key of keys) {
+      const peak = record(row[key], "3D envelope peak"); reportFields(peak, ["value", "combinationId"], "3D envelope peak");
+      requireFinite(peak.value, "3D envelope value", 0, 1e250);
+      if (typeof peak.combinationId !== "string" || !combinationIds.has(peak.combinationId)) throw new Error("Saved 3D envelope references an unknown source combination.");
+    }
+  };
+  for (const row of reportRows(envelopes.nodes, "nodeId", nodeIds, [])) validatePeaks(row, "nodeId", ["maxTranslationM", "maxRotationRad"]);
+  for (const row of reportRows(envelopes.members, "memberId", memberIds, [])) validatePeaks(row, "memberId", memberPeaks);
+}
 function validateReport(module: Module, data: unknown, source: unknown): void {
   validateReportSource(module, source);
   if (module === "water" || module === "air") { validateFluidReport(data, source); return; }
@@ -192,6 +258,7 @@ function validateReport(module: Module, data: unknown, source: unknown): void {
   const report = record(data, "Saved report");
   if (report.verification !== "unverified") throw new Error("Saved report must retain its unverified status.");
   warnings(report.warnings);
+  if (module === "frame3d") { validateFrameReport3D(report, source); return; }
   if (module === "frame") {
     const model = parseFrameModel(source), ids = new Set((model.combinations ?? model.loadCases).map(combination => combination.id));
     boundedText(report.method, "Frame method", 1000);
@@ -232,12 +299,15 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
   };
   visit(value, 0);
   const workspace = record(value, "Engineering workspace");
-  if (workspace.version !== 1 || !isModule(workspace.activeModule)) throw new Error("Engineering workspace version/module is unsupported.");
+  if ((workspace.version !== 1 && workspace.version !== 2) || !isModule(workspace.activeModule) || workspace.version === 1 && workspace.activeModule === "frame3d") throw new Error("Engineering workspace version/module is unsupported.");
+  const designBasis = workspace.version === 2 ? parseEngineeringDesignBasis(workspace.designBasis) : createEngineeringDesignBasis();
   const savedInputs = record(workspace.inputs, "Module inputs"), inputs = {} as Record<Module, string>;
-  if (Object.keys(savedInputs).length !== modules.length) throw new Error("Workspace must contain exactly six module inputs.");
+  const savedModules = workspace.version === 1 ? modules.filter(item => item.id !== "frame3d") : modules;
+  if (Object.keys(savedInputs).length !== savedModules.length || Object.keys(savedInputs).some(key => !savedModules.some(item => item.id === key))) throw new Error("Workspace module inputs differ from its supported version.");
   // Raw text is a draft: unfinished JSON survives recovery. Report source JSON
   // must satisfy the current solver schema before the report can be restored.
-  for (const module of modules) inputs[module.id] = boundedText(savedInputs[module.id], `${module.label} input`, maxInputCharacters);
+  for (const module of savedModules) inputs[module.id] = boundedText(savedInputs[module.id], `${module.label} input`, maxInputCharacters);
+  if (workspace.version === 1) inputs.frame3d = JSON.stringify(examples.frame3d, null, 2);
   const frame = record(workspace.frameBridge, "Frame conversion options");
   if (frame.plane !== "xy" && frame.plane !== "zy") throw new Error("Saved frame plane is invalid.");
   requireFinite(frame.sliceCoordinateM, "Slice coordinate", -1e6, 1e6); requireFinite(frame.sliceToleranceM, "Slice tolerance", 1e-6, 1); requireFinite(frame.areaM2, "Section area", 1e-8, 1e4); requireFinite(frame.inertiaM4, "Section inertia", 1e-14, 1e6); requireFinite(frame.elasticModulusPa, "Elastic modulus", 1e3, 1e13); booleans(frame, ["acceptAssumedFixedSupports"]);
@@ -249,12 +319,13 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
   const savedReports = record(workspace.reports, "Saved reports"), reports: Partial<Record<Module, StoredReport>> = {};
   if (Object.keys(savedReports).length > modules.length) throw new Error("Workspace contains too many reports.");
   for (const [key, value] of Object.entries(savedReports)) {
-    if (!isModule(key)) throw new Error("Workspace has an unknown report module.");
+    if (!isModule(key) || workspace.version === 1 && key === "frame3d") throw new Error("Workspace has an unknown report module.");
     const saved = record(value, "Saved module report"), source = boundedText(saved.source, "Report source input", maxInputCharacters);
     if (saved.module !== key || saved.data === undefined || JSON.stringify(saved.data).length > 2_000_000) throw new Error("Saved report module/size is invalid.");
-    validateReport(key, saved.data, parseInput(source)); reports[key] = { module: key, source, data: saved.data };
+    const reportBasis = workspace.version === 1 || saved.designBasis === null ? null : parseEngineeringDesignBasis(saved.designBasis);
+    validateReport(key, saved.data, parseInput(source)); reports[key] = { module: key, source, data: saved.data, designBasis: reportBasis };
   }
-  return { version: 1, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
+  return { version: 2, designBasis, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
 }
 
 function convertGeometry(value: unknown, module: Module, frame: FrameBridgeOptions, mep: MepBridgeSettings) {
@@ -273,6 +344,7 @@ function projectStructuralExchange(project: ProjectDetail): unknown {
 
 export default function EngineeringWorkbench() {
   const [module, setModule] = useState<Module>("frame"), [inputs, setInputs] = useState(initialInputs), [combinationId, setCombinationId] = useState("");
+  const [designBasis, setDesignBasis] = useState(createEngineeringDesignBasis);
   const [reports, setReports] = useState<Partial<Record<Module, StoredReport>>>({}), [error, setError] = useState<string | null>(null), [exporting, setExporting] = useState(false);
   const [frameBridge, setFrameBridge] = useState<FrameBridgeOptions>({ plane: "xy", sliceCoordinateM: 0, sliceToleranceM: 0.001, areaM2: 0.02, inertiaM4: 0.00008, elasticModulusPa: 200e9, acceptAssumedFixedSupports: false });
   const [mepBridge, setMepBridge] = useState<MepBridgeSettings>({ endpointToleranceM: 0.001, sourceElementId: "", waterSourceHeadM: 45, airSourcePressurePa: 500, waterTerminalDemandM3s: 0.002, airTerminalDemandM3s: 0.2, roughnessM: 0.0001, minorLossKPerSegment: 0 });
@@ -280,42 +352,49 @@ export default function EngineeringWorkbench() {
   const importGeneration = useRef(0);
   useEffect(() => () => { importGeneration.current++; }, []);
   const fileInput = useRef<HTMLInputElement>(null), modelFileInput = useRef<HTMLInputElement>(null), description = modules.find(item => item.id === module)!;
-  const activeResult = reports[module]?.source === inputs[module] ? reports[module]! : null;
-  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 1, activeModule: module, inputs, combinationId, frameBridge, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, mepBridge, conversionWarnings, reports]);
+  const basisFingerprint = engineeringBasisFingerprint(designBasis), basisIssues = validateEngineeringDesignBasis(designBasis);
+  const storedResult = reports[module];
+  const activeResult = storedResult && storedResult.source === inputs[module] && storedResult.designBasis !== null && engineeringBasisFingerprint(storedResult.designBasis) === basisFingerprint ? storedResult : null;
+  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 2, designBasis, activeModule: module, inputs, combinationId, frameBridge, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, mepBridge, conversionWarnings, reports, designBasis]);
   const restoreWorkspace = useCallback((value: unknown) => {
     const restored = parseWorkspace(value);
     importGeneration.current++;
     // No setters run until the whole snapshot, all options and reports validate.
-    setModule(restored.activeModule); setInputs(restored.inputs); setCombinationId(restored.combinationId); setFrameBridge(restored.frameBridge); setMepBridge(restored.mepBridge); setConversionWarnings(restored.conversionWarnings); setReports(restored.reports); setError(null);
+    setModule(restored.activeModule); setInputs(restored.inputs); setDesignBasis(restored.designBasis); setCombinationId(restored.combinationId); setFrameBridge(restored.frameBridge); setMepBridge(restored.mepBridge); setConversionWarnings(restored.conversionWarnings); setReports(restored.reports); setError(null);
   }, []);
   const importProject = useCallback((project: ProjectDetail) => {
     try {
       if (!project.design) throw new Error("The selected project has no saved design geometry.");
       const source = module === "frame" ? projectStructuralExchange(project) : project.design;
       const converted = convertGeometry(source, module, frameBridge, mepBridge), text = JSON.stringify(converted.model, null, 2);
+      const importedBasis = project.design.engineeringBasis === undefined ? createEngineeringDesignBasis() : parseEngineeringDesignBasis(project.design.engineeringBasis);
       if (text.length > maxInputCharacters) throw new Error("Converted project subsystem exceeds the 1 MB input limit.");
       const sourceWarnings = module === "frame" && engineeringRecord(source) && Array.isArray(source.warnings) ? warnings(source.warnings) : [];
       importGeneration.current++;
-      setInputs(current => ({ ...current, [module]: text })); setConversionWarnings({ module, warnings: [...sourceWarnings, ...converted.warnings] }); setError(null);
+      setInputs(current => ({ ...current, [module]: text })); setDesignBasis(importedBasis); setConversionWarnings({ module, warnings: [...sourceWarnings, ...converted.warnings] }); setError(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not import project geometry."); throw cause; }
   }, [module, frameBridge, mepBridge]);
   const updateText = (text: string) => { importGeneration.current++; setInputs(current => ({ ...current, [module]: text })); setError(null); };
   const run = () => {
     setError(null);
     setReports(current => { const next = { ...current }; delete next[module]; return next; });
-    try { const data = calculate(module, parseInput(inputs[module])); setReports(current => ({ ...current, [module]: { module, source: inputs[module], data } })); }
+    try {
+      const basisSnapshot = parseEngineeringDesignBasis(designBasis), data = calculate(module, parseInput(inputs[module]));
+      if (JSON.stringify(data).length > 2_000_000) throw new Error("Analysis report exceeds the 2 MB workspace report limit; use a smaller subsystem or fewer combinations.");
+      setReports(current => ({ ...current, [module]: { module, source: inputs[module], data, designBasis: basisSnapshot } }));
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to calculate this dataset."); }
   };
   const exportDeck = async (target: "opensees" | "staad" | "epanet") => {
     setError(null); setExporting(true);
     try {
-      const value = parseInput(inputs[module]); let deck: SolverDeck;
+      const value = parseInput(inputs[module]), basisSnapshot = parseEngineeringDesignBasis(designBasis); let deck: SolverDeck;
       if (target === "epanet") deck = exportEpanetNetwork(module === "fire" && engineeringRecord(value) ? parseFluidNetwork(value.network) : parseFluidNetwork(value));
       else {
         const model = parseFrameModel(value);
         deck = target === "opensees" ? exportOpenSees2D(model, combinationId.trim() || undefined) : exportStaadPlane(model, combinationId.trim() || undefined);
       }
-      const bundle = await zipFiles([{ name: deck.filename, content: deck.content }, { name: "mapping-and-limitations.json", content: JSON.stringify({ ...deck, content: undefined }, null, 2) }, { name: "source-input.json", content: inputs[module] }]);
+      const bundle = await zipFiles([{ name: deck.filename, content: deck.content }, { name: "mapping-and-limitations.json", content: JSON.stringify({ ...deck, content: undefined }, null, 2) }, { name: "source-input.json", content: inputs[module] }, { name: "design-basis.json", content: JSON.stringify({ designBasis: basisSnapshot, declarationIssues: validateEngineeringDesignBasis(basisSnapshot), scope: "Supplied criteria only; national-code implementation is not inferred from country or standard selection." }, null, 2) }]);
       downloadBlob(`secure-nexus-${target}-input.zip`, bundle);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to export solver deck."); }
     finally { setExporting(false); }
@@ -326,9 +405,10 @@ export default function EngineeringWorkbench() {
       <div className="flex items-center gap-3"><Badge tone="amber">Independent verification required</Badge><Link to="/dashboard" className="text-sm text-amber-300">Projects</Link></div>
     </div>
     <ProjectWorkspacePanel kind="engineering" payload={payload} onRestore={restoreWorkspace} onImportProject={importProject} />
-    <ProjectJobsPanel workspaceKind="engineering" kinds={["opensees-static"]} preparedInputLabel="Queuing captures the structural frame JSON and selected combination shown on this page, even when another browser module is selected. Edit supports, loads and section properties before submission." prepareInput={() => {
+    <EngineeringBasisPanel value={designBasis} onChange={value => { importGeneration.current++; setDesignBasis(value); setError(null); }} />
+    <ProjectJobsPanel workspaceKind="engineering" kinds={["opensees-static"]} preparedInputLabel="Queuing captures the planar structural frame JSON, selected combination and current design basis, even when another browser module is selected. Edit supports, loads and section properties before submission." prepareInput={() => {
       const model = parseFrameModel(parseInput(inputs.frame)), selectedCombination = combinationId.trim() || undefined;
-      const bytes = createNativeFrameInput(model, selectedCombination), buffer = new ArrayBuffer(bytes.byteLength);
+      const bytes = createNativeFrameInput(model, selectedCombination, parseEngineeringDesignBasis(designBasis)), buffer = new ArrayBuffer(bytes.byteLength);
       new Uint8Array(buffer).set(bytes);
       return { name: "frame-native-input.json", blob: new Blob([buffer], { type: "application/json" }) };
     }} />
@@ -336,6 +416,8 @@ export default function EngineeringWorkbench() {
       <Select label="Module" value={module} onChange={event => { importGeneration.current++; setModule(event.target.value as Module); setError(null); }}>{modules.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</Select>
       <p className="text-sm text-slate-300">{description.description}</p>
       <p className="text-xs text-slate-400">Results use supplied geometry, demands, capacities and criteria. Examples are editable datasets with unverified results. Each report states its mathematical scope and missing design checks.</p>
+      {module === "frame3d" && <p className="text-xs text-slate-400">3D input uses explicit member local axes and six support restraints per node. This browser analysis is linear elastic; the native job panel captures the separate planar frame input.</p>}
+      {basisIssues.length > 0 && <p className="text-xs text-amber-200">Design basis has {basisIssues.length} incomplete declaration fields. Analysis still uses the supplied SI model and criteria; selecting a country or standard does not certify national-code compliance.</p>}
     </Card>
     <div className="grid gap-5 lg:grid-cols-2">
       <Card className="space-y-4 p-4">
@@ -402,9 +484,10 @@ export default function EngineeringWorkbench() {
         <p className="text-xs text-slate-500">Native export writes a deck, original input, tag mapping and limitations. OpenSees can also be queued in Native project jobs when the server worker is configured. STAAD and EPANET bundles require an external native run.</p>
       </Card>
       <Card className="space-y-4 p-4">
-        <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">Analysis report</h2><Button variant="secondary" size="sm" disabled={!activeResult} onClick={() => { if (activeResult) download(`engineering-${module}-report.json`, JSON.stringify({ module, sourceInput: parseInput(activeResult.source), report: activeResult.data }, null, 2), "application/json"); }}>Export report</Button></div>
+        <div className="flex items-center justify-between gap-3"><h2 className="font-semibold">Analysis report</h2><Button variant="secondary" size="sm" disabled={!activeResult} onClick={() => { if (activeResult) download(`engineering-${module}-report.json`, JSON.stringify({ module, sourceInput: parseInput(activeResult.source), designBasis: activeResult.designBasis, declarationIssues: activeResult.designBasis ? validateEngineeringDesignBasis(activeResult.designBasis) : ["Legacy report has no declared design basis."], compliance: "not-assessed", report: activeResult.data }, null, 2), "application/json"); }}>Export report</Button></div>
         {error && <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">{error}</p>}
-        {activeResult ? <pre className="max-h-[42rem] overflow-auto rounded-xl bg-slate-950 p-3 text-xs leading-relaxed text-slate-200">{JSON.stringify(activeResult.data, null, 2)}</pre> : <p className="text-sm text-slate-400">Calculate the current dataset to create a report. Editing the input hides the previous report until recalculated.</p>}
+        {activeResult ? <><p className="text-xs text-slate-400">Report captures the current design basis. National-code compliance is not assessed; criteria in the SI input drive this calculation.</p><pre className="max-h-[42rem] overflow-auto rounded-xl bg-slate-950 p-3 text-xs leading-relaxed text-slate-200">{JSON.stringify({ designBasis: activeResult.designBasis, declarationIssues: basisIssues, compliance: "not-assessed", report: activeResult.data }, null, 2)}</pre></> : <p className="text-sm text-slate-400">Calculate the current dataset to create a report. Editing the input or design basis hides the previous report until recalculated.</p>}
+        {storedResult && !activeResult && <div className="space-y-2 border-t border-slate-800 pt-3"><p className="text-xs text-amber-200">A previous unverified report remains in this workspace. {storedResult.designBasis === null ? "It predates design-basis declarations." : "Its source input or basis differs from the current draft."}</p><Button variant="ghost" size="sm" onClick={() => download(`engineering-${module}-previous-report.json`, JSON.stringify({ module, sourceInput: parseInput(storedResult.source), designBasis: storedResult.designBasis, compliance: "not-assessed", currentDraft: false, report: storedResult.data }, null, 2), "application/json")}>Export previous report</Button></div>}
       </Card>
     </div>
   </main>;
