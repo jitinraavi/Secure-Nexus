@@ -1,5 +1,7 @@
 # Next Phase 3 wind module: inspected sources and implementation boundary
 
+The subsequent refreshed-window increment implements the bounded authored module in `nationalWindLoads.ts` and documents its current contract in [NATIONAL-WIND-LOADS.md](NATIONAL-WIND-LOADS.md). The text below is the preserved pre-implementation source handoff, not the current implementation status.
+
 No wind-generator source module was started at this boundary. Existing `structuralLoadAuthoring.ts` accepts authored global pressure vectors, and `nationalLoadRecipes.ts` generates the explicitly scoped IS 456 gravity/wind combination factors. Neither derives site hazards or wind pressures. Continue with a coherent authored wind-speed/design-pressure module before the broader seismic and design work.
 
 ## Inspected primary artifacts
