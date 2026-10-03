@@ -1,5 +1,6 @@
 import { engineeringRecord, identifier } from "./engineeringNumerics";
 import { frameLoadCombinations, parseFrameModel, type FrameModel2D } from "./frameAnalysis";
+import { engineeringBasisFingerprint, parseEngineeringDesignBasis, type EngineeringDesignBasis } from "./engineeringBasis";
 
 const MAX_BYTES = 32 * 1024 * 1024;
 const DECK = "secure-nexus-frame.tcl", STATUS = "secure-nexus-run-status.txt";
@@ -10,6 +11,7 @@ export interface NativeFrameResult {
   version: 1; adapter: "OpenSees"; runtimeVersion: "3.8.0"; verification: "computed-unvalidated";
   dimension: "planar-2d"; units: "SI-N-m-Pa-rad"; analysis: "linear" | "p-delta";
   sourceArtifactId: string; sourceSha256: string; deckSha256: string; combinationId: string;
+  designBasis?: EngineeringDesignBasis;
   displacements: { nodeId: string; uxM: number; uyM: number; rotationRad: number }[];
   reactions: { nodeId: string; fxN: number; fyN: number; mzNm: number }[];
   members: { memberId: string; globalEndForces: [number, number, number, number, number, number] }[];
@@ -27,7 +29,7 @@ export async function nativeArtifactSha256(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
 }
 /** JSON only. Never uploads a Tcl program or mutates the original model. */
-export function createNativeFrameInput(input: FrameModel2D, combinationId?: string): Uint8Array {
+export function createNativeFrameInput(input: FrameModel2D, combinationId?: string, designBasis?: EngineeringDesignBasis): Uint8Array {
   const model = parseFrameModel(input);
   if (combinationId !== undefined && !frameLoadCombinations(model).some(item => item.id === combinationId)) throw new Error("Selected native load combination does not exist.");
   const sourceModel: FrameModel2D = {
@@ -38,7 +40,7 @@ export function createNativeFrameInput(input: FrameModel2D, combinationId?: stri
     ...(model.combinations ? { combinations: model.combinations.map(item => ({ id: item.id, factors: { ...item.factors } })) } : {}),
     ...(model.options ? { options: { tolerance: model.options.tolerance, maxIterations: model.options.maxIterations } } : {}),
   };
-  const bytes = new TextEncoder().encode(JSON.stringify({ version: 1, model: sourceModel, ...(combinationId === undefined ? {} : { combinationId }) }));
+  const bytes = new TextEncoder().encode(JSON.stringify({ version: 1, model: sourceModel, ...(combinationId === undefined ? {} : { combinationId }), ...(designBasis === undefined ? {} : { designBasis: parseEngineeringDesignBasis(designBasis) }) }));
   if (bytes.byteLength > MAX_BYTES) throw new Error("Native frame source exceeds the input limit.");
   return bytes;
 }
@@ -66,14 +68,16 @@ function mapping(value: unknown, sourceIds: string[]): void {
  * A matching hash establishes identity; it does not establish engineering correctness.
  */
 export async function parseNativeFrameResult(sourceBytes: Uint8Array, manifestBytes: Uint8Array, artifacts: NativeResultArtifact[], expectedSource?: NativeResultSource): Promise<NativeFrameResult> {
-  const source: unknown = JSON.parse(decode(sourceBytes, MAX_BYTES)), manifest: unknown = JSON.parse(decode(manifestBytes, 256 * 1024));
+  const source: unknown = JSON.parse(decode(sourceBytes, MAX_BYTES)), manifest: unknown = JSON.parse(decode(manifestBytes, 1024 * 1024));
   if (!engineeringRecord(source) || source.version !== 1 || !engineeringRecord(source.model)) throw new Error("Native source must be the version 1 frame JSON envelope.");
   const model = parseFrameModel(source.model);
+  const designBasis = source.designBasis === undefined ? undefined : parseEngineeringDesignBasis(source.designBasis);
   if (source.combinationId !== undefined && !identifier(source.combinationId)) throw new Error("Invalid source combination identifier.");
   const combinationId = typeof source.combinationId === "string" ? source.combinationId : frameLoadCombinations(model)[0].id;
   if (!frameLoadCombinations(model).some(item => item.id === combinationId)) throw new Error("Native source references an unknown load combination.");
   if (!engineeringRecord(manifest) || manifest.version !== 1 || manifest.kind !== "opensees-static" || manifest.adapter !== "OpenSees" || manifest.declaredVersion !== "3.8.0" || manifest.runtimeVersion !== "3.8.0" || manifest.verification !== "computed-unvalidated" || manifest.dimension !== "planar-2d" || manifest.units !== "SI-N-m-Pa-rad" || manifest.analysis !== (model.analysis ?? "linear") || manifest.combinationId !== combinationId || !identifier(manifest.sourceArtifactId) || !validHash(manifest.sourceSha256) || !validHash(manifest.deckSha256)) throw new Error("Native manifest is incompatible with the supported planar OpenSees result contract.");
   const sourceSha256 = await nativeArtifactSha256(sourceBytes);
+  if ((designBasis === undefined) !== (manifest.designBasis === undefined) || designBasis !== undefined && engineeringBasisFingerprint(designBasis) !== engineeringBasisFingerprint(parseEngineeringDesignBasis(manifest.designBasis))) throw new Error("Native manifest design basis does not match the captured source country, standards and criteria.");
   if (manifest.sourceSha256 !== sourceSha256 || expectedSource && (expectedSource.artifactId !== manifest.sourceArtifactId || expectedSource.sha256 !== sourceSha256)) throw new Error("Native output is bound to a different source artifact. Preserve it as a separate job result.");
   if (expectedSource?.manifestSha256 !== undefined && (!validHash(expectedSource.manifestSha256) || await nativeArtifactSha256(manifestBytes) !== expectedSource.manifestSha256)) throw new Error("Native manifest bytes do not match the job artifact fingerprint.");
   mapping(manifest.nodes, model.nodes.map(node => node.id)); mapping(manifest.members, model.members.map(member => member.id));
@@ -103,7 +107,7 @@ export async function parseNativeFrameResult(sourceBytes: Uint8Array, manifestBy
   warnings.push("This parsed result belongs to the immutable planar source artifact. Do not apply it to a changed source, another combination or the original 3D model.");
   return {
     version: 1, adapter: "OpenSees", runtimeVersion: "3.8.0", verification: "computed-unvalidated", dimension: "planar-2d", units: "SI-N-m-Pa-rad", analysis: model.analysis ?? "linear",
-    sourceArtifactId: manifest.sourceArtifactId, sourceSha256, deckSha256: manifest.deckSha256, combinationId,
+    sourceArtifactId: manifest.sourceArtifactId, sourceSha256, deckSha256: manifest.deckSha256, combinationId, ...(designBasis === undefined ? {} : { designBasis }),
     displacements: model.nodes.map((node, index) => { const values = displacementRows.get(index + 1)!; return { nodeId: node.id, uxM: values[0], uyM: values[1], rotationRad: values[2] }; }),
     reactions: model.nodes.map((node, index) => { const values = reactionRows.get(index + 1)!; return { nodeId: node.id, fxN: values[0], fyN: values[1], mzNm: values[2] }; }),
     members: model.members.map((member, index): NativeFrameResult["members"][number] => { const values = forceRows.get(index + 1)!; return { memberId: member.id, globalEndForces: [values[0], values[1], values[2], values[3], values[4], values[5]] }; }), warnings,

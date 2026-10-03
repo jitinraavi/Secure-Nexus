@@ -52,6 +52,9 @@ export function mergeDesignDocuments(baseDocument: MergeDocument, localDocument:
     if (equal(l, r)) return l;
     if (equal(l, a)) return r;
     if (equal(r, a)) return l;
+    // Adoption confirmation belongs to one complete reviewed basis. Mixing its
+    // fields can retain confirmation for a declaration that nobody reviewed.
+    if (path.length === 2 && path[0] === "design" && path[1] === "engineeringBasis") return conflict(path, "value", a, l, r);
     if (object(a) && object(l) && object(r)) {
       const result = Object.create(null) as { [key: string]: Json };
       for (const key of new Set([...Object.keys(a), ...Object.keys(l), ...Object.keys(r)])) {

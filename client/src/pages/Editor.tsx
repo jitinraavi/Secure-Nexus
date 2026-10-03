@@ -37,6 +37,7 @@ const CommunityEditor = lazy(() => import("./CommunityEditor").then((module) => 
 const InfraEditor = lazy(() => import("./InfraEditor").then((module) => ({ default: module.InfraEditor })));
 const MepPanel = lazy(() => import("../components/MepPanel").then((module) => ({ default: module.MepPanel })));
 const DesignExportMenu = lazy(() => import("../components/DesignExportMenu").then((module) => ({ default: module.DesignExportMenu })));
+const ProjectEngineeringBasisControl = lazy(() => import("../components/ProjectEngineeringBasisControl").then(module => ({ default: module.ProjectEngineeringBasisControl })));
 
 const SWATCHES = [
   "#7c8a99", "#a4714f", "#8a6a45", "#5d7b8a", "#6b5542", "#4c7a9c",
@@ -588,6 +589,7 @@ export function Editor() {
            <div className="flex-1" />
            <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
            <ProjectWorkspaceLinks projectId={id!} />
+           <Suspense fallback={null}><ProjectEngineeringBasisControl value={design.engineeringBasis} disabled={projectRole === "viewer"} onChange={engineeringBasis => changeDesign({ ...design, engineeringBasis })} /></Suspense>
            <TeamCollaborationPanel projectId={id!} />
            <PerformancePanel design={design} />
            {recoveryControls}
@@ -634,6 +636,7 @@ export function Editor() {
            <div className="flex-1" />
            <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
            <ProjectWorkspaceLinks projectId={id!} />
+           <Suspense fallback={null}><ProjectEngineeringBasisControl value={design.engineeringBasis} disabled={projectRole === "viewer"} onChange={engineeringBasis => changeDesign({ ...design, engineeringBasis })} /></Suspense>
            <TeamCollaborationPanel projectId={id!} />
            <PerformancePanel design={design} />
            {recoveryControls}
@@ -670,6 +673,7 @@ export function Editor() {
 
           <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
           <ProjectWorkspaceLinks projectId={id!} />
+          <Suspense fallback={null}><ProjectEngineeringBasisControl value={design.engineeringBasis} disabled={projectRole === "viewer"} onChange={engineeringBasis => changeDesign({ ...design, engineeringBasis })} /></Suspense>
            <TeamCollaborationPanel projectId={id!} />
            <PerformancePanel design={design} />
           <Badge tone="slate">{design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} items</Badge>
