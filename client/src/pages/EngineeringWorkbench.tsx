@@ -14,15 +14,18 @@ import { buildStructuralSolverExchange } from "../lib/structuralEngine";
 import { createNativeFrameInput } from "../lib/nativeResults";
 import { analyzeFrame3D, parseFrameModel3D } from "../lib/frameAnalysis3D";
 import { importStructuralExchange3D, parseFrameBridgeOptions3D, type FrameBridgeOptions3D } from "../lib/engineeringModelBridge3D";
+import { analyzeStructuralDesign, parseStructuralDesignInput, structuralDesignExample, validateStructuralDesignReport } from "../lib/structuralDesignChecks";
+import { analyzeStructuralLoads, parseStructuralLoadInput, structuralLoadExample, validateStructuralLoadReport } from "../lib/structuralLoadAuthoring";
+import { assessMepSystems, mepSystemExample, parseMepSystemInput, validateMepSystemReport } from "../lib/mepSystemAssessment";
 import { EngineeringBasisPanel } from "../components/EngineeringBasisPanel";
 import { createEngineeringDesignBasis, engineeringBasisFingerprint, parseEngineeringDesignBasis, validateEngineeringDesignBasis, type EngineeringDesignBasis } from "../lib/engineeringBasis";
 
-type Module = "frame" | "frame3d" | "water" | "air" | "electrical" | "fire" | "equipment";
+type Module = "frame" | "frame3d" | "water" | "air" | "electrical" | "fire" | "equipment" | "structural-design" | "loads-drift" | "mep-systems";
 interface MepBridgeSettings { endpointToleranceM: number; sourceElementId: string; waterSourceHeadM: number; airSourcePressurePa: number; waterTerminalDemandM3s: number; airTerminalDemandM3s: number; roughnessM: number; minorLossKPerSegment: number }
 interface StoredReport { module: Module; source: string; data: unknown; designBasis: EngineeringDesignBasis | null }
 interface ConversionWarnings { module: Module; warnings: string[] }
 interface EngineeringWorkspace {
-  version: 2; designBasis: EngineeringDesignBasis; activeModule: Module; inputs: Record<Module, string>; combinationId: string;
+  version: 3; designBasis: EngineeringDesignBasis; activeModule: Module; inputs: Record<Module, string>; combinationId: string;
   frameBridge: FrameBridgeOptions; frameBridge3d: FrameBridgeOptions3D; mepBridge: MepBridgeSettings;
   conversionWarnings: ConversionWarnings | null; reports: Partial<Record<Module, StoredReport>>;
 }
@@ -34,7 +37,11 @@ const modules: { id: Module; label: string; description: string }[] = [
   { id: "electrical", label: "Electrical protection", description: "Demand current, voltage drop, supplied-impedance fault currents and explicit protection criteria." },
   { id: "fire", label: "Fire flow", description: "Simultaneous terminal flow/pressure and storage-duration checks against your declared criteria." },
   { id: "equipment", label: "Pump/fan selection", description: "Duty-point interpolation, motor/efficiency sizing and reserve checks against a supplied catalog." },
+  { id: "structural-design", label: "Materials, foundations and connections", description: "Steel elastic/Euler screening, strain-compatible rectangular RC, full-contact footing bearing and planar bolt-group checks against declared criteria." },
+  { id: "loads-drift", label: "Load authoring and story drift", description: "Authored tributary pressures, inertia forces, self-weight and signed combinations with 3D analysis and explicit story drift criteria." },
+  { id: "mep-systems", label: "Coordinated MEP systems", description: "Linked water/air/fire networks, catalog equipment duties, motor power and electrical protection assessments with explicit mappings and source data." },
 ];
+const advancedModules = new Set<Module>(["structural-design", "loads-drift", "mep-systems"]);
 
 const waterExample = {
   version: 1, medium: "water", densityKgM3: 998.2, kinematicViscosityM2s: 1e-6,
@@ -42,6 +49,9 @@ const waterExample = {
   links: [{ id: "pipe-1", from: "source", to: "terminal", lengthM: 80, diameterM: 0.05, roughnessM: 0.0001, minorLossK: 3, maximumVelocityMps: 2 }],
 };
 const examples: Record<Module, unknown> = {
+  "structural-design": structuralDesignExample(),
+  "loads-drift": structuralLoadExample(),
+  "mep-systems": mepSystemExample(),
   frame: {
     version: 1, analysis: "p-delta",
     nodes: [{ id: "base", xM: 0, yM: 0, restraints: [true, true, true] }, { id: "top", xM: 0, yM: 3, restraints: [false, false, false] }],
@@ -87,7 +97,10 @@ function parseInput(text: string): unknown {
   if (text.length > maxInputCharacters) throw new Error("Input exceeds the 1 MB text limit.");
   return JSON.parse(text) as unknown;
 }
-function calculate(module: Module, value: unknown): unknown {
+function calculate(module: Module, value: unknown, basis: EngineeringDesignBasis): unknown {
+  if (module === "structural-design") return analyzeStructuralDesign(parseStructuralDesignInput(value), basis);
+  if (module === "loads-drift") return analyzeStructuralLoads(parseStructuralLoadInput(value), basis);
+  if (module === "mep-systems") return assessMepSystems(parseMepSystemInput(value), basis);
   if (module === "frame") return analyzeFrame2D(parseFrameModel(value));
   if (module === "frame3d") return analyzeFrame3D(parseFrameModel3D(value));
   if (module === "water" || module === "air") {
@@ -129,6 +142,9 @@ function warnings(value: unknown): string[] {
 }
 // Restoring a report validates data without running a solver or recomputing results.
 function validateReportSource(module: Module, value: unknown): void {
+  if (module === "structural-design") { parseStructuralDesignInput(value); return; }
+  if (module === "loads-drift") { parseStructuralLoadInput(value); return; }
+  if (module === "mep-systems") { parseMepSystemInput(value); return; }
   if (module === "frame") { parseFrameModel(value); return; }
   if (module === "frame3d") { parseFrameModel3D(value); return; }
   if (module === "water" || module === "air") {
@@ -249,8 +265,12 @@ function validateFrameReport3D(report: Record<string, unknown>, source: unknown)
   for (const row of reportRows(envelopes.nodes, "nodeId", nodeIds, [])) validatePeaks(row, "nodeId", ["maxTranslationM", "maxRotationRad"]);
   for (const row of reportRows(envelopes.members, "memberId", memberIds, [])) validatePeaks(row, "memberId", memberPeaks);
 }
-function validateReport(module: Module, data: unknown, source: unknown): void {
+function validateReport(module: Module, data: unknown, source: unknown, basis: EngineeringDesignBasis | null): void {
   validateReportSource(module, source);
+  if (advancedModules.has(module) && basis === null) throw new Error("This report requires its captured engineering design basis.");
+  if (module === "structural-design") { if (!basis || !validateStructuralDesignReport(data, parseStructuralDesignInput(source), basis)) throw new Error("Saved structural design report does not match its source and declared basis."); return; }
+  if (module === "loads-drift") { if (!basis || !validateStructuralLoadReport(data, parseStructuralLoadInput(source), basis)) throw new Error("Saved load/drift report does not match its source and declared basis."); return; }
+  if (module === "mep-systems") { if (!basis || !validateMepSystemReport(data, parseMepSystemInput(source), basis)) throw new Error("Saved MEP system report does not match its source and declared basis."); return; }
   if (module === "water" || module === "air") { validateFluidReport(data, source); return; }
   if (module === "equipment") {
     const input = record(source, "Equipment source"), candidates = input.candidates as Record<string, unknown>[];
@@ -301,15 +321,16 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
   };
   visit(value, 0);
   const workspace = record(value, "Engineering workspace");
-  if ((workspace.version !== 1 && workspace.version !== 2) || !isModule(workspace.activeModule) || workspace.version === 1 && workspace.activeModule === "frame3d") throw new Error("Engineering workspace version/module is unsupported.");
-  const designBasis = workspace.version === 2 ? parseEngineeringDesignBasis(workspace.designBasis) : createEngineeringDesignBasis();
+  if ((workspace.version !== 1 && workspace.version !== 2 && workspace.version !== 3) || !isModule(workspace.activeModule)) throw new Error("Engineering workspace version/module is unsupported.");
+  const savedModules = modules.filter(item => workspace.version === 3 || !advancedModules.has(item.id) && (workspace.version !== 1 || item.id !== "frame3d"));
+  if (!savedModules.some(item => item.id === workspace.activeModule)) throw new Error("Active module is not available in the saved workspace version.");
+  const designBasis = workspace.version === 1 ? createEngineeringDesignBasis() : parseEngineeringDesignBasis(workspace.designBasis);
   const savedInputs = record(workspace.inputs, "Module inputs"), inputs = {} as Record<Module, string>;
-  const savedModules = workspace.version === 1 ? modules.filter(item => item.id !== "frame3d") : modules;
   if (Object.keys(savedInputs).length !== savedModules.length || Object.keys(savedInputs).some(key => !savedModules.some(item => item.id === key))) throw new Error("Workspace module inputs differ from its supported version.");
   // Raw text is a draft: unfinished JSON survives recovery. Report source JSON
   // must satisfy the current solver schema before the report can be restored.
   for (const module of savedModules) inputs[module.id] = boundedText(savedInputs[module.id], `${module.label} input`, maxInputCharacters);
-  if (workspace.version === 1) inputs.frame3d = JSON.stringify(examples.frame3d, null, 2);
+  for (const module of modules) if (!savedModules.some(item => item.id === module.id)) inputs[module.id] = JSON.stringify(examples[module.id], null, 2);
   const frame = record(workspace.frameBridge, "Frame conversion options");
   if (frame.plane !== "xy" && frame.plane !== "zy") throw new Error("Saved frame plane is invalid.");
   requireFinite(frame.sliceCoordinateM, "Slice coordinate", -1e6, 1e6); requireFinite(frame.sliceToleranceM, "Slice tolerance", 1e-6, 1); requireFinite(frame.areaM2, "Section area", 1e-8, 1e4); requireFinite(frame.inertiaM4, "Section inertia", 1e-14, 1e6); requireFinite(frame.elasticModulusPa, "Elastic modulus", 1e3, 1e13); booleans(frame, ["acceptAssumedFixedSupports"]);
@@ -322,13 +343,13 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
   const savedReports = record(workspace.reports, "Saved reports"), reports: Partial<Record<Module, StoredReport>> = {};
   if (Object.keys(savedReports).length > modules.length) throw new Error("Workspace contains too many reports.");
   for (const [key, value] of Object.entries(savedReports)) {
-    if (!isModule(key) || workspace.version === 1 && key === "frame3d") throw new Error("Workspace has an unknown report module.");
+    if (!isModule(key) || !savedModules.some(item => item.id === key)) throw new Error("Workspace has an unknown report module.");
     const saved = record(value, "Saved module report"), source = boundedText(saved.source, "Report source input", maxInputCharacters);
     if (saved.module !== key || saved.data === undefined || JSON.stringify(saved.data).length > 2_000_000) throw new Error("Saved report module/size is invalid.");
     const reportBasis = workspace.version === 1 || saved.designBasis === null ? null : parseEngineeringDesignBasis(saved.designBasis);
-    validateReport(key, saved.data, parseInput(source)); reports[key] = { module: key, source, data: saved.data, designBasis: reportBasis };
+    validateReport(key, saved.data, parseInput(source), reportBasis); reports[key] = { module: key, source, data: saved.data, designBasis: reportBasis };
   }
-  return { version: 2, designBasis, frameBridge3d: frame3d, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
+  return { version: 3, designBasis, frameBridge3d: frame3d, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
 }
 
 function convertGeometry(value: unknown, module: Module, frame: FrameBridgeOptions, mep: MepBridgeSettings, frame3d: FrameBridgeOptions3D) {
@@ -360,7 +381,7 @@ export default function EngineeringWorkbench() {
   const basisFingerprint = engineeringBasisFingerprint(designBasis), basisIssues = validateEngineeringDesignBasis(designBasis);
   const storedResult = reports[module];
   const activeResult = storedResult && storedResult.source === inputs[module] && storedResult.designBasis !== null && engineeringBasisFingerprint(storedResult.designBasis) === basisFingerprint ? storedResult : null;
-  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 2, designBasis, activeModule: module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports, designBasis]);
+  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 3, designBasis, activeModule: module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports, designBasis]);
   const restoreWorkspace = useCallback((value: unknown) => {
     const restored = parseWorkspace(value);
     importGeneration.current++;
@@ -385,11 +406,21 @@ export default function EngineeringWorkbench() {
     setError(null);
     setReports(current => { const next = { ...current }; delete next[module]; return next; });
     try {
-      const basisSnapshot = parseEngineeringDesignBasis(designBasis), data = calculate(module, parseInput(inputs[module]));
+      const basisSnapshot = parseEngineeringDesignBasis(designBasis), data = calculate(module, parseInput(inputs[module]), basisSnapshot);
       if (JSON.stringify(data).length > 2_000_000) throw new Error("Analysis report exceeds the 2 MB workspace report limit; use a smaller subsystem or fewer combinations.");
       setReports(current => ({ ...current, [module]: { module, source: inputs[module], data, designBasis: basisSnapshot } }));
     }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to calculate this dataset."); }
+  };
+  const editGeneratedFrame = () => {
+    try {
+      if (module !== "loads-drift" || !activeResult || !engineeringRecord(activeResult.data)) throw new Error("Calculate the current load-authoring input first.");
+      const text = JSON.stringify(parseFrameModel3D(activeResult.data.generatedFrameModel), null, 2);
+      if (text.length > maxInputCharacters) throw new Error("Generated frame exceeds the editable input limit.");
+      importGeneration.current++;
+      setInputs(current => ({ ...current, frame3d: text })); setModule("frame3d"); setError(null);
+      setConversionWarnings({ module: "frame3d", warnings: ["This frame is copied from the captured load-authoring report. Editing it creates an independent draft; changes do not update the original load/drift source or report."] });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not copy the generated frame."); }
   };
   const exportDeck = async (target: "opensees" | "staad" | "epanet") => {
     setError(null); setExporting(true);
@@ -423,6 +454,7 @@ export default function EngineeringWorkbench() {
       <p className="text-sm text-slate-300">{description.description}</p>
       <p className="text-xs text-slate-400">Results use supplied geometry, demands, capacities and criteria. Examples are editable datasets with unverified results. Each report states its mathematical scope and missing design checks.</p>
       {module === "frame3d" && <p className="text-xs text-slate-400">3D input uses explicit member local axes and six support restraints per node. This browser analysis is linear elastic; the native job panel captures the separate planar frame input.</p>}
+      {advancedModules.has(module) && <p className="text-xs text-slate-400">Declare the adopted code clauses or approved user criteria and their sources in the input. These modules evaluate their stated bounded methods; country selection does not supply unimplemented hazards, material rules or manufacturer data.</p>}
       {basisIssues.length > 0 && <p className="text-xs text-amber-200">Design basis has {basisIssues.length} incomplete declaration fields. Analysis still uses the supplied SI model and criteria; selecting a country or standard does not certify national-code compliance.</p>}
     </Card>
     <div className="grid gap-5 lg:grid-cols-2">
@@ -489,6 +521,7 @@ export default function EngineeringWorkbench() {
         <label className="block text-sm font-medium text-slate-300" htmlFor="engineering-source">SI input JSON</label>
         <textarea id="engineering-source" spellCheck={false} maxLength={maxInputCharacters} value={inputs[module]} onChange={event => updateText(event.target.value)} className="h-[32rem] w-full rounded-xl border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-relaxed text-slate-200 outline-none focus:border-amber-300" />
         <Button onClick={run}>Calculate {description.label.toLowerCase()}</Button>
+        {module === "loads-drift" && <Button variant="secondary" disabled={!activeResult} onClick={editGeneratedFrame}>Edit generated 3D frame</Button>}
         {module === "frame" && <div className="space-y-3 border-t border-slate-800 pt-4">
           <Input label="Combination id for native export (blank selects the first)" value={combinationId} maxLength={100} onChange={event => setCombinationId(event.target.value)} />
           <div className="flex flex-wrap gap-2"><Button loading={exporting} variant="secondary" size="sm" onClick={() => { void exportDeck("opensees"); }}>OpenSees bundle</Button><Button disabled={exporting} variant="secondary" size="sm" onClick={() => { void exportDeck("staad"); }}>STAAD linear bundle</Button></div>
