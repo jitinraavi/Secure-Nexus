@@ -12,7 +12,8 @@ Do not run the application, tests, builds, lint/typecheck, previews, native conv
 
 - Phase 1 workspaces: `bd72532f2991c46922f2e40e504d1d2d42713b7d`.
 - Phase 2 durable/native jobs: `1d29b57a4ceb65c876dae0e5dc52d0452b873e43`, tree `dc125ba923d2e55783261a2e6cd92959ae27cef9`.
-- This handoff accompanies the first Phase 3 increment: project country/adoption controls, basis-bound reports/workspaces/decks/native manifests, atomic basis conflict handling, and bounded 3D elastic frame analysis. Read the branch commit history for this increment's exact SHA; do not treat the Phase 2 SHA above as the current head.
+- First Phase 3 increment: `0ca9500d03fed73e7eab33994c68e52892721f89`, country/adoption controls, basis-bound reports/workspaces/decks/native manifests, atomic basis conflict handling and bounded 3D elastic frame analysis.
+- This handoff accompanies the next increment: [3D structural geometry import](FRAME-3D-MODEL-BRIDGE.md) with explicit import overrides, preserved node/member IDs, source warnings and opt-in assumed supports. Engineering workspace version 2 stores these import controls and restores defaults for snapshots created before this optional addition. Read branch history for the latest SHA; the first increment SHA above is its parent, not the final head.
 
 Phase 3 is **in progress**, not complete. Country/reference metadata is not implementation of national design checks. Native OpenSees processing remains planar only; the new 3D analytical model is separate. Runtime prerequisites remain in Phase 2 documentation, including disabled-by-default processing, pinned versions, Linux isolation and applicable solver rights.
 

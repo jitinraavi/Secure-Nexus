@@ -13,6 +13,7 @@ import { importRoutedMepNetwork, importStructuralExchange2D, type FrameBridgeOpt
 import { buildStructuralSolverExchange } from "../lib/structuralEngine";
 import { createNativeFrameInput } from "../lib/nativeResults";
 import { analyzeFrame3D, parseFrameModel3D } from "../lib/frameAnalysis3D";
+import { importStructuralExchange3D, parseFrameBridgeOptions3D, type FrameBridgeOptions3D } from "../lib/engineeringModelBridge3D";
 import { EngineeringBasisPanel } from "../components/EngineeringBasisPanel";
 import { createEngineeringDesignBasis, engineeringBasisFingerprint, parseEngineeringDesignBasis, validateEngineeringDesignBasis, type EngineeringDesignBasis } from "../lib/engineeringBasis";
 
@@ -22,7 +23,7 @@ interface StoredReport { module: Module; source: string; data: unknown; designBa
 interface ConversionWarnings { module: Module; warnings: string[] }
 interface EngineeringWorkspace {
   version: 2; designBasis: EngineeringDesignBasis; activeModule: Module; inputs: Record<Module, string>; combinationId: string;
-  frameBridge: FrameBridgeOptions; mepBridge: MepBridgeSettings;
+  frameBridge: FrameBridgeOptions; frameBridge3d: FrameBridgeOptions3D; mepBridge: MepBridgeSettings;
   conversionWarnings: ConversionWarnings | null; reports: Partial<Record<Module, StoredReport>>;
 }
 const modules: { id: Module; label: string; description: string }[] = [
@@ -80,6 +81,7 @@ const examples: Record<Module, unknown> = {
 };
 const initialInputs = () => Object.fromEntries(modules.map(module => [module.id, JSON.stringify(examples[module.id], null, 2)])) as Record<Module, string>;
 const maxInputCharacters = 1_000_000;
+const defaultFrameBridge3d = (): FrameBridgeOptions3D => ({ areaM2: 0.02, inertiaYM4: 0.00008, inertiaZM4: 0.00008, torsionConstantM4: 0.00004, elasticModulusPa: 200e9, shearModulusPa: 77e9, localYAxis: [1, 1, 1], acceptAssumedFixedSupports: false });
 
 function parseInput(text: string): unknown {
   if (text.length > maxInputCharacters) throw new Error("Input exceeds the 1 MB text limit.");
@@ -311,6 +313,7 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
   const frame = record(workspace.frameBridge, "Frame conversion options");
   if (frame.plane !== "xy" && frame.plane !== "zy") throw new Error("Saved frame plane is invalid.");
   requireFinite(frame.sliceCoordinateM, "Slice coordinate", -1e6, 1e6); requireFinite(frame.sliceToleranceM, "Slice tolerance", 1e-6, 1); requireFinite(frame.areaM2, "Section area", 1e-8, 1e4); requireFinite(frame.inertiaM4, "Section inertia", 1e-14, 1e6); requireFinite(frame.elasticModulusPa, "Elastic modulus", 1e3, 1e13); booleans(frame, ["acceptAssumedFixedSupports"]);
+  const frame3d = workspace.frameBridge3d === undefined ? defaultFrameBridge3d() : parseFrameBridgeOptions3D(workspace.frameBridge3d);
   const mep = record(workspace.mepBridge, "MEP conversion options");
   boundedText(mep.sourceElementId, "Source element ID", 100); requireFinite(mep.endpointToleranceM, "Endpoint tolerance", 1e-6, 0.5); requireFinite(mep.waterSourceHeadM, "Water head", -1e7, 1e7); requireFinite(mep.airSourcePressurePa, "Air pressure", -1e7, 1e7);
   requireFinite(mep.waterTerminalDemandM3s, "Water terminal demand", 0, 1000); requireFinite(mep.airTerminalDemandM3s, "Air terminal demand", 0, 1000); requireFinite(mep.roughnessM, "Roughness", 0, 1); requireFinite(mep.minorLossKPerSegment, "Minor loss", 0, 1e6);
@@ -325,11 +328,12 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
     const reportBasis = workspace.version === 1 || saved.designBasis === null ? null : parseEngineeringDesignBasis(saved.designBasis);
     validateReport(key, saved.data, parseInput(source)); reports[key] = { module: key, source, data: saved.data, designBasis: reportBasis };
   }
-  return { version: 2, designBasis, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
+  return { version: 2, designBasis, frameBridge3d: frame3d, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
 }
 
-function convertGeometry(value: unknown, module: Module, frame: FrameBridgeOptions, mep: MepBridgeSettings) {
-  if (module !== "frame" && module !== "water" && module !== "air") throw new Error("Choose frame, water or airflow before importing project geometry.");
+function convertGeometry(value: unknown, module: Module, frame: FrameBridgeOptions, mep: MepBridgeSettings, frame3d: FrameBridgeOptions3D) {
+  if (module === "frame3d") return importStructuralExchange3D(value, frame3d);
+  if (module !== "frame" && module !== "water" && module !== "air") throw new Error("Choose a structural frame, water or airflow module before importing project geometry.");
   return module === "frame" ? importStructuralExchange2D(value, frame) : importRoutedMepNetwork(value, { medium: module === "water" ? "water" : "air", endpointToleranceM: mep.endpointToleranceM, sourceElementId: mep.sourceElementId.trim() || undefined, sourcePotential: module === "water" ? mep.waterSourceHeadM : mep.airSourcePressurePa, terminalDemandM3s: module === "water" ? mep.waterTerminalDemandM3s : mep.airTerminalDemandM3s, roughnessM: mep.roughnessM, minorLossKPerSegment: mep.minorLossKPerSegment });
 }
 function projectStructuralExchange(project: ProjectDetail): unknown {
@@ -347,6 +351,7 @@ export default function EngineeringWorkbench() {
   const [designBasis, setDesignBasis] = useState(createEngineeringDesignBasis);
   const [reports, setReports] = useState<Partial<Record<Module, StoredReport>>>({}), [error, setError] = useState<string | null>(null), [exporting, setExporting] = useState(false);
   const [frameBridge, setFrameBridge] = useState<FrameBridgeOptions>({ plane: "xy", sliceCoordinateM: 0, sliceToleranceM: 0.001, areaM2: 0.02, inertiaM4: 0.00008, elasticModulusPa: 200e9, acceptAssumedFixedSupports: false });
+  const [frameBridge3d, setFrameBridge3d] = useState(defaultFrameBridge3d);
   const [mepBridge, setMepBridge] = useState<MepBridgeSettings>({ endpointToleranceM: 0.001, sourceElementId: "", waterSourceHeadM: 45, airSourcePressurePa: 500, waterTerminalDemandM3s: 0.002, airTerminalDemandM3s: 0.2, roughnessM: 0.0001, minorLossKPerSegment: 0 });
   const [conversionWarnings, setConversionWarnings] = useState<ConversionWarnings | null>(null);
   const importGeneration = useRef(0);
@@ -355,25 +360,26 @@ export default function EngineeringWorkbench() {
   const basisFingerprint = engineeringBasisFingerprint(designBasis), basisIssues = validateEngineeringDesignBasis(designBasis);
   const storedResult = reports[module];
   const activeResult = storedResult && storedResult.source === inputs[module] && storedResult.designBasis !== null && engineeringBasisFingerprint(storedResult.designBasis) === basisFingerprint ? storedResult : null;
-  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 2, designBasis, activeModule: module, inputs, combinationId, frameBridge, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, mepBridge, conversionWarnings, reports, designBasis]);
+  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 2, designBasis, activeModule: module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports, designBasis]);
   const restoreWorkspace = useCallback((value: unknown) => {
     const restored = parseWorkspace(value);
     importGeneration.current++;
     // No setters run until the whole snapshot, all options and reports validate.
-    setModule(restored.activeModule); setInputs(restored.inputs); setDesignBasis(restored.designBasis); setCombinationId(restored.combinationId); setFrameBridge(restored.frameBridge); setMepBridge(restored.mepBridge); setConversionWarnings(restored.conversionWarnings); setReports(restored.reports); setError(null);
+    setModule(restored.activeModule); setInputs(restored.inputs); setDesignBasis(restored.designBasis); setCombinationId(restored.combinationId); setFrameBridge(restored.frameBridge); setFrameBridge3d(restored.frameBridge3d); setMepBridge(restored.mepBridge); setConversionWarnings(restored.conversionWarnings); setReports(restored.reports); setError(null);
   }, []);
   const importProject = useCallback((project: ProjectDetail) => {
     try {
       if (!project.design) throw new Error("The selected project has no saved design geometry.");
-      const source = module === "frame" ? projectStructuralExchange(project) : project.design;
-      const converted = convertGeometry(source, module, frameBridge, mepBridge), text = JSON.stringify(converted.model, null, 2);
+      const source = module === "frame" || module === "frame3d" ? projectStructuralExchange(project) : project.design;
+      const converted = convertGeometry(source, module, frameBridge, mepBridge, frameBridge3d), text = JSON.stringify(converted.model, null, 2);
       const importedBasis = project.design.engineeringBasis === undefined ? createEngineeringDesignBasis() : parseEngineeringDesignBasis(project.design.engineeringBasis);
       if (text.length > maxInputCharacters) throw new Error("Converted project subsystem exceeds the 1 MB input limit.");
-      const sourceWarnings = module === "frame" && engineeringRecord(source) && Array.isArray(source.warnings) ? warnings(source.warnings) : [];
+      const sourceWarnings = (module === "frame" || module === "frame3d") && engineeringRecord(source) && Array.isArray(source.warnings) ? warnings(source.warnings) : [];
+      const combinedWarnings = warnings([...sourceWarnings, ...converted.warnings]);
       importGeneration.current++;
-      setInputs(current => ({ ...current, [module]: text })); setDesignBasis(importedBasis); setConversionWarnings({ module, warnings: [...sourceWarnings, ...converted.warnings] }); setError(null);
+      setInputs(current => ({ ...current, [module]: text })); setDesignBasis(importedBasis); setConversionWarnings({ module, warnings: combinedWarnings }); setError(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not import project geometry."); throw cause; }
-  }, [module, frameBridge, mepBridge]);
+  }, [module, frameBridge, frameBridge3d, mepBridge]);
   const updateText = (text: string) => { importGeneration.current++; setInputs(current => ({ ...current, [module]: text })); setError(null); };
   const run = () => {
     setError(null);
@@ -437,7 +443,7 @@ export default function EngineeringWorkbench() {
             setInputs(current => ({ ...current, [targetModule]: text })); setError(null);
           } catch (cause) { if (attempt === importGeneration.current) setError(cause instanceof Error ? cause.message : "Could not import JSON."); }
         }} />
-        {(module === "frame" || module === "water" || module === "air") && <details className="space-y-3 rounded-xl border border-slate-700 p-3">
+        {(module === "frame" || module === "frame3d" || module === "water" || module === "air") && <details className="space-y-3 rounded-xl border border-slate-700 p-3">
           <summary className="cursor-pointer text-sm font-medium text-amber-300">Convert existing project geometry</summary>
           {module === "frame" ? <div className="grid gap-3 sm:grid-cols-2">
             <Select label="Frame plane" value={frameBridge.plane} onChange={event => setFrameBridge(current => ({ ...current, plane: event.target.value as "xy" | "zy" }))}><option value="xy">XY at constant Z</option><option value="zy">ZY at constant X</option></Select>
@@ -447,6 +453,11 @@ export default function EngineeringWorkbench() {
             <Input type="number" step="any" label="Member inertia override (m⁴)" value={frameBridge.inertiaM4} onChange={event => setFrameBridge(current => ({ ...current, inertiaM4: Number(event.target.value) }))} />
             <Input type="number" step="any" label="Elastic modulus override (Pa)" value={frameBridge.elasticModulusPa} onChange={event => setFrameBridge(current => ({ ...current, elasticModulusPa: Number(event.target.value) }))} />
             <label className="flex gap-2 text-xs text-slate-300 sm:col-span-2"><input type="checkbox" checked={frameBridge.acceptAssumedFixedSupports} onChange={event => setFrameBridge(current => ({ ...current, acceptAssumedFixedSupports: event.target.checked }))} />Import the source exchange's assumed fixed supports for further review</label>
+          </div> : module === "frame3d" ? <div className="grid gap-3 sm:grid-cols-2">
+            {([["areaM2", "Area override (m²)"], ["inertiaYM4", "Local Iy override (m⁴)"], ["inertiaZM4", "Local Iz override (m⁴)"], ["torsionConstantM4", "Torsion J override (m⁴)"], ["elasticModulusPa", "Young's modulus E (Pa)"], ["shearModulusPa", "Shear modulus G (Pa)"]] as const).map(([key, label]) => <Input key={key} type="number" step="any" label={label} value={frameBridge3d[key]} onChange={event => { importGeneration.current++; setFrameBridge3d(current => ({ ...current, [key]: Number(event.target.value) })); }} />)}
+            {([0, 1, 2] as const).map(axis => <Input key={axis} type="number" step="any" label={`Local y reference: global ${["X", "Y", "Z"][axis]}`} value={frameBridge3d.localYAxis[axis]} onChange={event => { importGeneration.current++; const coordinate = Number(event.target.value); setFrameBridge3d(current => { const localYAxis: [number, number, number] = [...current.localYAxis]; localYAxis[axis] = coordinate; return { ...current, localYAxis }; }); }} />)}
+            <label className="flex gap-2 text-xs text-slate-300 sm:col-span-2"><input type="checkbox" checked={frameBridge3d.acceptAssumedFixedSupports} onChange={event => { importGeneration.current++; setFrameBridge3d(current => ({ ...current, acceptAssumedFixedSupports: event.target.checked })); }} />Accept source assumed fixed supports for further review</label>
+            <p className="text-xs text-slate-400 sm:col-span-2">Every imported member uses these explicit properties and reference vector. Parallel vectors are rejected. Edit per-member properties, principal axes, restraints and loads before analysis; coincident source IDs remain separate nodes.</p>
           </div> : <div className="grid gap-3 sm:grid-cols-2">
             <Input label="Source route element id (blank uses first route)" value={mepBridge.sourceElementId} maxLength={100} onChange={event => setMepBridge(current => ({ ...current, sourceElementId: event.target.value }))} />
             <Input type="number" step="any" label="Vertex merge tolerance (m)" value={mepBridge.endpointToleranceM} onChange={event => setMepBridge(current => ({ ...current, endpointToleranceM: Number(event.target.value) }))} />
@@ -455,21 +466,23 @@ export default function EngineeringWorkbench() {
             <Input type="number" step="any" label="Roughness per segment (m)" value={mepBridge.roughnessM} onChange={event => setMepBridge(current => ({ ...current, roughnessM: Number(event.target.value) }))} />
             <Input type="number" step="any" label="Minor-loss K per segment" value={mepBridge.minorLossKPerSegment} onChange={event => setMepBridge(current => ({ ...current, minorLossKPerSegment: Number(event.target.value) }))} />
           </div>}
-          <p className="text-xs text-slate-400">{module === "frame" ? "Import Community Editor → Structural → Solver model JSON. The selected plane receives your section overrides and an empty load case; assign actual supports and loads." : "Import exported design JSON containing one routed pipe/duct system. Review source, terminal demands and every converted connection before calculation."}</p>
-          <Button variant="secondary" size="sm" onClick={() => modelFileInput.current?.click()}>Import {module === "frame" ? "structural exchange" : "MEP design"}</Button>
+          <p className="text-xs text-slate-400">{module === "frame" || module === "frame3d" ? "Import Community Editor → Structural → Solver model JSON. Supported line members receive your section overrides and an empty load case; assign actual connectivity, supports and loads." : "Import exported design JSON containing one routed pipe/duct system. Review source, terminal demands and every converted connection before calculation."}</p>
+          <Button variant="secondary" size="sm" onClick={() => modelFileInput.current?.click()}>Import {module === "frame" || module === "frame3d" ? "structural exchange" : "MEP design"}</Button>
         </details>}
         <input ref={modelFileInput} className="hidden" type="file" accept=".json,application/json" onChange={async event => {
           const file = event.target.files?.[0]; event.target.value = "";
           if (!file) return;
           const attempt = ++importGeneration.current;
           if (file.size > maxInputCharacters) { setError("Project JSON exceeds 1 MB; export a smaller subsystem."); return; }
-          const targetModule = module, frameOptions = { ...frameBridge }, mepOptions = { ...mepBridge };
+          const targetModule = module, frameOptions = { ...frameBridge }, mepOptions = { ...mepBridge }, frameOptions3d = { ...frameBridge3d, localYAxis: [...frameBridge3d.localYAxis] as [number, number, number] };
           try {
             const source = await file.text(); if (attempt !== importGeneration.current) return;
             const value = parseInput(source);
-            const converted = convertGeometry(value, targetModule, frameOptions, mepOptions), text = JSON.stringify(converted.model, null, 2);
+            const converted = convertGeometry(value, targetModule, frameOptions, mepOptions, frameOptions3d), text = JSON.stringify(converted.model, null, 2);
             if (text.length > maxInputCharacters) throw new Error("Converted geometry exceeds the 1 MB input limit.");
-            setInputs(current => ({ ...current, [targetModule]: text })); setConversionWarnings({ module: targetModule, warnings: converted.warnings }); setError(null);
+            const sourceWarnings = (targetModule === "frame" || targetModule === "frame3d") && engineeringRecord(value) && Array.isArray(value.warnings) ? warnings(value.warnings) : [];
+            const combinedWarnings = warnings([...sourceWarnings, ...converted.warnings]);
+            setInputs(current => ({ ...current, [targetModule]: text })); setConversionWarnings({ module: targetModule, warnings: combinedWarnings }); setError(null);
           } catch (cause) { if (attempt === importGeneration.current) setError(cause instanceof Error ? cause.message : "Could not convert project geometry."); }
         }} />
         {conversionWarnings?.module === module && <ul className="list-disc space-y-1 pl-5 text-xs text-amber-200">{conversionWarnings.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>}
