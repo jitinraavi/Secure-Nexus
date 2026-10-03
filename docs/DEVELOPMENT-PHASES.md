@@ -70,6 +70,14 @@ Workspace version 4 adds these modules with legacy version 1-3 recovery. The cou
 
 Workspace version 5 adds this separately scoped US input/report, preserves versions 1-4, and rejects inconsistent saved algebra or cross-country adopted criterion references. The inspected artifact revision is September 2023; later listed errata contents are not independently incorporated. Project reviewers must establish compatibility of the implemented subset with adopted amendments. All compilation, numerical and operational acceptance remains deferred.
 
-## Current source boundary
+## Previous source boundary
 
 This window pushed `912a10f09c7aa738416a2ac1c56069151274aa1f` (loads/structural/MEP), `dc1f784ed6eb79bc9bf113465e94650ea4893921` (Indian clauses/recipes), and `aa34f0196b015c89d3dc4c6a7699ffe9b3695e39` (US E3). Their Git blobs, parent chain and branch updates were verified. The [next wind-module handoff](WIND-MODULE-SOURCE-HANDOFF.md) preserves primary references, including the amended map, and the required source/applicability contract. No unfinished wind-generator source was left in the mirror. Phase 3 remains in progress; subsequent phases remain pending. Account usage was 90% of the five-hour window and 45% weekly at this assessment; ordinary usage was still allowed. This boundary reserves enough allowance for coherent final verification rather than claiming exhausted credits or a completed whole phase.
+
+## Authored wind, seismic and US bending increment
+
+The refreshed-window continuation adds [Indian authored wind pressures](NATIONAL-WIND-LOADS.md), [Indian equivalent-static floor actions](NATIONAL-SEISMIC-LOADS.md) and [US braced steel yielding](US-STEEL-FLEXURE.md). Workspace version 6 retains versions 1-5, their original drafts and captured reports; restoration checks the new source-bound formulas without invoking an assessment routine or solver.
+
+The wind subset requires the amended hazard references, reviewed supplied speed/factors/coefficients and explicit ordinary low-rise static applicability. Dynamic/gust response and map/table selection remain unsupported. The seismic subset conservatively intersects the declared 2016 regular, low-rise Zone II static exception with short-period and other product scope gates, retaining computed/minimum/adopted base force and signed floor actions. Torsion, modal/directional analysis, load combinations and member/node distribution remain external. The AISC F2 subset requires reviewed compactness and bracing and produces no bending capacity for `Lb>Lp`.
+
+These are source increments. Full national hazard/combination, material/detailing/MEP coverage and executed acceptance remain incomplete. Phase 3 retains its in-progress position; later phases have not been declared complete by these additions.
