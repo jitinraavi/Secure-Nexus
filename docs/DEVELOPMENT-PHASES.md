@@ -6,13 +6,29 @@ Develop phases sequentially and push coherent modules to `upgrade/r1-modeling-co
 | --- | --- | --- |
 | 1 | Saved project workspaces: persistence, source artifacts, revisions, permissions, recovery and editor links. | Implemented; source-reviewed; executable acceptance pending. See [details](PHASE-1-PROJECT-WORKSPACES.md). |
 | 2 | Shared durable jobs, DWG/CAD conversion and native solver/result workflows. | Implemented and source-reviewed. GNU LibreDWG 0.13.4 and planar OpenSees 3.8.0 contracts selected. Runtimes, isolation, applicable solver rights and executable acceptance remain deployment prerequisites. See [details](PHASE-2-DURABLE-NATIVE-JOBS.md). |
-| 3 | Broader structural/material/load/design support and coordinated MEP analysis, using the country selected for each project. | In progress. Bounded 3D frames and supplied load/drift/material/foundation/MEP methods; Indian IS 456 flexure/shear, Table 18 recipes and authored wind/seismic actions; US AISC E3 compression, braced F2 yielding and bearing-type bolt rupture/interaction subsets are implemented. Broader national hazards/combinations, governing limit states and detailing remain. |
+| 3 | Broader structural/material/load/design support and coordinated MEP analysis, using the country selected for each project. | In progress. Bounded 3D frames and supplied load/drift/material/foundation/MEP methods; Indian IS 456 flexure/shear, Table 18 recipes and authored wind/seismic actions; US AISC E3 compression, braced F2 yielding, nonslender G2 web shear and bearing-type bolt rupture/interaction subsets; and authored steady-state HVAC thermal duties are implemented. The finite remaining source boundary is sourced US basic gravity recipes. Complete national hazards/combinations, governing limit states and detailing remain explicit unsupported scopes. |
 | 4 | Broader BIM geometry/schema/IDS coverage and authoring exchanges. | In progress. Bounded identity-origin mapped geometry, direct type-property inheritance, typed primitive IDS checks and declared engineering exchange provenance are implemented. Broader representations, unit/schema conformance and authoring workflows remain. |
 | 5 | Production survey/civil formats, datums, terrain and authoring workflows. | Pending. Existing bounded studies remain available. |
 | 6 | Scale/rendering scene production, streaming/editor integration and measured budgets. | Pending. Existing modules remain bounded and unmeasured. |
 | 7 | Enterprise multi-host authority, identity and billing operations. | Pending. Existing topology limits remain documented. |
 | 8 | Offline/PWA cached projects and queued artifacts/jobs with explicit conflicts. | Pending. Draft recovery is not an offline application shell. |
 | 9 | AI photo rendering through provider jobs and versioned outputs. | Pending. Assistant planning is separate. |
+
+## Finite remaining source boundaries
+
+The delivery target is the named supported contract in each phase, with unsupported scopes explicit. An indefinitely expanding implementation of every national provision is not an acceptance criterion. Operational prerequisites and the prohibited executable acceptance remain separate from missing source work.
+
+| Phase | Next source acceptance boundary |
+| --- | --- |
+| 3 | US G2 shear and authored steady-state HVAC thermal/equipment duties are implemented; add primary-sourced US basic gravity recipes where the adopted provisions are available. Preserve country/basis/source and unsupported actions, national checks and complete member-design exclusions. |
+| 4 | Supported typed single-value property authoring with other STEP records/GlobalIds retained; bounded SI measure comparisons for declared supported units. Compound units, ambiguous inheritance and full IFC/IDS certification remain explicit exclusions. |
+| 5 | Retain supported LAS CRS/VLR and authored vertical-datum/elevation-unit metadata without invented transformations; exchange the supported advanced civil alignment through a declared bounded LandXML subset. |
+| 6 | Produce geometry chunks/manifests from existing scenes and integrate authenticated source/revision-bound artifacts into workspaces/editors, including retention, cancellation and resource bounds. Measured scale remains deferred. |
+| 7 | Document and enforce a central API authority topology for secondary hosts; add tenant-scoped paid-seat entitlement and idempotent payment transitions. OIDC/Redis/payment configuration and live acceptance remain deployment prerequisites. |
+| 8 | Actual offline application shell, account-scoped project cache and immutable artifact/job queues with revision conflicts, storage bounds, logout isolation and permission rechecks. Existing draft recovery/issue-board support is not this contract. |
+| 9 | Declared image-provider contract, configuration-gated durable rendering jobs and versioned source/prompt/model/output artifacts. Preserve originals and expose unconfigured/failed states; provider deployment and executed acceptance remain deferred. |
+
+This table is a bounded implementation sequence, not a claim these remaining sources already exist or operate successfully.
 
 Before starting or extending a module, assess account allowance and prerequisites. Preserve source and push coherent completed modules before allowance prevents progress; leave an exact handoff for the scheduled continuation. The previous whole-phase stopping rule was superseded by the user's instruction to continue across refreshed usage windows. Missing provider/runtime information is a prerequisite, not evidence of exhausted credits.
 
@@ -103,3 +119,9 @@ Source review and pushed Git blob comparison are the acceptance available under 
 [AISC G2.1(a) stocky rolled-web shear](US-STEEL-SHEAR.md) computes the slenderness branch directly from sourced dimensions and yield strength. Within scope it uses the published web area, yielding expression and distinct LRFD/ASD exception factors. Above the branch limit it returns no capacity, utilization or substitute factors; combined actions and other member/connection limit states remain separate.
 
 Workspace version 8 adds this module with versions 1-7 retained. Its strict captured source/basis report restoration checks scalar algebra and null scope directly, without an assessor or solver. Independent source review found no blocking inconsistency. Compilation, numerical reference solutions and later errata reconciliation remain unverified. This adds a supported US clause subset without completing broader Phase 3 national design.
+
+## Authored HVAC thermal increment, 4 October 2026
+
+[Steady-state zone thermal duty](HVAC-THERMAL-LOADS.md) balances sourced UA, dry-air exterior exchange, sensible gains and moisture-equivalent latent gains at one authored condition. Four separate cooling/heating/dehumidification/humidification duties prevent opposite demands from cancelling into an equipment pass. Supported sensible supply flow combines the thermal requirement with an independently mapped total terminal flow minimum. Optional exact-condition simultaneous equipment capacities must satisfy sensible duty, latent duty and airflow independently; sensible credit is capped by the available air-flow heat transfer.
+
+Any complete selected-country basis may use these physical relationships with authored properties. Every national ventilation, envelope/climate, energy, comfort and mechanical-code check remains explicitly unsupported. Mixed duties, dynamic peaks, psychrometric functions, central/DOAS allocation and complete system sizing are excluded. Strict source/basis snapshots and direct scalar restoration preserve these boundaries. Engineering workspace version 9 adds this module while recovering versions 1-8 without analysis. No executable acceptance was performed; US gravity recipes and Phases 4-9 remain pending at this increment.

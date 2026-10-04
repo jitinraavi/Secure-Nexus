@@ -27,15 +27,16 @@ import { assessUSSteelFlexure, parseUSSteelFlexureInput, usSteelFlexureExample, 
 import { assessNationalConcreteShear, nationalConcreteShearExample, parseNationalConcreteShearInput, validateNationalConcreteShearReport } from "../lib/nationalConcreteShear";
 import { assessUSSteelBolts, parseUSSteelBoltInput, usSteelBoltExample, validateUSSteelBoltReport } from "../lib/usSteelBoltConnections";
 import { assessUSSteelShear, parseUSSteelShearInput, usSteelShearExample, validateUSSteelShearReport } from "../lib/usSteelShear";
+import { assessHvacThermalLoads, hvacThermalExample, parseHvacThermalInput, validateHvacThermalReport } from "../lib/hvacThermalLoads";
 import { EngineeringBasisPanel } from "../components/EngineeringBasisPanel";
 import { createEngineeringDesignBasis, engineeringBasisFingerprint, parseEngineeringDesignBasis, validateEngineeringDesignBasis, type EngineeringDesignBasis } from "../lib/engineeringBasis";
 
-type Module = "frame" | "frame3d" | "water" | "air" | "electrical" | "fire" | "equipment" | "structural-design" | "loads-drift" | "mep-systems" | "national-structure" | "national-loads" | "us-steel-compression" | "national-wind" | "national-seismic" | "us-steel-flexure" | "national-concrete-shear" | "us-steel-bolts" | "us-steel-shear";
+type Module = "frame" | "frame3d" | "water" | "air" | "electrical" | "fire" | "equipment" | "structural-design" | "loads-drift" | "mep-systems" | "national-structure" | "national-loads" | "us-steel-compression" | "national-wind" | "national-seismic" | "us-steel-flexure" | "national-concrete-shear" | "us-steel-bolts" | "us-steel-shear" | "hvac-thermal";
 interface MepBridgeSettings { endpointToleranceM: number; sourceElementId: string; waterSourceHeadM: number; airSourcePressurePa: number; waterTerminalDemandM3s: number; airTerminalDemandM3s: number; roughnessM: number; minorLossKPerSegment: number }
 interface StoredReport { module: Module; source: string; data: unknown; designBasis: EngineeringDesignBasis | null }
 interface ConversionWarnings { module: Module; warnings: string[] }
 interface EngineeringWorkspace {
-  version: 8; designBasis: EngineeringDesignBasis; activeModule: Module; inputs: Record<Module, string>; combinationId: string;
+  version: 9; designBasis: EngineeringDesignBasis; activeModule: Module; inputs: Record<Module, string>; combinationId: string;
   frameBridge: FrameBridgeOptions; frameBridge3d: FrameBridgeOptions3D; mepBridge: MepBridgeSettings;
   conversionWarnings: ConversionWarnings | null; reports: Partial<Record<Module, StoredReport>>;
 }
@@ -59,12 +60,14 @@ const modules: { id: Module; label: string; description: string }[] = [
   { id: "national-concrete-shear", label: "Indian concrete beam shear", description: "IS 456:2000 ordinary rectangular beam shear and vertical-stirrup checks with sourced concrete resistance and reviewed critical sections. Other beam and seismic limit states remain separate." },
   { id: "us-steel-bolts", label: "US individual bolt rupture", description: "ANSI/AISC 360-22 J3 single-plane bolt tension, shear and interaction from sourced nominal stresses and reviewed per-bolt demands. Complete connection resistance remains separate." },
   { id: "us-steel-shear", label: "US stocky web shear", description: "ANSI/AISC 360-22 G2.1(a) pure major-axis shear for reviewed rolled-I members within the stocky-web limit. Other web branches and member limit states remain separate." },
+  { id: "hvac-thermal", label: "HVAC thermal loads", description: "Authored steady-state zone sensible/latent balances, supply airflow and declared equipment duties using sourced physical inputs and the selected country's project criteria. National table checks and dynamic sizing remain separate." },
 ];
 const versionSixModules = new Set<Module>(["national-wind", "national-seismic", "us-steel-flexure"]);
 const versionSevenModules = new Set<Module>(["national-concrete-shear", "us-steel-bolts"]);
 const versionEightModules = new Set<Module>(["us-steel-shear"]);
+const versionNineModules = new Set<Module>(["hvac-thermal"]);
 const nationalModules = new Set<Module>(["national-structure", "national-loads", "us-steel-compression", ...versionSixModules, ...versionSevenModules, ...versionEightModules]);
-const advancedModules = new Set<Module>(["structural-design", "loads-drift", "mep-systems", ...nationalModules]);
+const advancedModules = new Set<Module>(["structural-design", "loads-drift", "mep-systems", ...nationalModules, ...versionNineModules]);
 const nationalBasisInstructions: Partial<Record<Module, string>> = {
   "national-structure": "Requires confirmed Indian IS 456:2000 adoption and explicit amendment-scope review.",
   "national-loads": "Requires confirmed Indian IS 456:2000 adoption and explicit amendment-scope review.",
@@ -83,6 +86,7 @@ const waterExample = {
   links: [{ id: "pipe-1", from: "source", to: "terminal", lengthM: 80, diameterM: 0.05, roughnessM: 0.0001, minorLossK: 3, maximumVelocityMps: 2 }],
 };
 const examples: Record<Module, unknown> = {
+  "hvac-thermal": hvacThermalExample(),
   "us-steel-shear": usSteelShearExample(),
   "national-concrete-shear": nationalConcreteShearExample(),
   "us-steel-bolts": usSteelBoltExample(),
@@ -141,6 +145,7 @@ function parseInput(text: string): unknown {
   return JSON.parse(text) as unknown;
 }
 function calculate(module: Module, value: unknown, basis: EngineeringDesignBasis): unknown {
+  if (module === "hvac-thermal") return assessHvacThermalLoads(parseHvacThermalInput(value), basis);
   if (module === "us-steel-shear") return assessUSSteelShear(parseUSSteelShearInput(value), basis);
   if (module === "national-concrete-shear") return assessNationalConcreteShear(parseNationalConcreteShearInput(value), basis);
   if (module === "us-steel-bolts") return assessUSSteelBolts(parseUSSteelBoltInput(value), basis);
@@ -198,6 +203,7 @@ function combinedImportWarnings(...groups: string[][]): string[] {
 }
 // Restoring a report validates data without running a solver or recomputing results.
 function validateReportSource(module: Module, value: unknown): void {
+  if (module === "hvac-thermal") { parseHvacThermalInput(value); return; }
   if (module === "us-steel-shear") { parseUSSteelShearInput(value); return; }
   if (module === "national-concrete-shear") { parseNationalConcreteShearInput(value); return; }
   if (module === "us-steel-bolts") { parseUSSteelBoltInput(value); return; }
@@ -331,6 +337,7 @@ function validateFrameReport3D(report: Record<string, unknown>, source: unknown)
   for (const row of reportRows(envelopes.members, "memberId", memberIds, [])) validatePeaks(row, "memberId", memberPeaks);
 }
 function validateReport(module: Module, data: unknown, source: unknown, basis: EngineeringDesignBasis | null): void {
+  if (module === "hvac-thermal") { if (!basis || !validateHvacThermalReport(data, parseHvacThermalInput(source), basis)) throw new Error("Saved thermal report differs from its source, physical scope or declared basis."); return; }
   if (module === "us-steel-shear") { if (!basis || !validateUSSteelShearReport(data, parseUSSteelShearInput(source), basis)) throw new Error("Saved stocky-web shear report differs from its source, branch scope or adopted basis."); return; }
   validateReportSource(module, source);
   if (advancedModules.has(module) && basis === null) throw new Error("This report requires its captured engineering design basis.");
@@ -395,9 +402,9 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
   };
   visit(value, 0);
   const workspace = record(value, "Engineering workspace");
-  if ((workspace.version !== 1 && workspace.version !== 2 && workspace.version !== 3 && workspace.version !== 4 && workspace.version !== 5 && workspace.version !== 6 && workspace.version !== 7 && workspace.version !== 8) || !isModule(workspace.activeModule)) throw new Error("Engineering workspace version/module is unsupported.");
+  if ((workspace.version !== 1 && workspace.version !== 2 && workspace.version !== 3 && workspace.version !== 4 && workspace.version !== 5 && workspace.version !== 6 && workspace.version !== 7 && workspace.version !== 8 && workspace.version !== 9) || !isModule(workspace.activeModule)) throw new Error("Engineering workspace version/module is unsupported.");
   const savedModules = modules.filter(item => {
-    const introduced = versionEightModules.has(item.id) ? 8 : versionSevenModules.has(item.id) ? 7 : versionSixModules.has(item.id) ? 6 : item.id === "us-steel-compression" ? 5 : item.id === "national-structure" || item.id === "national-loads" ? 4 : advancedModules.has(item.id) ? 3 : item.id === "frame3d" ? 2 : 1;
+    const introduced = versionNineModules.has(item.id) ? 9 : versionEightModules.has(item.id) ? 8 : versionSevenModules.has(item.id) ? 7 : versionSixModules.has(item.id) ? 6 : item.id === "us-steel-compression" ? 5 : item.id === "national-structure" || item.id === "national-loads" ? 4 : advancedModules.has(item.id) ? 3 : item.id === "frame3d" ? 2 : 1;
     return introduced <= Number(workspace.version);
   });
   if (!savedModules.some(item => item.id === workspace.activeModule)) throw new Error("Active module is not available in the saved workspace version.");
@@ -426,7 +433,7 @@ function parseWorkspace(value: unknown): EngineeringWorkspace {
     const reportBasis = workspace.version === 1 || saved.designBasis === null ? null : parseEngineeringDesignBasis(saved.designBasis);
     validateReport(key, saved.data, parseInput(source), reportBasis); reports[key] = { module: key, source, data: saved.data, designBasis: reportBasis };
   }
-  return { version: 8, designBasis, frameBridge3d: frame3d, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
+  return { version: 9, designBasis, frameBridge3d: frame3d, activeModule: workspace.activeModule, inputs, combinationId: boundedText(workspace.combinationId, "Combination ID", 100), frameBridge: { plane: frame.plane, sliceCoordinateM: Number(frame.sliceCoordinateM), sliceToleranceM: Number(frame.sliceToleranceM), areaM2: Number(frame.areaM2), inertiaM4: Number(frame.inertiaM4), elasticModulusPa: Number(frame.elasticModulusPa), acceptAssumedFixedSupports: frame.acceptAssumedFixedSupports as boolean }, mepBridge: { endpointToleranceM: Number(mep.endpointToleranceM), sourceElementId: String(mep.sourceElementId), waterSourceHeadM: Number(mep.waterSourceHeadM), airSourcePressurePa: Number(mep.airSourcePressurePa), waterTerminalDemandM3s: Number(mep.waterTerminalDemandM3s), airTerminalDemandM3s: Number(mep.airTerminalDemandM3s), roughnessM: Number(mep.roughnessM), minorLossKPerSegment: Number(mep.minorLossKPerSegment) }, conversionWarnings: conversion, reports };
 }
 
 function convertGeometry(value: unknown, module: Module, frame: FrameBridgeOptions, mep: MepBridgeSettings, frame3d: FrameBridgeOptions3D) {
@@ -473,7 +480,7 @@ export default function EngineeringWorkbench() {
   const storedResult = reports[module];
   const activeResult = storedResult && storedResult.source === inputs[module] && storedResult.designBasis !== null && engineeringBasisFingerprint(storedResult.designBasis) === basisFingerprint ? storedResult : null;
   const hasGeneratedFrame = !!activeResult && engineeringRecord(activeResult.data) && engineeringRecord(activeResult.data.generatedFrameModel);
-  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 8, designBasis, activeModule: module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports, designBasis]);
+  const payload = useMemo<EngineeringWorkspace>(() => ({ version: 9, designBasis, activeModule: module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports }), [module, inputs, combinationId, frameBridge, frameBridge3d, mepBridge, conversionWarnings, reports, designBasis]);
   const restoreWorkspace = useCallback((value: unknown) => {
     const restored = parseWorkspace(value);
     importGeneration.current++;
