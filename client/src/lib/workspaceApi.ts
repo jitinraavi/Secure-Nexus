@@ -31,8 +31,9 @@ async function request<T>(url: string, method = "GET", body?: BodyInit): Promise
   return response.json() as Promise<T>;
 }
 export const getWorkspace = (projectId: string, kind: WorkspaceKind) => request<WorkspaceState>(`${path(projectId)}/${kind}`);
-export const saveWorkspace = (projectId: string, kind: WorkspaceKind, snapshot: { baseWorkspaceRevision: number; sourceRevision: number; payloadArtifactId: string; referencedArtifactIds: string[] }) => request<WorkspaceState>(`${path(projectId)}/${kind}`, "PUT", JSON.stringify(snapshot));
-export const listWorkspaceArtifacts = (projectId: string, kind: WorkspaceKind) => request<{ artifacts: WorkspaceArtifact[] }>(`${path(projectId)}/artifacts?kind=${kind}`);
+export const saveWorkspace = (projectId: string, kind: WorkspaceKind, snapshot: { baseWorkspaceRevision: number; sourceRevision: number; payloadArtifactId: string; referencedArtifactIds: string[]; requireCurrentSource?: boolean }) => request<WorkspaceState>(`${path(projectId)}/${kind}`, "PUT", JSON.stringify(snapshot));
+export interface WorkspaceArtifactInventory { artifacts: WorkspaceArtifact[]; storedBytes: number; maximumBytes: number; maximumArtifacts: number }
+export const listWorkspaceArtifacts = (projectId: string, kind?: WorkspaceKind) => request<WorkspaceArtifactInventory>(`${path(projectId)}/artifacts${kind ? `?kind=${kind}` : ""}`);
 export const deleteWorkspaceArtifact = (projectId: string, artifactId: string) => request<void>(`${path(projectId)}/artifacts/${encodeURIComponent(artifactId)}`, "DELETE");
 export const pruneWorkspaceHistory = (projectId: string, kind: WorkspaceKind, beforeRevision: number) => request<WorkspaceState & { deleted: number }>(`${path(projectId)}/${kind}/history?beforeRevision=${beforeRevision}`, "DELETE");
 export async function uploadWorkspaceArtifact(projectId: string, kind: WorkspaceKind, blob: Blob, name: string): Promise<WorkspaceArtifact> {
@@ -40,13 +41,14 @@ export async function uploadWorkspaceArtifact(projectId: string, kind: Workspace
   const body = new FormData(); body.set("kind", kind); body.set("file", blob, name);
   return (await request<{ artifact: WorkspaceArtifact }>(`${path(projectId)}/artifacts`, "POST", body)).artifact;
 }
-export async function readWorkspaceArtifact(projectId: string, artifactId: string): Promise<Blob> {
-  const response = await fetch(`${path(projectId)}/artifacts/${encodeURIComponent(artifactId)}`, { credentials: "same-origin" });
+export async function readWorkspaceArtifact(projectId: string, artifactId: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(`${path(projectId)}/artifacts/${encodeURIComponent(artifactId)}`, { credentials: "same-origin", signal });
   if (!response.ok) { await response.body?.cancel().catch(() => undefined); throw new WorkspaceApiError(response.status, "Workspace artifact is unavailable or access changed."); }
   if (!response.body || Number(response.headers.get("Content-Length") || 0) > MAX_WORKSPACE_BYTES) { await response.body?.cancel().catch(() => undefined); throw new Error("Workspace artifact exceeds its read limit."); }
   const reader = response.body.getReader(), parts: ArrayBuffer[] = []; let bytes = 0;
   try {
-    for (;;) { const next = await reader.read(); if (next.done) break; bytes += next.value.byteLength; if (bytes > MAX_WORKSPACE_BYTES) throw new Error("Workspace artifact exceeds its read limit."); parts.push(next.value.slice().buffer); }
-  } finally { await reader.cancel(); }
+    for (;;) { if (signal?.aborted) throw new DOMException("Artifact read cancelled.", "AbortError"); const next = await reader.read(); if (next.done) break; bytes += next.value.byteLength; if (bytes > MAX_WORKSPACE_BYTES) throw new Error("Workspace artifact exceeds its read limit."); parts.push(next.value.slice().buffer); }
+  } finally { await reader.cancel().catch(() => undefined); }
+  if (signal?.aborted) throw new DOMException("Artifact read cancelled.", "AbortError");
   return new Blob(parts, { type: response.headers.get("Content-Type") || "application/octet-stream" });
 }

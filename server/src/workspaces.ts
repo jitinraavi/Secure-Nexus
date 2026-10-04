@@ -21,6 +21,7 @@ export const workspaceSaveSchema = z.object({
   sourceRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   payloadArtifactId: artifactIdSchema,
   referencedArtifactIds: z.array(artifactIdSchema).max(16).default([]),
+  requireCurrentSource: z.boolean().optional(),
 }).strict().superRefine((value, context) => {
   if (new Set(value.referencedArtifactIds).size !== value.referencedArtifactIds.length || value.referencedArtifactIds.includes(value.payloadArtifactId)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Referenced artifacts must be distinct and exclude the payload artifact" });
@@ -124,6 +125,7 @@ export function saveWorkspace(projectId: string, kind: WorkspaceKind, actor: Wor
     if (currentRevision !== input.baseWorkspaceRevision) throw new WorkspaceError(409, "Workspace changed. Reload or preserve a separate copy before saving.", "WORKSPACE_CONFLICT", currentRevision);
     if (!Number.isSafeInteger(currentRevision) || currentRevision >= Number.MAX_SAFE_INTEGER) throw new WorkspaceError(409, "Workspace revision capacity reached", "REVISION_CAPACITY", currentRevision);
     if (input.sourceRevision > project.revision) throw new WorkspaceError(409, "Workspace source revision is ahead of the saved project", "SOURCE_REVISION_AHEAD", project.revision);
+    if (input.requireCurrentSource && input.sourceRevision !== project.revision) throw new WorkspaceError(409, "Project geometry changed while generated artifacts were being prepared. Reimport the current source before saving.", "SOURCE_REVISION_CHANGED", project.revision);
     const count = db.prepare("SELECT COUNT(*) AS count FROM project_workspace_snapshots WHERE project_id=? AND kind=?").get(projectId, kind) as { count: number };
     if (count.count >= MAX_WORKSPACE_HISTORY) throw new WorkspaceError(409, "Workspace history is full. Prune earlier revisions before saving.", "HISTORY_CAPACITY", currentRevision);
     for (const artifactId of [input.payloadArtifactId, ...input.referencedArtifactIds]) {

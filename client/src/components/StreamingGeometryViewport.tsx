@@ -4,7 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GeometryChunkCache, disposeGeometryGroup, geometryGroup, sceneAllocationBytes, selectGeometryChunks, type GeometryManifest } from "../lib/geometryPipeline";
 import type { GeometryScene } from "../lib/meshGeometry";
 
-export function StreamingGeometryViewport({ scene, manifest }: { scene: GeometryScene | null; manifest: GeometryManifest | null }) {
+export function StreamingGeometryViewport({ scene, manifest, sourceCamera }: { scene: GeometryScene | null; manifest: GeometryManifest | null; sourceCamera?: GeometryScene["camera"] }) {
   const host = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState(""), [error, setError] = useState("");
   useEffect(() => {
@@ -14,10 +14,10 @@ export function StreamingGeometryViewport({ scene, manifest }: { scene: Geometry
     setError("");
     renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2)); element.appendChild(renderer.domElement);
     const world = new THREE.Scene(); world.background = new THREE.Color(0x101827);
-    const camera = new THREE.PerspectiveCamera(scene?.camera.fov ?? 50, 1, 0.01, 1e8);
-    camera.position.fromArray(scene?.camera.position ?? [100, 100, 100]); camera.up.fromArray(scene?.camera.up ?? [0, 1, 0]);
-    const controls = new OrbitControls(camera, renderer.domElement); controls.target.fromArray(scene?.camera.target ?? [0, 0, 0]); controls.enableDamping = true;
-    if (!scene && manifest?.chunks.length) { const box = new THREE.Box3().makeEmpty(); for (const id of manifest.roots) { const c = manifest.chunks.find(c => c.id === id)!; box.union(new THREE.Box3(new THREE.Vector3(...c.bounds.min), new THREE.Vector3(...c.bounds.max))); } const center = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()).length(); controls.target.copy(center); camera.position.copy(center).add(new THREE.Vector3(size, size, size)); }
+    const view = scene?.camera ?? sourceCamera, camera = new THREE.PerspectiveCamera(view?.fov ?? 50, 1, 0.01, 1e8);
+    camera.position.fromArray(view?.position ?? [100, 100, 100]); camera.up.fromArray(view?.up ?? [0, 1, 0]);
+    const controls = new OrbitControls(camera, renderer.domElement); controls.target.fromArray(view?.target ?? [0, 0, 0]); controls.enableDamping = true;
+    if (!scene && !view && manifest?.chunks.length) { const box = new THREE.Box3().makeEmpty(); for (const id of manifest.roots) { const c = manifest.chunks.find(c => c.id === id)!; box.union(new THREE.Box3(new THREE.Vector3(...c.bounds.min), new THREE.Vector3(...c.bounds.max))); } const center = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()).length(); controls.target.copy(center); camera.position.copy(center).add(new THREE.Vector3(size, size, size)); }
     world.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2)); const light = new THREE.DirectionalLight(0xffffff, 2); light.position.set(100, 200, 100); world.add(light);
     const loaded = new Map<string, THREE.Group>(), cache = new GeometryChunkCache(); let ended = false, pending = false, frame = 0, requested = "", failedUntil = 0, lastSample = performance.now(), frames = 0, lastUpdate = 0;
     const controller = new AbortController();
@@ -46,6 +46,6 @@ export function StreamingGeometryViewport({ scene, manifest }: { scene: Geometry
     };
     render();
     return () => { ended = true; controller.abort(); cancelAnimationFrame(frame); resize.disconnect(); controls.dispose(); for (const group of loaded.values()) disposeGeometryGroup(group); cache.clear(); renderer.dispose(); renderer.domElement.remove(); };
-  }, [scene, manifest]);
+  }, [scene, manifest, sourceCamera]);
   return <div className="space-y-2"><div ref={host} className="h-96 w-full overflow-hidden rounded-xl border border-slate-700" /><p className="text-xs text-slate-400">{status}</p>{error && <p role="status" className="text-sm text-amber-300">{error}</p>}</div>;
 }
