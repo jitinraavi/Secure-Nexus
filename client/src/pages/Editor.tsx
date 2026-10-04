@@ -369,6 +369,7 @@ export function Editor() {
         const entries: { name: string; content: string | Blob }[] = [
           { name: `${stem}.ifc`, content: buildIfcStep(design) },
           { name: `${stem}.ifc.json`, content: buildBimExchange(design) },
+          { name: `${stem}-engineering-declaration.json`, content: JSON.stringify((await import("../lib/exchangeProvenance")).engineeringExchangeProvenance(design.engineeringBasis), null, 2) },
           { name: `${stem}.ifc.validation.json`, content: JSON.stringify(ifcReport, null, 2) + "\n" },
           { name: `${stem}-coordination.csv`, content: buildBimScheduleCsv(design) },
           { name: `${stem}.dxf`, content: buildDxf(design) },

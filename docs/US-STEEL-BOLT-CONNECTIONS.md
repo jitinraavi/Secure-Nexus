@@ -1,0 +1,45 @@
+# US J3 individual bolt rupture and interaction subset
+
+`client/src/lib/usSteelBoltConnections.ts` adds a bounded Phase 3 structural-connection increment. It assesses explicitly authored tensile and one-plane shear demand for individual high-strength bolts using the supported AISC 360-22 J3 rupture/interaction equations. It does not establish complete connection resistance, verify bolt installation or certify national-code compliance.
+
+## Inspected publisher sources
+
+The [AISC V16.0 companion examples](https://www.aisc.org/globalassets/aisc/university-programs/teaching-aids/first-semester-design-examples---v16.0.pdf), J-11/J-12 and IIA-53, give J3-1/J3-2 nominal strengths, `phi=0.75`, `Omega=2.00`, and J3.8 interaction expressions J3-3a/J3-3b. Publisher cached extraction was inspected. The [AISC 2022/2016 comparison](https://www.aisc.org/media/myzl4doa/2022-to-2016-spec-comparison.pdf) identifies the Group 120/144/150 nomenclature and added Group 144. The [AISC bolting FAQ](https://www.aisc.org/aisc/solutions-center/engineering-faqs/6-bolting/) discusses installation and long-fastener-pattern reductions. The [AISC-authored 360-22 artifact](https://welovesteelconstruction.ssi-steel.com/wp-content/uploads/2024/08/Specification-AISC-360-22_Specification-for-Structural-Steel-Buildings.pdf) is revised September 2023. Its [readable book transcription](https://studylib.net/doc/27880833/aisc-360-22-16th-edition), Table J3.2/page 16.1-137 and J3.8/pages 16.1-141/142, was also inspected: it confirms the declared Group 120 metric row and the 950 mm long-pattern note. No nominal-stress lookup table is bundled.
+
+The [publisher errata listing](https://www.aisc.org/aisc/publications/revisions-and-errata/) lists January 2025 and September 2026 errata. Their contents were not independently inspected/incorporated. Project amendment and errata applicability reviews must establish whether the implemented equations remain applicable. No later edition/draft is substituted.
+
+## Input and country/adoption contract
+
+`parseUSSteelBoltInput(unknown)` accepts version 1 and 1–200 uniquely identified `us-aisc360-j3-bolt` checks. Input/report arrays must be dense. Unknown fields, non-finite/unbounded values and unsupported declared scopes are rejected. Each check records connection ID, physical bolt ID, load case, source and review of its authored force assignment. `demandAssignment` is `single-bolt` or `reviewed-per-bolt-group`; the latter supplies a separate checked force for each bolt. The module never divides group forces by bolt count or infers stiffness/eccentric sharing.
+
+The supported declaration is a `bearing-type` connection, one shear plane, pretensioned installation, static loading, no fillers/packing and no prying. Group `120`, `144` or `150`, exact authored ASTM grade/assembly text and thread position `N` (threads not excluded) or `X` (threads excluded) are explicit. Sourced reviews confirm nominal-stress row selection, installation and applicability. These are professional author declarations, not independently verified facts.
+
+`diameterM` derives gross shank area `Ab=pi*d²/4`. `areaBasis: "gross-shank"` and `nominalStressBasis: "table-j3.2"` prohibit substituting tensile stress area while also retaining nominal table stresses. `nominalTensileStressPa` and `nominalShearStressPa` each contain `value`, `unit: "Pa"`, `source`, `standardId: "us-aisc360"`, `clause: "Table J3.2"`, and optional `criterionId`. Grade/thread position never silently chooses a value. Supplied stresses must be externally reviewed against the adopted row/notes; the parser's numerical bounds do not certify that row selection. Manufacturer overrides and alternate tensile-area methods are excluded.
+
+`endLoadedJoint` and `fastenerPatternLengthM` describe the complete reviewed connection pattern. A single-bolt pattern has zero bolt-to-bolt length. End-loaded patterns longer than the supported metric 950 mm limit are rejected because their Table J3.2 note reduction is unimplemented. Other pattern geometry, spacing and edge distances remain separate checks. No-fillers and no-prying declarations prevent those unsupported effects from silently entering the assessed subset.
+
+Both applied forces are non-negative magnitudes in N. `LRFD` requires `loadBasis: "factored"`; `ASD` requires `"service"` for effects of the externally reviewed applicable ASD combination. The reviewed source provides the demand; it does not include an automatically generated load combination or added installation pretension.
+
+Diameter bounds are `0.003..0.1 m`, nominal stress `1e6..2e9 Pa`, each demand `0..1e12 N`, and pattern length `0..10000 m`, subject to the end-loaded limit above. These are implementation bounds, not approved grades/sizes. Derived area, capacities, stresses and utilization must remain finite and at most `1e24`; positive capacities/area/stress must remain strictly positive.
+
+`assessUSSteelBolts(input,basis)` requires complete current-catalog project basis validation, country `US`, confirmed named reviewer, exactly one matching `us-aisc360` catalog adoption at edition `2022`, publisher source, region/authority, and declared adoption/amendments. Any incomplete, duplicate, cross-country or incompatible captured basis receives `unsupported-basis` with no results. Optional stress criterion IDs must match one captured `frame` criterion exactly in quantity, unit, source and adopted Table J3.2 reference. Other countries/editions receive no substituted US equations.
+
+## Algebra and fail behavior
+
+Pure nominal bolt strengths are `Fnt*Ab` in tension and `Fnv*Ab` in shear. Available strength is `phi*Rn` for LRFD or `Rn/Omega` for ASD. Required shear stress is `frv=V/Ab` for the one reviewed plane. Shear must independently be within its available strength before the tensile interaction check is assessed.
+
+For LRFD, `Fnt'=min(Fnt,1.3*Fnt-(Fnt/(phi*Fnv))*frv)`. For ASD, `Fnt'=min(Fnt,1.3*Fnt-(Omega*Fnt/Fnv)*frv)`. Modified nominal tensile resistance is `Fnt'*Ab`, then the same method-specific factor gives its available resistance. Tensile demand is compared with that modified resistance. Zero shear retains the supplied pure tension resistance; zero tension still requires the independent shear check.
+
+When shear is exceeded, result status is `exceeds-implemented-clauses`. Modified tensile stress, interaction capacities, tensile utilization and tensile-comparison flag remain null. The known shear comparison remains false with its computed utilization. This avoids treating an invalid negative interaction expression as capacity or passing an overstressed shear plane through a zero tensile demand. Otherwise both method-specific rupture/interaction comparisons must be satisfied to issue `within-implemented-clauses`.
+
+Reports retain individual source IDs, area, required stresses, authored nominal stresses, pure and modified capacities, factors, demands, utilization and exact clause flags. Every report has `verification: "unverified"`, `compliance: "not-assessed"`, and implementation `AISC360-2022-J3-single-plane-bolt-v1`.
+
+## Restoration, exclusions and deferred acceptance
+
+`validateUSSteelBoltReport(value,source,basis)` is a restore-only boolean type guard. It rejects unknown captured basis/declaration/standard/criterion fields before normalization, malformed/sparse arrays, edited sources, changed basis fingerprints, altered factors/algebra/capacities/null patterns, inconsistent statuses/flags and replaced warning/detail/exclusion text. Closed-form scalar source equality is exact in IEEE-754 arithmetic. It never calls the assessor, bolt calculation routine or a solver. The assessor checks its generated report against this finite source-coherence contract before returning it.
+
+`usSteelBoltExample()` illustrates SI input, not a selected grade, installed assembly or accepted demand/adoption review. Every review reference is marked for replacement with checked project sources. Its nominal metric row values are explicitly authored; no project lookup is performed.
+
+Slip-critical resistance, hole bearing/tearout, spacing/edge geometry, connected-material yielding/rupture/block shear, prying, fillers, long end-loaded pattern reduction, multiple shear planes, force redistribution, common/A307/Group 200/anchor/rod forms, fatigue/cycles/seismic detailing/fire, assembly qualification and complete connection certification remain excluded. This increment broadens supported source coverage without completing all Phase 3 national engineering/design scope.
+
+No repository code, app, tests, builds, lint/typechecking or previews were executed. Later authorized acceptance must cover independent AISC J3 benchmarks; LRFD/ASD; pure tension, pure shear, zero and combined loads; the capped/reduced interaction boundary; exact shear capacity and just above; N/X row provenance; gross-area units; unsupported long-pattern/filler/prying/multiple-plane declarations; full adoption/criterion ambiguity; finite bounds; and mutation of stored source/basis/capacity/status/null fields. Latest errata reconciliation and professional installation/applicability review remain prerequisites.

@@ -1,6 +1,7 @@
 import { engineeringRecord, identifier, requireFinite } from "./engineeringNumerics";
 import { parseFrameModel, type FrameModel2D } from "./frameAnalysis";
 import type { FluidLink, FluidNetwork, FluidNode } from "./engineeringNetworks";
+import { engineeringDeclarationReviewWarnings, parseEngineeringExchangeProvenance } from "./exchangeProvenance";
 
 export interface FrameBridgeOptions {
   plane: "xy" | "zy"; sliceCoordinateM: number; sliceToleranceM: number;
@@ -8,6 +9,7 @@ export interface FrameBridgeOptions {
 }
 export function importStructuralExchange2D(value: unknown, options: FrameBridgeOptions): { model: FrameModel2D; warnings: string[] } {
   if (!engineeringRecord(value) || value.format !== "groundwork-structural-analysis-model" || value.version !== 1 || value.units !== "SI") throw new Error("Import the Community Editor's structural Solver model JSON (SI version 1).");
+  const provenance = value.engineeringProvenance === undefined ? null : parseEngineeringExchangeProvenance(value.engineeringProvenance);
   if (!Array.isArray(value.nodes) || value.nodes.length > 20000 || !Array.isArray(value.members) || value.members.length > 20000) throw new Error("Structural exchange nodes/members are missing or oversized.");
   if (options.plane !== "xy" && options.plane !== "zy") throw new Error("Choose XY or ZY frame plane.");
   requireFinite(options.sliceCoordinateM, "slice coordinate", -1e6, 1e6); requireFinite(options.sliceToleranceM, "slice tolerance", 1e-6, 1);
@@ -42,6 +44,8 @@ export function importStructuralExchange2D(value: unknown, options: FrameBridgeO
     "No loads were inferred from demand screens. Populate user-loads with independently established nodal/member loads and load combinations.",
     options.acceptAssumedFixedSupports ? "Imported fixed supports are the editor's assumptions, accepted by your import choice; independently establish actual support behavior." : "Supports were left unrestrained. Set actual restraints in the JSON before analysis.",
     "A 2D slice omits out-of-plane stiffness/load transfer. Source model fingerprint/result certification is not transferred.",
+    provenance ? provenance.scope : "The legacy source exchange has no engineering declaration; establish the analytical draft's country and adoption basis independently.",
+    ...(provenance ? engineeringDeclarationReviewWarnings(provenance) : []),
   ] };
 }
 

@@ -11,6 +11,7 @@ import { COMPLIANCE_PROFILES, validateDesign } from "../lib/compliance";
 import { buildIfcStep, inspectGroundworkIfcSources, validateIfcProfile, validateIfcRoundTrip, type IfcValidationReport } from "../lib/bim";
 import { buildBcfZip } from "../lib/bcf";
 import { technicalGraphicsSettings } from "../lib/technicalGraphics";
+import { engineeringExchangeProvenance } from "../lib/exchangeProvenance";
 
 export function DesignExportMenu({ design, projectName, onChange }: { design: Design; projectName?: string; onChange?: (design: Design) => void }) {
   const { id: projectId } = useParams<{ id: string }>();
@@ -18,8 +19,15 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
   const [cadStatus, setCadStatus] = useState<CadExchangeStatusResponse | null>(null);
   const docs = documentationFor(design);
   const compliance = validateDesign(design);
-  const ifcStep = useMemo(() => open ? buildIfcStep(design) : "", [open, design]);
-  const ifcReport = useMemo<IfcValidationReport>(() => open ? validateIfcRoundTrip(design, ifcStep) : { valid: false, parsedEntities: 0, guidCount: 0, normalized: false, issues: [] }, [open, design, ifcStep]);
+  const ifcBuild = useMemo(() => {
+    if (!open) return { step: "", error: "" };
+    try { return { step: buildIfcStep(design), error: "" }; }
+    catch (error) { return { step: "", error: error instanceof Error ? error.message : "Could not generate the IFC exchange." }; }
+  }, [open, design]);
+  const ifcStep = ifcBuild.step;
+  const ifcReport = useMemo<IfcValidationReport>(() => ifcBuild.error
+    ? { valid: false, parsedEntities: 0, guidCount: 0, normalized: false, issues: [{ code: "ifc-generation", message: ifcBuild.error, severity: "error" }] }
+    : open ? validateIfcRoundTrip(design, ifcStep) : { valid: false, parsedEntities: 0, guidCount: 0, normalized: false, issues: [] }, [open, design, ifcStep, ifcBuild.error]);
   const ifcProfile = useMemo(() => open ? validateIfcProfile(ifcStep, "reference-view") : { valid: false, requirements: [], issues: [] }, [open, ifcStep]);
   const [importSummary, setImportSummary] = useState("");
   const graphics = technicalGraphicsSettings(design.technicalGraphics);
@@ -146,6 +154,7 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <Button onClick={() => void exportFile("dxf")}>Download DXF</Button>
+          <Button variant="secondary" onClick={() => download(`${stem}-engineering-declaration.json`, JSON.stringify(engineeringExchangeProvenance(design.engineeringBasis), null, 2), "application/json")}>Engineering declaration JSON</Button>
            <Button variant="secondary" disabled={!ifcReport.valid} title={ifcReport.valid ? "" : "Resolve IFC validation errors first"} onClick={() => void exportFile("ifc")}>Download IFC STEP</Button>
           <Link className="rounded-xl border border-slate-700 p-3 text-center text-sm sm:col-span-2" to={`/exchange${projectId ? `?project=${encodeURIComponent(projectId)}` : ""}`} onClick={() => setOpen(false)}>Open DWG conversion jobs</Link>
           <p className="text-xs text-slate-400 sm:col-span-2">Download the current DXF, then submit it in the exchange workbench. LibreDWG conversion preserves the captured source; review the drawing for unsupported entities.</p>

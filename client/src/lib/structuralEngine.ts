@@ -1,5 +1,7 @@
 import type { CommunityDesign, DraftElement, StructuralLoadCombination } from "../types";
 import { structuralSettings } from "./structural";
+import { engineeringExchangeProvenance } from "./exchangeProvenance";
+import type { EngineeringDesignBasis } from "./engineeringBasis";
 
 export type StructuralNodeKind = "grid-intersection" | "column-base" | "column-top";
 export type StructuralMemberKind = "column" | "beam" | "brace" | "wall" | "slab";
@@ -246,7 +248,7 @@ export function structuralModelFingerprint(design: CommunityDesign, pkg = screen
   return `gw-structural-v1-${a.toString(16).padStart(16, "0")}${b.toString(16).padStart(16, "0")}`;
 }
 
-export function buildStructuralSolverExchange(design: CommunityDesign): string {
+export function buildStructuralSolverExchange(design: CommunityDesign, designBasis?: EngineeringDesignBasis): string {
   const pkg = screenStructuralDesign(design);
   const columns = pkg.frame.members.filter(member => member.kind === "column");
   const byId = new Map(pkg.frame.nodes.map(node => [node.id, node]));
@@ -254,6 +256,7 @@ export function buildStructuralSolverExchange(design: CommunityDesign): string {
   const supportNodes = [...new Set(columns.filter(column => Math.abs((byId.get(column.startNodeId)?.y ?? Infinity) - low) < 1e-4).map(column => column.startNodeId))];
   return JSON.stringify({
     format: "groundwork-structural-analysis-model",
+    engineeringProvenance: engineeringExchangeProvenance(designBasis),
     version: 1,
     modelFingerprint: structuralModelFingerprint(design, pkg),
     resultsSchema: { format: "groundwork-structural-results", version: 1, units: { length: "m", force: "kN", moment: "kN*m", rotation: "rad" }, axes: "global-y-up", forceConvention: "compression-positive" },

@@ -1,6 +1,7 @@
 import type { Design, MepElement, ReviewMarker } from "../types";
 import { resolveDraft, resolveRoomOpening, resolveTowerOpening, parametricIssues } from "./parametric";
 import { towerMeters } from "./community";
+import { engineeringExchangeProvenance, engineeringProvenanceAscii } from "./exchangeProvenance";
 
 export interface ExchangeEntity {
   id: string;
@@ -182,6 +183,7 @@ export function buildBimExchange(design: Design): string {
   return JSON.stringify({
     exchange: "groundwork-ifc-like",
     schemaVersion: 1,
+    engineeringProvenance: engineeringExchangeProvenance(design.engineeringBasis),
     generatedAt: new Date().toISOString(),
     units: "metres",
     standards: { ifc: false, note: "IFC-like coordination JSON; map entities to IFC classes in a downstream converter." },
@@ -524,6 +526,15 @@ export function buildIfcStep(design: Design): string {
   const units = add("IFCUNITASSIGNMENT", `(#${metre},#${area},#${volume})`);
   const guid = (key: string) => ifcGuid(`groundwork-ifc4:${key}`);
   const project = add("IFCPROJECT", `'${guid("project")}',#${history},'Groundwork exchange',$,$,$,$,(#${context}),#${units}`, "project");
+  const provenance = engineeringExchangeProvenance(design.engineeringBasis);
+  const provenanceProperties = [
+    add("IFCPROPERTYSINGLEVALUE", `'Declaration',$,IFCTEXT(${ifcText(engineeringProvenanceAscii(provenance.designBasis))}),$`),
+    add("IFCPROPERTYSINGLEVALUE", `'CountryCode',$,IFCLABEL(${ifcText(provenance.designBasis?.countryCode ?? "undeclared")}),$`),
+    add("IFCPROPERTYSINGLEVALUE", `'NationalCodeCompliance',$,IFCLABEL('not-assessed'),$`),
+    add("IFCPROPERTYSINGLEVALUE", `'Verification',$,IFCLABEL('unverified'),$`),
+  ];
+  const provenanceSet = add("IFCPROPERTYSET", `'${guid("engineering-basis")}',#${history},'SecureNexus Engineering Basis',$,(${provenanceProperties.map(id => `#${id}`).join(",")})`);
+  add("IFCRELDEFINESBYPROPERTIES", `'${guid("engineering-basis-rel")}',#${history},'Captured engineering declaration',$,(#${project}),#${provenanceSet}`);
   const placement = (x = 0, y = 0, z = 0, rotation = 0, parent?: number) => {
     const point = add("IFCCARTESIANPOINT", `(${number(x).toFixed(3)},${number(y).toFixed(3)},${number(z).toFixed(3)})`);
     const angle = rotation ? Math.PI * rotation / 180 : 0;
