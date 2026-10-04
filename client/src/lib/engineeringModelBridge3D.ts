@@ -1,5 +1,6 @@
 import { engineeringRecord, identifier, requireFinite } from "./engineeringNumerics";
 import { parseFrameModel3D, type FrameMember3D, type FrameModel3D, type Vector3D } from "./frameAnalysis3D";
+import { engineeringDeclarationReviewWarnings, parseEngineeringExchangeProvenance } from "./exchangeProvenance";
 
 export interface FrameBridgeOptions3D {
   areaM2: number; inertiaYM4: number; inertiaZM4: number; torsionConstantM4: number;
@@ -32,7 +33,8 @@ export function parseFrameBridgeOptions3D(value: unknown): FrameBridgeOptions3D 
 export function importStructuralExchange3D(value: unknown, options: FrameBridgeOptions3D): { model: FrameModel3D; warnings: string[] } {
   const overrides = parseFrameBridgeOptions3D(options);
   if (!engineeringRecord(value) || value.format !== "groundwork-structural-analysis-model" || value.version !== 1 || value.units !== "SI") throw new Error("Import the Community Editor's structural Solver model JSON (SI version 1), not a raw visual CAD design.");
-  allowedFields(value, ["format", "version", "units", "modelFingerprint", "resultsSchema", "nodes", "members", "supportNodes", "memberScreens", "foundationScreens", "warnings", "formatScope", "loadCombinations", "assumptions", "verification"], "structuralExchange");
+  allowedFields(value, ["format", "version", "units", "modelFingerprint", "resultsSchema", "nodes", "members", "supportNodes", "memberScreens", "foundationScreens", "warnings", "formatScope", "loadCombinations", "assumptions", "verification", "engineeringProvenance"], "structuralExchange");
+  const provenance = value.engineeringProvenance === undefined ? null : parseEngineeringExchangeProvenance(value.engineeringProvenance);
   if (!Array.isArray(value.nodes) || !value.nodes.length || value.nodes.length > 20000 || !Array.isArray(value.members) || !value.members.length || value.members.length > 20000) throw new Error("Structural exchange needs nonempty bounded nodes/members arrays (at most 20,000 source records each).");
   const points = new Map<string, { id: string; xM: number; yM: number; zM: number }>();
   for (const node of value.nodes) {
@@ -92,5 +94,7 @@ export function importStructuralExchange3D(value: unknown, options: FrameBridgeO
     "No loads or load combinations are inferred from demand screens or source assumptions. Populate user-loads with independently established nodal/member loads and combinations; no self-weight is generated.",
     overrides.acceptAssumedFixedSupports ? "Source assumed fixed supports were accepted explicitly for imported nodes; establish actual support restraints independently. If none were supplied, every node remains free." : "Every imported support remains unrestrained. Author actual [UX, UY, UZ, RX, RY, RZ] restraints before calculation.",
     "Conversion does not establish stability, engineering acceptance, country-code compliance or source-result certification. Original source metadata and screens are not solver results.",
+    provenance ? provenance.scope : "The legacy source exchange has no engineering declaration; establish the analytical draft's country and adoption basis independently.",
+    ...(provenance ? engineeringDeclarationReviewWarnings(provenance) : []),
   ] };
 }

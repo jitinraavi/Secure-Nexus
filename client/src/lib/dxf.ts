@@ -1,5 +1,6 @@
 import type { Design, DraftElement, FurnitureItem, MepElement } from "../types";
 import { catalogEntry } from "./catalog";
+import { engineeringProvenanceAscii } from "./exchangeProvenance";
 import { dxfLineweightHundredthsMm, formatDimensionMetres, technicalGraphicsSettings } from "./technicalGraphics";
 
 type Point = [number, number];
@@ -197,6 +198,9 @@ export function buildDxf(design: Design): string {
   }
   const lines: string[] = [];
   const out = (...parts: string[]) => lines.push(...parts);
+  // Group 999 comments are optional exchange metadata and may be discarded by CAD tools.
+  const provenance = engineeringProvenanceAscii(design.engineeringBasis), chunkCount = Math.ceil(provenance.length / 180);
+  for (let chunk = 0; chunk < chunkCount; chunk++) out("999", `SECURE_NEXUS_BASIS ${chunk + 1}/${chunkCount} ${provenance.slice(chunk * 180, (chunk + 1) * 180)}`);
   out("0", "SECTION", "2", "HEADER", "9", "$ACADVER", "1", "AC1015", "9", "$DWGCODEPAGE", "3", "ANSI_1252", "9", "$HANDSEED", "5", nextHandle.toString(16).toUpperCase(), "9", "$INSUNITS", "70", "4", "9", "$MEASUREMENT", "70", "1", "9", "$EXTMIN", "10", dxfNumber(bounds.minX), "20", dxfNumber(bounds.minY), "30", "0.000", "9", "$EXTMAX", "10", dxfNumber(bounds.maxX), "20", dxfNumber(bounds.maxY), "30", "0.000", "0", "ENDSEC");
   out("0", "SECTION", "2", "TABLES");
   const table = (name: string, tableHandle: string, entries: number) => out("0", "TABLE", "2", name, "5", tableHandle, "330", "0", "100", "AcDbSymbolTable", "70", String(entries));

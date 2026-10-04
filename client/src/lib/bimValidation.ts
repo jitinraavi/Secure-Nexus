@@ -1,15 +1,23 @@
-import type { IfcDocument, IfcProduct } from "./ifcGeometry";
+import { IFC_METADATA_PRODUCT_CLASSES, IFC_SUPPORTED_SCHEMAS, type IfcDocument, type IfcProduct, type IfcPropertyValue } from "./ifcGeometry";
 
 export interface BimFinding { specification: string; globalId?: string; status: "pass" | "fail" | "unsupported"; message: string }
 export interface BimValidationReport { status: "pass" | "fail" | "incomplete"; findings: BimFinding[]; checkedProducts: number; certification: false }
-type Facet = { kind: "entity" | "attribute" | "property"; name: string; propertySet?: string; value?: string; cardinality: "required" | "optional" | "prohibited" };
+type Facet = { kind: "entity" | "attribute" | "property"; name: string; propertySet?: string; value?: string; predefinedType?: string; dataType?: string; expectedPrimitive?: string | number | boolean; cardinality: "required" | "optional" | "prohibited" };
 interface Specification { name: string; versions: string[]; applicability: Facet[]; requirements: Facet[]; min: number; max: number }
 const NS = "http://standards.buildingsmart.org/IDS";
+const PRIMITIVE_TYPES = ["IFCLABEL", "IFCTEXT", "IFCIDENTIFIER", "IFCBOOLEAN", "IFCINTEGER", "IFCREAL"];
 const children = (e: Element, name?: string) => Array.from(e.children).filter(c => c.namespaceURI === NS && (!name || c.localName === name));
 function literal(element: Element, name: string, required: boolean): string | undefined {
   const fields = children(element, name); if (fields.length > 1) throw new Error(`Duplicate ${name}.`); const field = fields[0]; if (!field) { if (required) throw new Error(`Missing ${name}.`); return undefined; }
   const simple = children(field, "simpleValue"); if (simple.length !== 1 || field.children.length !== 1 || simple[0].children.length || field.attributes.length || simple[0].attributes.length) throw new Error(`${name} uses an unsupported restriction/structure; only plain simpleValue is supported.`);
-  return simple[0].textContent ?? "";
+  const value = simple[0].textContent ?? ""; if (value.length > 2000) throw new Error(`${name} literal exceeds the 2,000-character subset limit.`); return value;
+}
+function primitive(value: string, dataType: string): string | number | boolean {
+  if (["IFCLABEL", "IFCTEXT", "IFCIDENTIFIER"].includes(dataType)) return value;
+  if (dataType === "IFCBOOLEAN") { if (!/^(true|false|0|1)$/.test(value)) throw new Error("Boolean IDS literals require XML true/false/0/1."); return value === "true" || value === "1"; }
+  if (dataType === "IFCINTEGER") { if (!/^[+-]?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error("IDS integer literal must be a safe integer."); return Number(value); }
+  if (dataType === "IFCREAL") { if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value) || !Number.isFinite(Number(value))) throw new Error("IDS real literal must be a finite decimal/scientific number."); return Number(value); }
+  throw new Error("Measure, logical, date and other typed value normalization is outside the primitive IDS subset.");
 }
 function facets(element: Element): Facet[] {
   if (!element.children.length || element.children.length > 20) throw new Error("Each facet group must contain 1–20 facets.");
@@ -21,14 +29,35 @@ function facets(element: Element): Facet[] {
     if (Array.from(e.attributes).some(a => a.namespaceURI || !["cardinality", "instructions", "uri", "dataType"].includes(a.localName))) throw new Error("Unsupported facet attribute.");
     const allowed: Record<string, string[]> = { entity: ["name", "predefinedType"], attribute: ["name", "value"], property: ["propertySet", "baseName", "value"] };
     if (!(e.localName in allowed) || Array.from(e.children).some(c => c.namespaceURI !== NS || !allowed[e.localName].includes(c.localName))) throw new Error(`Unsupported child structure in ${e.localName} facet.`);
-    if (e.localName === "entity") { if (children(e, "predefinedType").length || cardinality !== "required") throw new Error("Entity predefinedType/subtype inheritance and non-required entity cardinalities are not implemented."); return { ...base, kind: "entity", name: literal(e, "name", true)!.toUpperCase() }; }
-    if (e.localName === "attribute") { const name = literal(e, "name", true)!; if (!["GlobalId", "Name", "Description", "ObjectType"].includes(name)) throw new Error(`Attribute ${name} is outside the supported string attribute subset.`); return { ...base, kind: "attribute", name, value: literal(e, "value", false) }; }
-    if (e.localName === "property") { if (e.hasAttribute("dataType")) throw new Error("Typed property validation is not implemented."); return { ...base, kind: "property", name: literal(e, "baseName", true)!, propertySet: literal(e, "propertySet", true)!, value: literal(e, "value", false) }; }
+    if (e.localName === "entity") { if (cardinality !== "required" || e.hasAttribute("cardinality") || e.hasAttribute("dataType")) throw new Error("Entity facets do not have cardinality or dataType attributes."); const name = literal(e, "name", true)!, predefinedType = literal(e, "predefinedType", false); if (!IFC_METADATA_PRODUCT_CLASSES.includes(name) || predefinedType !== undefined && !predefinedType) throw new Error("IDS entity names must be exact supported uppercase occurrence classes and predefined-type literals must be non-empty."); return { ...base, kind: "entity", name, ...(predefinedType === undefined ? {} : { predefinedType }) }; }
+    if (e.localName === "attribute") { const name = literal(e, "name", true)!, value = literal(e, "value", false); if (e.hasAttribute("dataType") || !["GlobalId", "Name", "Description", "ObjectType"].includes(name)) throw new Error(`Attribute ${name} is outside the supported string attribute subset or has an unsupported dataType attribute.`); if (cardinality === "optional" && value === undefined) throw new Error("An optional IDS attribute requires a value constraint."); return { ...base, kind: "attribute", name, ...(value === undefined ? {} : { value }) }; }
+    if (e.localName === "property") {
+      const name = literal(e, "baseName", true)!, propertySet = literal(e, "propertySet", true)!, value = literal(e, "value", false), dataType = e.getAttribute("dataType") ?? undefined;
+      if (!name || !propertySet) throw new Error("IDS property names and sets must be non-empty literals.");
+      if (dataType !== undefined && !PRIMITIVE_TYPES.includes(dataType)) throw new Error(`IDS dataType ${dataType} is outside the textual/boolean/integer/real subset; measure units are retained but not normalized.`);
+      if (value !== undefined && dataType === undefined) throw new Error("An IDS property value requires its explicit dataType; textual guessing is unsupported.");
+      if (cardinality === "optional" && dataType === undefined || cardinality === "prohibited" && (dataType !== undefined || value !== undefined)) throw new Error("Optional property facets require dataType/value constraints; prohibited properties require a whole-property absence check.");
+      return { ...base, kind: "property", name, propertySet, ...(value === undefined ? {} : { value, expectedPrimitive: primitive(value, dataType!) }), ...(dataType === undefined ? {} : { dataType }) };
+    }
     throw new Error(`Unsupported IDS facet ${e.localName}.`);
   });
 }
 const field = (p: IfcProduct, f: Facet): string | undefined => f.kind === "entity" ? p.type : f.kind === "attribute" ? p.attributes[f.name] : p.properties[`${f.propertySet}.${f.name}`];
-function matches(p: IfcProduct, f: Facet): boolean { const v = field(p, f); return f.kind === "entity" ? v === f.name : v !== undefined && v !== "" && (f.value === undefined || v === f.value); }
+function property(p: IfcProduct, f: Facet): IfcPropertyValue | undefined { return p.propertyValues?.[`${f.propertySet}.${f.name}`]; }
+function exists(p: IfcProduct, f: Facet): boolean { return f.kind === "property" ? property(p, f) !== undefined || Object.prototype.hasOwnProperty.call(p.properties, `${f.propertySet}.${f.name}`) : field(p, f) !== undefined && (field(p, f) !== "" || p.attributePresence?.[f.name] === true); }
+function predefinedTypes(p: IfcProduct): string[] {
+  const type = p.declaredType, raw = type?.predefinedType || p.attributes.PredefinedType;
+  if (!raw) return [];
+  const custom = type?.predefinedType ? type.elementType : p.attributes.ObjectType;
+  return raw === "USERDEFINED" ? custom ? [custom] : [] : [raw];
+}
+function matches(p: IfcProduct, f: Facet): boolean {
+  const v = field(p, f);
+  if (f.kind === "entity") return v === f.name && (f.predefinedType === undefined || predefinedTypes(p).includes(f.predefinedType));
+  if (f.kind === "attribute") return exists(p, f) && v !== "" && (f.value === undefined || v === f.value);
+  const value = property(p, f); if (!value || !value.supported || value.value === null || value.value === "" || value.propertySet !== f.propertySet || value.name !== f.name) return false;
+  return (f.dataType === undefined || value.dataType === f.dataType) && (f.value === undefined || value.value === f.expectedPrimitive);
+}
 
 /** IDS XML literal entity/attribute/property subset. Unsupported facets fail closed as incomplete. */
 export function validateIds(document: IfcDocument, xml: string): BimValidationReport {
@@ -44,38 +73,54 @@ export function validateIds(document: IfcDocument, xml: string): BimValidationRe
   for (const node of nodes) {
     const name = node.getAttribute("name") ?? "Unnamed specification"; let specification: Specification;
     try {
-      if (Array.from(node.children).some(c => c.namespaceURI !== NS || !["applicability", "requirements"].includes(c.localName)) || children(node, "applicability").length !== 1 || children(node, "requirements").length !== 1) throw new Error("Unsupported/duplicate specification child structure.");
+      if (!name.trim() || name.length > 200) throw new Error("IDS specification names require at most 200 non-empty characters.");
+      if (Array.from(node.attributes).some(a => a.namespaceURI || !["name", "ifcVersion", "identifier", "description", "instructions"].includes(a.localName))) throw new Error("Unsupported IDS specification attributes.");
+      if (Array.from(node.children).some(c => c.namespaceURI !== NS || !["applicability", "requirements"].includes(c.localName)) || children(node, "applicability").length !== 1 || children(node, "requirements").length > 1) throw new Error("Unsupported/duplicate specification child structure.");
       const applicability = children(node, "applicability")[0], requirements = children(node, "requirements")[0];
-      if (!applicability || !requirements) throw new Error("Applicability and requirements are required.");
-      const min = Number(applicability.getAttribute("minOccurs") ?? "1"), rawMax = applicability.getAttribute("maxOccurs") ?? "1", max = rawMax === "unbounded" ? Infinity : Number(rawMax);
-      if (!Number.isInteger(min) || min < 0 || !(max === Infinity || Number.isInteger(max) && max >= min)) throw new Error("Invalid occurrence limits.");
-      specification = { name, versions: (node.getAttribute("ifcVersion") ?? "").split(/\s+/).filter(Boolean), applicability: facets(applicability), requirements: facets(requirements), min, max };
-      if (!specification.applicability.some(f => f.kind === "entity")) throw new Error("A literal entity applicability facet is required by this implementation.");
+      if (Array.from(applicability.attributes).some(a => a.namespaceURI || !["minOccurs", "maxOccurs"].includes(a.localName)) || requirements && requirements.attributes.length || Array.from(applicability.children).some(e => e.hasAttribute("cardinality"))) throw new Error("Unsupported IDS facet-group attributes or applicability cardinalities.");
+      const rawMin = applicability.getAttribute("minOccurs"), rawMax = applicability.getAttribute("maxOccurs");
+      if (!((rawMin === "1" || rawMin === "0") && rawMax === "unbounded" || rawMin === "0" && rawMax === "0")) throw new Error("This IDS subset requires explicit applicability limits 1/unbounded, 0/unbounded or 0/0; other limits are unsupported.");
+      const min = rawMin === "1" ? 1 : 0, max = rawMax === "unbounded" ? Infinity : 0;
+      if (max !== 0 && !requirements) throw new Error("Required/optional specifications require a supported requirements group.");
+      specification = { name, versions: (node.getAttribute("ifcVersion") ?? "").split(/\s+/).filter(Boolean), applicability: facets(applicability), requirements: max === 0 ? [] : facets(requirements!), min, max };
+      if (specification.applicability.filter(f => f.kind === "entity").length !== 1 || specification.requirements.filter(f => f.kind === "entity").length > 1) throw new Error("This subset requires exactly one literal applicability entity and at most one requirement entity facet.");
       if (specification.applicability.some(f => f.cardinality !== "required")) throw new Error("Applicability facets cannot use requirement cardinalities.");
       const entityFacet = specification.applicability.find(f => f.kind === "entity")!;
       if (omittedTypes.has(entityFacet.name)) throw new Error(`Entity ${entityFacet.name} includes records outside the imported metadata product subset.`);
-      const valuedProperties = [...specification.applicability, ...specification.requirements].filter(f => f.kind === "property" && f.value !== undefined);
-      for (const p of document.products) if (p.type === entityFacet.name) for (const facet of valuedProperties) { if (++checks > 200000) throw new Error("IDS metadata preflight/check budget exceeded."); const key = `${facet.propertySet}.${facet.name}`; if (p.properties[key] !== undefined && !["STRING", "IFCLABEL", "IFCTEXT", "IFCIDENTIFIER"].includes(p.propertyTypes?.[key] ?? "UNKNOWN")) throw new Error(`Property ${key} exact-value checks require textual IFC values; measure/boolean/unit normalization is unsupported.`); }
+      const checkedFacets = [...specification.applicability, ...specification.requirements];
+      for (const p of document.products) if (p.type === entityFacet.name) {
+        if (p.metadataIssues?.length) throw new Error(`Product ${p.globalId} has incomplete/ambiguous metadata: ${p.metadataIssues[0].slice(0, 500)}`);
+        for (const facet of checkedFacets) {
+          if (++checks > 200000) throw new Error("IDS metadata preflight/check budget exceeded.");
+          if (facet.kind === "entity" && facet.predefinedType !== undefined && p.predefinedTypeSupported !== true) throw new Error(`PredefinedType for ${p.type} is outside the resolved occurrence/type metadata subset.`);
+          if (facet.kind !== "property" || !exists(p, facet)) continue;
+          const value = property(p, facet), key = `${facet.propertySet}.${facet.name}`;
+          if (!value || !value.supported || value.propertySet !== facet.propertySet || value.name !== facet.name) throw new Error(`Property ${key} has unresolved, ambiguous or unsupported scalar metadata.`);
+          if (facet.dataType !== undefined && (value.unit !== null || !PRIMITIVE_TYPES.includes(value.dataType) && value.value !== null)) throw new Error(`Property ${key} requires unsupported measure/unit normalization; raw numeric/string comparison cannot assert IDS acceptance.`);
+        }
+      }
       const version = document.schema.toUpperCase();
-      if (!specification.versions.length || !specification.versions.some(v => version === v || v === "IFC4" && /^IFC4(?:_|$)/.test(version))) throw new Error(`IDS schema ${specification.versions.join("/")} does not include ${version}.`);
+      const normalizedVersion = version === "IFC2X3" ? "IFC2X3" : version.startsWith("IFC4X3") ? "IFC4X3_ADD2" : "IFC4";
+      if (!(IFC_SUPPORTED_SCHEMAS as readonly string[]).includes(version) || !specification.versions.length || specification.versions.some(v => !["IFC2X3", "IFC4", "IFC4X3_ADD2"].includes(v)) || !specification.versions.includes(normalizedVersion) || normalizedVersion === "IFC4X3_ADD2" && version !== "IFC4X3_ADD2") throw new Error(`IDS declared schema versions do not include a supported exact published interpretation of ${version}.`);
     } catch (error) { finding.push({ specification: name, status: "unsupported", message: error instanceof Error ? error.message : "Unsupported specification." }); continue; }
-    if (checks + document.products.length * (specification.applicability.length + specification.requirements.length) > 200000 || finding.length + document.products.length * specification.requirements.length > 20000) { finding.push({ specification: name, status: "unsupported", message: "IDS check/report budget exceeded; narrow the specification/model. Remaining specifications were not evaluated." }); break; }
+    if (checks + document.products.length * (specification.applicability.length + specification.requirements.length) > 200000 || finding.length + document.products.length * specification.requirements.length + 2 > 20000) { finding.push({ specification: name, status: "unsupported", message: "IDS check/report budget exceeded; narrow the specification/model. Remaining specifications were not evaluated." }); break; }
     const applicable = document.products.filter(p => specification.applicability.every(f => matches(p, f))); checks += document.products.length * specification.applicability.length;
     if (applicable.length < specification.min || applicable.length > specification.max) finding.push({ specification: name, status: "fail", message: `Matched ${applicable.length} products; expected ${specification.min}–${specification.max === Infinity ? "unbounded" : specification.max}.` });
     for (const product of applicable) {
       checked.add(product.globalId);
-      for (const f of specification.requirements) { checks++; const v = field(product, f), exists = v !== undefined && v !== "", match = matches(product, f); const pass = f.cardinality === "prohibited" ? !match : f.cardinality === "optional" ? !exists || match : match;
-        finding.push({ specification: name, globalId: product.globalId, status: pass ? "pass" : "fail", message: `${f.cardinality} ${f.kind} ${f.propertySet ? `${f.propertySet}.` : ""}${f.name}${f.value === undefined ? "" : ` = ${f.value}`}; actual ${v ?? "missing"}.` });
+      for (const f of specification.requirements) { checks++; const v = field(product, f), present = exists(product, f), match = matches(product, f); const pass = f.cardinality === "prohibited" ? f.kind === "attribute" && f.value !== undefined ? !match : !present : f.cardinality === "optional" ? !present || match : match;
+        finding.push({ specification: name, globalId: product.globalId, status: pass ? "pass" : "fail", message: `${f.cardinality} ${f.kind} ${f.propertySet ? `${f.propertySet}.` : ""}${f.name}${f.dataType ? ` (${f.dataType})` : ""}${f.predefinedType ? ` / ${f.predefinedType}` : ""}${f.value === undefined ? "" : ` = ${f.value}`}; actual ${(v ?? "missing").slice(0, 500)}.` });
       }
     }
-    if (!applicable.length && specification.min === 0) finding.push({ specification: name, status: "pass", message: "No matching products; applicability is optional." });
+    if (!applicable.length && specification.min === 0) finding.push({ specification: name, status: "pass", message: specification.max === 0 ? "No matching products; prohibited applicability is satisfied." : "No matching products; applicability is optional." });
   }
   const unsupported = finding.some(f => f.status === "unsupported");
   return { status: unsupported ? "incomplete" : finding.some(f => f.status === "fail") ? "fail" : "pass", findings: finding, checkedProducts: checked.size, certification: false };
 }
 
 export function inspectBimGeometry(document: IfcDocument): BimValidationReport {
-  const findings: BimFinding[] = document.issues.map(message => ({ specification: "Geometry coverage", status: "unsupported", message }));
-  for (const p of document.products) { if (p.issues.length) for (const message of p.issues) findings.push({ specification: "Geometry coverage", globalId: p.globalId, status: "unsupported", message }); else if (!p.meshes.length) findings.push({ specification: "Geometry coverage", globalId: p.globalId, status: "unsupported", message: "No supported geometry parts." }); else findings.push({ specification: "Geometry coverage", globalId: p.globalId, status: "pass", message: `${p.meshes.length} supported mesh parts; stable source GlobalId.` }); }
+  const findings: BimFinding[] = document.issues.slice(0, 19999).map(message => ({ specification: "Geometry coverage", status: "unsupported", message }));
+  if (document.issues.length > 19999) { findings.push({ specification: "Coverage budget", status: "unsupported", message: "Document issues exceed the 20,000-record budget; product coverage was not evaluated." }); return { status: "incomplete", findings, checkedProducts: 0, certification: false }; }
+  for (const p of document.products) { if (findings.length + p.issues.length + (p.metadataIssues?.length ?? 0) >= 20000) { findings.push({ specification: "Coverage budget", status: "unsupported", message: "Remaining product findings exceed the 20,000-record budget; full coverage was not evaluated." }); break; } if (p.issues.length) for (const message of p.issues) findings.push({ specification: "Geometry coverage", globalId: p.globalId, status: "unsupported", message }); else if (!p.meshes.length) findings.push({ specification: "Geometry coverage", globalId: p.globalId, status: "unsupported", message: "No supported geometry parts." }); else findings.push({ specification: "Geometry coverage", globalId: p.globalId, status: "pass", message: `${p.meshes.length} supported mesh parts; stable source GlobalId.` }); for (const message of p.metadataIssues ?? []) findings.push({ specification: "Metadata coverage", globalId: p.globalId, status: "unsupported", message }); }
   return { status: findings.some(f => f.status === "unsupported") ? "incomplete" : "pass", findings, checkedProducts: document.products.length, certification: false };
 }

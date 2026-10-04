@@ -11,6 +11,7 @@ import { analyzeElectricalCircuit, assessFireFlow, parseFluidNetwork, selectEqui
 import { exportEpanetNetwork, exportOpenSees2D, exportStaadPlane, type SolverDeck } from "../lib/solverAdapters";
 import { importRoutedMepNetwork, importStructuralExchange2D, type FrameBridgeOptions } from "../lib/engineeringModelBridge";
 import { buildStructuralSolverExchange } from "../lib/structuralEngine";
+import { parseEngineeringExchangeProvenance } from "../lib/exchangeProvenance";
 import { createNativeFrameInput } from "../lib/nativeResults";
 import { analyzeFrame3D, parseFrameModel3D } from "../lib/frameAnalysis3D";
 import { importStructuralExchange3D, parseFrameBridgeOptions3D, type FrameBridgeOptions3D } from "../lib/engineeringModelBridge3D";
@@ -184,6 +185,10 @@ function booleans(value: Record<string, unknown>, keys: string[]) {
 function warnings(value: unknown): string[] {
   if (!Array.isArray(value) || value.length > 500) throw new Error("Warnings must contain at most 500 entries.");
   return value.map(item => boundedText(item, "Warning", 4000));
+}
+function combinedImportWarnings(...groups: string[][]): string[] {
+  const distinct = [...new Set(groups.flatMap(group => warnings(group)))];
+  return distinct.length <= 500 ? distinct : [...distinct.slice(0, 499), `${distinct.length - 499} additional import findings were omitted from this workspace summary. Retain the original exchange for the complete source findings; this summary does not establish complete coverage.`];
 }
 // Restoring a report validates data without running a solver or recomputing results.
 function validateReportSource(module: Module, value: unknown): void {
@@ -428,7 +433,21 @@ function projectStructuralExchange(project: ProjectDetail): unknown {
   if (!Array.isArray(levels) || levels.length > 50 || !Array.isArray(grids) || grids.length > 100 || !Array.isArray(drafts) || drafts.length > 2000 || Math.max(levels.length, 1) * grids.filter(line => line.axis === "x").length * grids.filter(line => line.axis === "z").length > 5000) throw new Error("Structural source is too large; export a smaller subsystem from the editor.");
   // Use the editor's existing exchange; its assumptions are surfaced below. The
   // 2D bridge leaves loads empty and supports unrestrained unless explicitly opted in.
-  return JSON.parse(buildStructuralSolverExchange(community)) as unknown;
+  return JSON.parse(buildStructuralSolverExchange(community, project.design?.engineeringBasis)) as unknown;
+}
+
+function importedGeometryBasis(value: unknown, module: Module): { basis: EngineeringDesignBasis; warnings: string[] } {
+  if (!engineeringRecord(value)) throw new Error("Geometry exchange must be a JSON object.");
+  if (module === "frame" || module === "frame3d") {
+    const captured = value.engineeringProvenance === undefined ? null : parseEngineeringExchangeProvenance(value.engineeringProvenance);
+    return { basis: captured?.designBasis ?? createEngineeringDesignBasis(), warnings: captured?.designBasis
+      ? ["Copied the structural exchange's country and adoption declaration. Geometry, supports, loads and engineering acceptance require independent review."]
+      : ["This structural exchange has no declared engineering basis. The analytical draft now has an undeclared basis; select and review its country, references and criteria before assessment."] };
+  }
+  const basis = value.engineeringBasis === undefined ? createEngineeringDesignBasis() : parseEngineeringDesignBasis(value.engineeringBasis);
+  return { basis, warnings: value.engineeringBasis === undefined
+    ? ["This MEP design has no declared engineering basis. The analytical draft now has an undeclared basis; select and review its country, references and criteria before assessment."]
+    : ["Copied the MEP design's country and adoption declaration. Review network conversion, equipment and design criteria independently.", ...validateEngineeringDesignBasis(basis)] };
 }
 
 export default function EngineeringWorkbench() {
@@ -467,7 +486,7 @@ export default function EngineeringWorkbench() {
       const converted = convertGeometry(source, module, frameBridge, mepBridge, frameBridge3d), text = JSON.stringify(converted.model, null, 2);
       if (text.length > maxInputCharacters) throw new Error("Converted project subsystem exceeds the 1 MB input limit.");
       const sourceWarnings = (module === "frame" || module === "frame3d") && engineeringRecord(source) && Array.isArray(source.warnings) ? warnings(source.warnings) : [];
-      const combinedWarnings = warnings([...sourceWarnings, ...converted.warnings]);
+      const combinedWarnings = combinedImportWarnings(sourceWarnings, converted.warnings);
       importGeneration.current++;
       setInputs(current => ({ ...current, [module]: text })); setDesignBasis(importedBasis); setConversionWarnings({ module, warnings: combinedWarnings }); setError(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not import project geometry."); throw cause; }
@@ -582,11 +601,12 @@ export default function EngineeringWorkbench() {
           try {
             const source = await file.text(); if (attempt !== importGeneration.current) return;
             const value = parseInput(source);
+              const imported = importedGeometryBasis(value, targetModule);
             const converted = convertGeometry(value, targetModule, frameOptions, mepOptions, frameOptions3d), text = JSON.stringify(converted.model, null, 2);
             if (text.length > maxInputCharacters) throw new Error("Converted geometry exceeds the 1 MB input limit.");
             const sourceWarnings = (targetModule === "frame" || targetModule === "frame3d") && engineeringRecord(value) && Array.isArray(value.warnings) ? warnings(value.warnings) : [];
-            const combinedWarnings = warnings([...sourceWarnings, ...converted.warnings]);
-            setInputs(current => ({ ...current, [targetModule]: text })); setConversionWarnings({ module: targetModule, warnings: combinedWarnings }); setError(null);
+              const combinedWarnings = combinedImportWarnings(sourceWarnings, converted.warnings, imported.warnings);
+              setInputs(current => ({ ...current, [targetModule]: text })); setDesignBasis(imported.basis); setConversionWarnings({ module: targetModule, warnings: combinedWarnings }); setError(null);
           } catch (cause) { if (attempt === importGeneration.current) setError(cause instanceof Error ? cause.message : "Could not convert project geometry."); }
         }} />
         {conversionWarnings?.module === module && <ul className="list-disc space-y-1 pl-5 text-xs text-amber-200">{conversionWarnings.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>}

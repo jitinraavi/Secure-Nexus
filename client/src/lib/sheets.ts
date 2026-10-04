@@ -5,6 +5,7 @@ import { landMeters, towerMeters } from "./community";
 import { documentationFor, documentationIssues } from "./documentation";
 import { buildDocumentationSchedule, documentationInventory, scheduleCellText, type ScheduleResult } from "./documentationSchedule";
 import { validateDesign } from "./compliance";
+import { engineeringExchangeProvenance } from "./exchangeProvenance";
 
 type PdfPage = string[];
 const MAX_PAGES = 500;
@@ -281,6 +282,18 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
     if (sheet.scheduleIds !== undefined || sheet.number === "S-401" || sheet.viewIds.some(id => docs.views.find(view => view.id === id)?.kind === "schedule" && docs.views.find(view => view.id === id)?.visible)) liveSchedules(sheet);
   }
   const issues = documentationIssues(design); if (issues.length) listPages(sheets[0], "Documentation binding warnings", issues);
+  const provenance = engineeringExchangeProvenance(design.engineeringBasis), basis = provenance.designBasis;
+  listPages(sheets[0], "Engineering design declaration", [
+    provenance.scope,
+    "National-code compliance: not assessed. Calculation and exchange verification: unverified. This declaration does not approve the drawing or engineering design.",
+    ...(basis ? [`Country: ${basis.countryCode || "undeclared"} | Region: ${basis.region} | Authority: ${basis.authority}`,
+      `Reviewer: ${basis.reviewer} | Declaration confirmed: ${basis.confirmed} | ${basis.reviewNote}`,
+      ...basis.standards.map(standard => `${standard.code}:${standard.edition} | Adoption: ${standard.adoptionReference} | Amendments: ${standard.amendments} | ${standard.sourceUrl}`),
+      ...Object.entries(basis.declaration).map(([name, value]) => `${name}: ${value}`),
+      ...basis.criteria.map(criterion => `${criterion.id}: ${criterion.name} = ${criterion.value} ${criterion.unit} | ${criterion.source} | ${criterion.standardId ?? "supplied criterion"} ${criterion.clause ?? ""}`)] : []),
+    ...provenance.declarationIssues,
+    "The PDF font substitutes non-ASCII characters. Export the engineering declaration JSON for exact original text and complete metadata.",
+  ]);
   return pages;
 }
 
