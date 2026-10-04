@@ -1,0 +1,49 @@
+# US steel G2.1(a) stocky rolled-web major-axis shear subset
+
+`client/src/lib/usSteelShear.ts` supplies one bounded Phase 3 national-clause increment: pure major-axis shear in the web plane of a sourced, externally reviewed, unmodified, prismatic, doubly symmetric hot-rolled I member. It assesses only the stocky-web branch of AISC 360-22 G2.1(a). It does not establish complete member resistance or US-code compliance.
+
+## Primary references and implemented algebra
+
+The inspected primary, AISC-authored [ANSI/AISC 360-22 artifact](https://welovesteelconstruction.ssi-steel.com/wp-content/uploads/2024/08/Specification-AISC-360-22_Specification-for-Structural-Steel-Buildings.pdf), revised September 2023, supplies Section G2.1(a), page 16.1-76: `h/tw <= 2.24 sqrt(E/Fy)`, `Cv1=1.0` (G2-2), `phi_v=1.00`, and `Omega_v=1.50`. It defines `h` excluding both flange fillets, `Aw=d*tw` using overall depth, and SI `E=200000 MPa`. Equation G2-1 gives `Vn=0.6 Fy Aw Cv1`. Commentary G2 identifies the possible need for end/support web restraint. These provisions were inspected through cached extraction of the AISC-authored PDF; full-file retrieval exceeded the web tool's size limit.
+
+The publisher's [V16.0 companion examples](https://www.aisc.org/globalassets/aisc/university-programs/teaching-aids/first-semester-design-examples---v16.0.pdf), Example G.1B, independently identify the same web-area formula, G2-1/G2-2 and rolled-I factors. Example G.2B makes clear that channels cannot use this exception: G1(a) supplies their different factors. Cached publisher extraction was inspected because direct publisher retrieval returned 403. The [AISC edition announcement](https://www.aisc.org/news/aisc-releases-new-version-of-specification-for-structural-steel-buildings-ansiaisc-360-22/) identifies the edition; it is the catalog adoption reference, not a substitute for the equations.
+
+The [AISC revisions/errata listing](https://www.aisc.org/aisc/publications/revisions-and-errata/) lists January 2025 and September 2026 errata. Their contents were not independently inspected or incorporated. Each authored check must explicitly record amendment and errata applicability review establishing whether this inspected subset applies to the adopted project.
+
+The module uses SI metres, pascals and newtons. It derives `webAreaM2=d*tw`, `webSlenderness=h/tw`, and `stockyWebSlendernessLimit=2.24*sqrt(200e9/Fy)`. At or below the limit, `nominalG2CapacityN=0.6*Fy*webAreaM2`, and available capacity is `1.00*Vn` for LRFD or `Vn/1.50` for ASD. Demand is the supplied maximum absolute web-plane shear magnitude. The comparison uses unrounded values. It does not select a shape by name, infer a fillet dimension, insert a guessed material strength, or use B4 flexural compactness as shear eligibility.
+
+## Authored input contract
+
+`parseUSSteelShearInput(unknown)` accepts version 1 and 1–100 uniquely identified `us-aisc360-g2-stocky-web` checks. Every object rejects unknown fields; arrays are dense and bounded and reject extra fields. Numbers must be finite. Required declarations and references include:
+
+- Identification, label, geometry/input source, load case and reviewed load/analysis source.
+- `sectionType: "rolled-i"`, `prismatic: true`, `doublySymmetric: true`, and `sectionUnmodified: true`, with `geometryReviewSource` confirming rolled-section identity and absence of holes, copes, notches, corrosion, damage and other modifications.
+- `webHeightDefinition: "clear-between-flanges-less-fillets"`, `classificationBasis: "g2.1a-rolled-web"`, and `classificationReviewSource`. Review identifies the G2 rolled-web geometry and material grade; eligibility is then calculated from supplied `h/tw`. It is not a B4 compactness declaration.
+- `intermediateTransverseStiffeners: "none"`, `endAndSupportWebRestraintAdequacyReviewed: true`, and `endRestraintReviewSource`. External review must establish adequacy of web out-of-plane restraint at ends/supports and any necessary bearing stiffeners or equivalent components. The module does not design them. The absence of intermediate stiffeners does not prohibit reviewed end bearing stiffeners.
+- `staticLoadingOnly: true` and `applicabilityReviewSource` covering material qualification and pure static web-plane shear applicability.
+- `amendmentScopeConfirmed: true`, `amendmentReviewSource`, `errataApplicabilityReviewed: true`, and `errataReviewSource`.
+- Authored `overallDepthM`, `clearWebHeightM`, `webThicknessM`, and specified minimum `steelYieldPa` (`value`, `unit: "Pa"`, `source`, optional `criterionId`). The parser requires `0<tw<h<d`; it does not reconstruct or certify a rolled shape from those three dimensions.
+- Non-negative `demandMajorShearN`. `demandMinorShearN`, `demandAxialN`, `demandMajorMomentNm`, `demandMinorMomentNm`, and `demandTorqueNm` must each be explicitly zero. A beam under simultaneous bending requires separate additional design, beyond this pure-shear input contract.
+- `designMethod: "LRFD"` with `loadBasis: "factored"`, or `"ASD"` with `"service"` representing the service-level effect of the reviewed applicable ASD combination.
+
+Numerical input bounds are `d=0.001..10 m`, `h=0.0001..10 m`, `tw=0.00001..1 m`, `Fy=1e6..2e9 Pa`, and shear magnitude `0..1e12 N`. These are implementation bounds, not standard-approved geometry/material ranges. Derived area, slenderness, limit and capacities must be positive, finite and at most `1e24`; utilization must be finite in `0..1e24`. Unsupported declarations, non-finite values and inconsistent geometry are rejected before assessment.
+
+## Basis, results and unsupported region
+
+`assessUSSteelShear(input,basis)` captures normalized input and a strict version-1 basis. Its gates include every finding from general basis validation, country `US`, the supported profile version, project region and authority, complete declarations, confirmed named reviewer, and non-empty unique standard/criterion IDs. Exactly one AISC 360 declaration must match catalog `us-aisc360`, steel domain, catalog code/publisher URL, edition `2022`, local adoption and amendments. An additional AISC 360 declaration under a custom ID or different edition is ambiguous and blocks assessment. Incomplete or mismatched additional catalog references also block it.
+
+An optional yield `criterionId` must match exactly one captured `frame` criterion in value, unit and source. A referenced material standard must exist exactly once, with a clause and complete edition/adoption/amendment/HTTPS source; known catalog standards must match their country, code, domain, edition and publisher. Issues are deduplicated in `basisIssues`. Any issue gives `unsupported-basis`, no results and no implemented-clause list. This metadata review does not verify the contents of authored sources or reconcile amendments automatically.
+
+The report always has implementation `AISC360-2022-G2.1a-stocky-rolled-web-v1`, `verification: "unverified"`, and `compliance: "not-assessed"`. Each result retains area, slenderness, the calculated limit and supplied demand. A qualifying web receives `Cv1=1`, `phi_v=1`, `Omega_v=1.5`, nominal/available strength and utilization, with `within-implemented-clause` or `exceeds-implemented-clause`.
+
+Above the G2.1(a) limit, status is `unsupported-web-scope`. `rolledWebStockyScopeSatisfied` is false; `webShearCoefficient`, both factors, both capacity fields, utilization and the strength-comparison flag are null. No G2.1(b) coefficient, G1(a) factor or tension-field strength is substituted. Zero shear cannot turn an unsupported web into a pass. Any such result gives report status `partial-subset`; otherwise a supported basis gives `assessed-subset`.
+
+## Captured-report restoration and remaining acceptance
+
+`validateUSSteelShearReport(value,source,basis)` validates a captured report against the exact normalized source and complete basis fingerprint. It uses scalar closed-form algebra and metadata comparisons only; it never invokes the assessor, member routine, solver, load generation or analysis. It verifies unknown fields, dense bounded arrays, finite bounds, exact capacities/factors/limits/utilization, null patterns, load-method pairing, scope/strength flags and status, and exact clause/detail/exclusion/warning lists. Persisted IEEE-754 values must match exactly: rounded or edited capacities cannot introduce a boundary pass. The assessor applies the same coherence contract before returning its report.
+
+`usSteelShearExample()` supplies illustrative SI geometry and pure factored shear only. Every source/review text is explicitly marked for replacement. It does not confirm project adoption or establish a real project shape, material, restraint or load combination.
+
+G2.1(b), shear buckling/reduced coefficients, stiffened-panel/tension-field methods, stiffener and end-restraint design, openings/modifications, flexure/interactions, Chapter J local-force/connection effects, frame stability, serviceability, seismic/fatigue/fire, material qualification and complete member/code certification remain outside this increment. Other section forms and nonzero other force components are rejected.
+
+No repository code, app, tests, builds, typechecking, lint or previews were executed. Later authorized acceptance should cover independent AISC G.1B benchmarks with reviewed metric conversion; LRFD/ASD factors and demand pairing; exact and immediately-adjacent slenderness/strength boundaries; unsupported webs including zero shear; mixed supported/unsupported checks; density/unknown-field/geometry/numeric bounds; complete country/adoption/criterion gates; and mutations of every persisted capacity, factor, coefficient, scope and status field. Applicable errata and project reviews remain prerequisites. This bounded source-inspected increment does not complete all Phase 3 engineering scope.

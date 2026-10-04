@@ -97,3 +97,9 @@ Workspace version 7 adds both inputs and their source-bound captured reports whi
 [Engineering exchange declarations](EXCHANGE-ENGINEERING-PROVENANCE.md) retain country/adoption metadata in coordination JSON, custom IFC project properties, DXF comments, PDF sheet declarations, standalone JSON and structural solver exchanges. Imported file geometry copies its declaration; legacy undeclared files clear prior analytical adoption with a visible warning. Historical declarations remain recoverable while current catalog findings are shown separately. No supports, actions, material properties, code compliance or certified results are inferred from a declaration.
 
 Source review and pushed Git blob comparison are the acceptance available under the user's constraint. IFC/DXF/PDF interoperability, compiler checks and numerical/rendered geometry verification remain deferred. Phase 3 continues with its remaining supported modules; this saved exchange increment starts Phase 4 without declaring either full phase complete.
+
+## US stocky-web shear increment
+
+[AISC G2.1(a) stocky rolled-web shear](US-STEEL-SHEAR.md) computes the slenderness branch directly from sourced dimensions and yield strength. Within scope it uses the published web area, yielding expression and distinct LRFD/ASD exception factors. Above the branch limit it returns no capacity, utilization or substitute factors; combined actions and other member/connection limit states remain separate.
+
+Workspace version 8 adds this module with versions 1-7 retained. Its strict captured source/basis report restoration checks scalar algebra and null scope directly, without an assessor or solver. Independent source review found no blocking inconsistency. Compilation, numerical reference solutions and later errata reconciliation remain unverified. This adds a supported US clause subset without completing broader Phase 3 national design.
