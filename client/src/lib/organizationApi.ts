@@ -71,23 +71,33 @@ export async function organizationRequest<T>(path: string, method = "GET", body?
   return response.json() as Promise<T>;
 }
 const orgPath = (id: string) => `/api/organizations/${encodeURIComponent(id)}`;
-export const listOrganizations = () => organizationRequest<{ organizations: Organization[]; seatEntitlement: number }>("/api/organizations");
-export const createOrganization = (name: string) => organizationRequest<{ id: string }>("/api/organizations", "POST", { name });
-export const listPersonalOrganizationProjects = () => organizationRequest<{ projects: { id: string; name: string }[] }>("/api/organizations/personal-projects");
+export const listOrganizations = () => organizationRequest<{ organizations: Organization[]; seatEntitlement: number }>('/api/organizations');
+export const createOrganization = (name: string) => organizationRequest<{ id: string }>('/api/organizations', 'POST', { name });
+export const listPersonalOrganizationProjects = () => organizationRequest<{ projects: { id: string; name: string }[] }>('/api/organizations/personal-projects');
 export const getOrganization = (id: string) => organizationRequest<OrganizationDetail>(orgPath(id));
-export const updateOrganization = (id: string, settings: { name: string; seatLimit: number; auditRetentionDays: number }) => organizationRequest<{ ok: boolean }>(orgPath(id), "PATCH", settings);
-export const addOrganizationMember = (id: string, identifier: string, role: Exclude<OrganizationRole, "owner">) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/members`, "POST", { identifier, role });
-export const updateOrganizationMember = (id: string, userId: string, role: Exclude<OrganizationRole, "owner">) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/members/${encodeURIComponent(userId)}`, "PATCH", { role });
-export const removeOrganizationMember = (id: string, userId: string) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/members/${encodeURIComponent(userId)}`, "DELETE");
-export const transferOrganizationOwner = (id: string, userId: string) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/transfer-owner`, "POST", { userId });
-export const bindOrganizationProject = (id: string, projectId: string) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/projects`, "POST", { projectId });
-export const getOrganizationAudit = (id: string, beforeId?: number) => organizationRequest<OrganizationAuditPage>(`${orgPath(id)}/audit${beforeId ? `?beforeId=${beforeId}` : ""}`);
-export const getOrganizationSso = (id: string) => organizationRequest<{ configuration: SsoConfiguration | null; nativeSaml: false; samlGateway: string; configuredAllowedHosts: boolean }>(`/api/sso/${encodeURIComponent(id)}/config`);
-export const configureOrganizationSso = (id: string, configuration: { issuer: string; clientId: string; clientSecret?: string; enabled: boolean }) => organizationRequest<{ ok: boolean; redirectUri: string }>(`/api/sso/${encodeURIComponent(id)}/config`, "PUT", configuration);
-export const unlinkOrganizationIdentity = (id: string) => organizationRequest<{ ok: boolean }>(`/api/sso/${encodeURIComponent(id)}/identity`, "DELETE");
+export const updateOrganization = (id: string, settings: { name: string; seatLimit: number; auditRetentionDays: number }) => organizationRequest<{ ok: boolean }>(orgPath(id), 'PATCH', settings);
+export const addOrganizationMember = (id: string, identifier: string, role: Exclude<OrganizationRole, 'owner'>) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/members`, 'POST', { identifier, role });
+export const updateOrganizationMember = (id: string, userId: string, role: Exclude<OrganizationRole, 'owner'>) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/members/${encodeURIComponent(userId)}`, 'PATCH', { role });
+export const removeOrganizationMember = (id: string, userId: string) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/members/${encodeURIComponent(userId)}`, 'DELETE');
+export const transferOrganizationOwner = (id: string, userId: string) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/transfer-owner`, 'POST', { userId });
+export const bindOrganizationProject = (id: string, projectId: string) => organizationRequest<{ ok: boolean }>(`${orgPath(id)}/projects`, 'POST', { projectId });
+export const getOrganizationAudit = (id: string, beforeId?: number) => organizationRequest<OrganizationAuditPage>(`${orgPath(id)}/audit${beforeId ? `?beforeId=${beforeId}` : ''}`);
+export const getOrganizationSso = (id: string) => organizationRequest<{ configuration: SsoConfiguration | null; nativeSaml: false; samlGateway: string; configuredAllowedHosts: boolean }>(`/api/sso/${encodeURIComponent(id)}`);
+export const configureOrganizationSso = (id: string, configuration: { issuer: string; clientId: string; clientSecret?: string; enabled: boolean }) => organizationRequest<{ ok: boolean; redirectUri: string }>(`/api/sso/${encodeURIComponent(id)}/config`, 'PUT', configuration);
+export const unlinkOrganizationIdentity = (id: string) => organizationRequest<{ ok: boolean }>(`/api/sso/${encodeURIComponent(id)}/identity`, 'DELETE');
 export const getOrganizationBilling = (id: string) => organizationRequest<OrganizationBillingInfo>(`${orgPath(id)}/billing`);
-export const updateOrganizationSeats = (id: string, params: { idempotencyKey: string; targetPaidSeats: number; acceptTermReplacement: true }) => organizationRequest<{ duplicate: boolean; order: TenantBillingOrder }>(`${orgPath(id)}/billing/seats`, "POST", params);
-export const subscribeOrganization = (id: string, params: { idempotencyKey: string; plan: "standard" | "enterprise"; periodDays?: number }) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/subscribe`, "POST", params);
-export const cancelOrganizationSubscription = (id: string, idempotencyKey: string) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/cancel`, "POST", { idempotencyKey });
-export const reactivateOrganizationSubscription = (id: string, idempotencyKey: string) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/reactivate`, "POST", { idempotencyKey });
+
+export type UpdateOrganizationSeatsParams =
+  | { idempotencyKey: string; targetPaidSeats?: number; paidSeatsDelta?: number; acceptTermReplacement?: true }
+  | { idempotencyKey: string; targetPaidSeats: number; acceptTermReplacement: true };
+
+export const updateOrganizationSeats = (id: string, params: UpdateOrganizationSeatsParams) =>
+  organizationRequest<{ duplicate: boolean; order?: TenantBillingOrder; entitlement?: OrganizationEntitlement }>(`${orgPath(id)}/billing/seats`, 'POST', params);
+
+export const subscribeOrganization = (id: string, params: { idempotencyKey: string; plan: 'standard' | 'enterprise'; periodDays?: number }) =>
+  organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/subscribe`, 'POST', params);
+export const cancelOrganizationSubscription = (id: string, idempotencyKey: string) =>
+  organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/cancel`, 'POST', { idempotencyKey });
+export const reactivateOrganizationSubscription = (id: string, idempotencyKey: string) =>
+  organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/reactivate`, 'POST', { idempotencyKey });
 
