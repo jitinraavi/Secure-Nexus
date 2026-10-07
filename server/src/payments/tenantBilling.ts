@@ -140,7 +140,7 @@ export function applyTenantReceipt(receipt: VerifiedRazorpayReceipt): { handled:
     const order = orderRow(receipt.referenceId);
     if (!order) return { handled: false };
     const prior = db.prepare("SELECT * FROM payment_receipts WHERE (provider='razorpay' AND receipt_id=?) OR payment_id=?")
-      .get(receipt.receiptId, order.id) as { payment_id: string; receipt_id: string; provider_order_id: string; amount: number; currency: string; merchant_account_id: string; disposition: string } | undefined;
+      .get(receipt.receiptId, order.id) as { payment_id: string; receipt_id: string; provider_order_id: string; amount: number; currency: string; merchant_account_id: string; disposition: string; reason: string | null } | undefined;
     if (prior) {
       if (prior.payment_id !== order.id || prior.receipt_id !== receipt.receiptId || prior.provider_order_id !== receipt.linkId ||
         prior.amount !== receipt.amount || prior.currency !== receipt.currency || prior.merchant_account_id !== receipt.merchantAccountId) {
