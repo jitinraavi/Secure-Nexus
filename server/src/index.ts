@@ -10,16 +10,11 @@ const authority = await import("./authorityServer.js");
 export const app = authority.app;
 export const startAuthorityServer = authority.startAuthorityServer;
 
-const isDirectRun = Boolean(
-  process.argv[1] && (
-    path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url)) ||
-    process.argv[1].endsWith("index.ts") ||
-    process.argv[1].endsWith("index.js")
-  )
-);
+const isDirectRun = Boolean(process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url)));
 
 if (isDirectRun) {
   startAuthorityServer();
 }
 
 export default app;
+

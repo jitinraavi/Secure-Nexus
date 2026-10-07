@@ -71,6 +71,7 @@ export function requireAuthorityConfiguration(): AuthorityConfiguration {
   if (role() !== "authority") throw new Error("Secondary hosts must use start:secondary; authority modules are disabled for this role");
   const mode = process.env.GROUNDWORK_AUTHORITY_GATEWAY_MODE || "direct";
   if (mode !== "direct" && mode !== "required") throw new Error("GROUNDWORK_AUTHORITY_GATEWAY_MODE must be direct or required");
+  if (mode === "required" && process.env.NODE_ENV !== "production") throw new Error("Authenticated gateway authority requires NODE_ENV=production so session cookies are Secure");
   if (process.env.GROUNDWORK_AUTHORITY_URL) throw new Error("An authority process must not configure another authority URL");
   const settings = mode === "required" ? sharedSettings() : { authorityId: "", gatewaySecret: "", publicOrigin: "" };
   return { role: "authority", gatewayRequired: mode === "required", ...settings, trustedProxyIps: trustedProxyIps() };
@@ -78,7 +79,7 @@ export function requireAuthorityConfiguration(): AuthorityConfiguration {
 export function requireSecondaryConfiguration(): SecondaryConfiguration {
   if (role() !== "secondary") throw new Error("start:secondary requires GROUNDWORK_SERVER_ROLE=secondary");
   if (process.env.GROUNDWORK_AUTHORITY_GATEWAY_MODE !== "required") throw new Error("Secondary hosts require GROUNDWORK_AUTHORITY_GATEWAY_MODE=required");
-  for (const name of ["MASTER_KEY", "PREVIOUS_MASTER_KEY", "DB_PATH", "GROUNDWORK_DATA_DIR", "RAZORPAY_KEY_SECRET", "PAYPAL_CLIENT_SECRET", "AI_API_KEY", "COLLABORATION_REDIS_REST_TOKEN", "MAIL_PASS", "RESEND_API_KEY"]) {
+  for (const name of ["MASTER_KEY", "PREVIOUS_MASTER_KEY", "DB_PATH", "GROUNDWORK_DATA_DIR", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET", "PAYPAL_CLIENT_SECRET", "AI_API_KEY", "COLLABORATION_REDIS_REST_TOKEN", "MAIL_PASS", "RESEND_API_KEY"]) {
     if (process.env[name]) throw new Error(`Secondary hosts must not contain authority-only configuration ${name}`);
   }
   if (process.env.NATIVE_WORKER_ENABLED && process.env.NATIVE_WORKER_ENABLED !== "false") throw new Error("Native workers are disabled on secondary hosts");
@@ -131,3 +132,4 @@ export function authorityGatewayMiddleware(configuration: AuthorityConfiguration
     next();
   };
 }
+
