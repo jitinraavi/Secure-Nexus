@@ -416,6 +416,32 @@ CREATE TABLE IF NOT EXISTS billing_transitions (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_billing_transitions_org ON billing_transitions(organization_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS project_render_jobs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+  source_image_artifact_id TEXT NOT NULL REFERENCES project_workspace_artifacts(id) ON DELETE CASCADE,
+  source_image_sha256 TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  negative_prompt TEXT,
+  style_preset TEXT,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  version TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'unconfigured')),
+  output_artifact_id TEXT REFERENCES project_workspace_artifacts(id) ON DELETE SET NULL,
+  output_sha256 TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  parameters_json TEXT NOT NULL DEFAULT '{}',
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_render_jobs_project ON project_render_jobs(project_id, created_at DESC, id);
+CREATE INDEX IF NOT EXISTS idx_render_jobs_status ON project_render_jobs(status, created_at);
 `);
 
 /* Lightweight migrations for pre-existing databases */

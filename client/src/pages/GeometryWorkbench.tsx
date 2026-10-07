@@ -17,6 +17,7 @@ import { produceGeometryChunks, type ProducedGeometryChunks } from "../lib/geome
 import { assertGeometrySource, geometryProductionReferences, inspectSavedGeometryProduction, recoverGeometryProduction, uploadGeometryProduction, type SavedGeometryProduction } from "../lib/geometryProductionWorkspace";
 import { deleteWorkspaceArtifact, MAX_WORKSPACE_BYTES } from "../lib/workspaceApi";
 import type { PrepareWorkspaceSave } from "../lib/workspaceSavePreparation";
+import { RenderStudioModal } from "../components/RenderStudioModal";
 
 interface RenderReport { kind: "path-trace"; verification: "unverified"; settings: PathTraceSettings; camera: GeometryScene["camera"]; meshes: number; triangles: number; elapsedMs: number; note: string }
 interface Reports { clashes: MeshClashReport | null; benchmark: GeometryBenchmark | null; render: RenderReport | null }
@@ -133,6 +134,7 @@ export function GeometryWorkbench() {
   const { user } = useAuth(), [params] = useSearchParams(), projectId = params.get("project") || "";
   const [scene, setScene] = useState<GeometryScene | null>(null), [manifest, setManifest] = useState<GeometryManifest | null>(null), [error, setError] = useState(""), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0), [reports, setReports] = useState<Reports>(emptyReports), [settings, setSettings] = useState<PathTraceSettings>({ ...DEFAULT_TRACE_SETTINGS }), [tolerance, setTolerance] = useState(1e-6), [showViewport, setShowViewport] = useState(false), [hasImage, setHasImage] = useState(false), [image, setImage] = useState<SavedImage | null>(null);
   const [production, setProduction] = useState<SavedGeometryProduction | null>(null), [prepared, setPrepared] = useState<ProducedGeometryChunks | null>(null), [productionBusy, setProductionBusy] = useState(false), [productionNotice, setProductionNotice] = useState(""), [verified, setVerified] = useState(false), [streaming, setStreaming] = useState(false), [sourceLabel, setSourceLabel] = useState("Imported geometry scene");
+  const [showRenderStudio, setShowRenderStudio] = useState(false);
   const productionController = useRef<AbortController | null>(null), productionSerial = useRef(0);
   const geometryIdentity = useRef({ projectId, userId: user?.id, scene, production, sourceLabel }); geometryIdentity.current = { projectId, userId: user?.id, scene, production, sourceLabel };
   const canvas = useRef<HTMLCanvasElement>(null), worker = useRef<Worker | null>(null), serial = useRef(0), alive = useRef(true), fileGeneration = useRef(0);
@@ -279,6 +281,40 @@ export function GeometryWorkbench() {
       <p className="text-xs text-slate-400">Diffuse indirect illumination, hard sun shadows, mirror and glass materials. Constant linear-RGB materials; texture maps, volumetrics and denoising are outside this renderer. Only a completed PNG is saved with its render report.</p>
       <canvas ref={canvas} className={hasImage ? "max-w-full rounded-xl border border-slate-700" : "hidden"} /><Button variant="outline" disabled={!image || !hasImage || busy} onClick={saveImage}>Download PNG</Button>
     </Card>
+    <Card className="space-y-3 p-4 border-indigo-500/20 bg-indigo-950/10">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-slate-100 flex items-center gap-2">
+            <span>AI Photorealistic Rendering Jobs</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono">Phase 9</span>
+          </h2>
+          <p className="text-xs text-slate-400 mt-1">
+            Submit durable asynchronous architectural render jobs with style presets, non-destructive outputs, and revision attribution.
+          </p>
+        </div>
+        <Button
+          disabled={!projectId}
+          onClick={() => setShowRenderStudio(true)}
+          className="bg-indigo-600 hover:bg-indigo-500 text-white shrink-0"
+        >
+          Open Render Studio
+        </Button>
+      </div>
+      {!projectId && (
+        <p className="text-xs text-amber-300">
+          Load a project workspace to associate and retain AI render job artifacts.
+        </p>
+      )}
+    </Card>
+    {showRenderStudio && projectId && (
+      <RenderStudioModal
+        projectId={projectId}
+        sourceRevision={production?.sourceRevision ?? 0}
+        initialSourceImageBase64={image?.dataUrl || null}
+        isOpen={showRenderStudio}
+        onClose={() => setShowRenderStudio(false)}
+      />
+    )}
     <Card className="space-y-3 p-4"><h2 className="font-semibold">Performance measurements</h2><p className="text-xs text-slate-400">Explicitly measure a synthetic triangle BVH in a worker. Full editor performance needs representative project data and device measurements.</p>{([10_000, 100_000] as const).map(components => <Button key={components} className="mr-2" variant="outline" disabled={busy} onClick={() => start({ id: 0, operation: "benchmark", components })}>Measure {components.toLocaleString()}</Button>)}</Card>
     {busy && <Button variant="danger" onClick={() => { cancel(); setHasImage(false); setProgress(0); }}>Cancel job</Button>}{error && <p role="alert" className="text-amber-300">{error}</p>}
     {report !== null && <Card className="p-4"><Button variant="outline" onClick={() => download("geometry-report.json", JSON.stringify(report, null, 2), "application/json")}>Download report</Button><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(report, null, 2).slice(0, 150_000)}</pre></Card>}

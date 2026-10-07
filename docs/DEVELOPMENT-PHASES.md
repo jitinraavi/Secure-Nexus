@@ -176,4 +176,15 @@ Application shell assets are cached using a network-first/offline-fallback servi
 
 Offline saves and job submissions are queued immutably in an operations queue (`offlineQueue.ts`), automatically superseding redundant older saves and supporting explicit statuses (`queued`, `syncing`, `completed`, `conflicted`, `failed`, `superseded`). Upon reconnection, `offlineSyncManager.ts` rechecks user session permissions, verifies server revisions, and flags concurrent edits as conflicts with local draft recovery rather than silently overwriting. User logouts immediately clear in-memory caches and active session references to isolate sensitive project data.
 
+## AI photorealistic rendering jobs increment, October 2026
+
+[AI photorealistic rendering jobs](PHASE-9-AI-RENDERING.md) introduces durable asynchronous architectural rendering jobs to Groundwork, distinct from the local path tracer and AI design command assistant.
+
+Renders are executed through an extensible provider abstraction (`renderProvider.ts`) supporting Google Gemini Imagen, pure Node.js demo synthesis, and unconfigured states with clear configuration gating. Jobs are persisted in `project_render_jobs` with cooperative cancellation via AbortControllers, startup reconciliation, and historical immutability.
+
+Both the source design snapshot and each generated output image are stored as AES-256-GCM encrypted versioned workspace artifacts with SHA-256 verification, protected against deletion while referenced. Each render records its exact source project revision; the UI and API explicitly detect revision mismatches ("Stale: Rev X, Now Rev Y") to prevent historical renders from masquerading as current geometry. Retrying a job creates a brand-new job record with its own ID, guaranteeing earlier outputs are never corrupted or overwritten.
+
+The feature is fully integrated into the client via `RenderStudioModal.tsx`, embedded in `GeometryWorkbench.tsx`, and accessible directly from the 3D presentation toolbar and CAD export menu in `Editor.tsx`.
+
+
 

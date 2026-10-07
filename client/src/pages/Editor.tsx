@@ -33,6 +33,7 @@ import { offlineProjectStore } from "../lib/offlineProjectStore";
 import { offlineQueueStore } from "../lib/offlineQueue";
 import type { MergeDocument } from "../lib/designMerge";
 import { DraftConflictPanel } from "../components/DraftConflictPanel";
+import { RenderStudioModal } from "../components/RenderStudioModal";
 
 const Canvas3D = lazy(() => import("../editor/Canvas3D").then((module) => ({ default: module.Canvas3D })));
 const CommunityEditor = lazy(() => import("./CommunityEditor").then((module) => ({ default: module.CommunityEditor })));
@@ -103,6 +104,27 @@ export function Editor() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel | null>(null);
+  const [renderStudioOpen, setRenderStudioOpen] = useState(false);
+  const [renderSourceImage, setRenderSourceImage] = useState<string | null>(null);
+
+  const openRenderStudio = useCallback(async () => {
+    if (api) {
+      try {
+        const blob = await api.capturePng(1);
+        const reader = new FileReader();
+        reader.onload = () => {
+          setRenderSourceImage(reader.result as string);
+          setRenderStudioOpen(true);
+        };
+        reader.readAsDataURL(blob);
+        return;
+      } catch {
+        // Fallback without capture
+      }
+    }
+    setRenderSourceImage(null);
+    setRenderStudioOpen(true);
+  }, [api]);
 
   const saveTimer = useRef<number | null>(null);
   const revisionRef = useRef(0);
@@ -759,6 +781,10 @@ export function Editor() {
             <Button variant="ghost" size="sm" onClick={() => api?.stopCameraPath()} title="Stop camera path">Stop</Button>
           </div>
 
+        <Button size="sm" variant="outline" onClick={() => void openRenderStudio()} title="AI photorealistic rendering studio">
+          <span className="mr-1">✨</span>
+          AI Render
+        </Button>
         <Button size="sm" onClick={() => setExportOpen(true)}>
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v3h18v-3M7 8l5-5 5 5M12 3v11" /></svg>
           Export / ship to CAD
@@ -907,6 +933,17 @@ export function Editor() {
              busy={exporting === "png"}
              onClick={() => void exportTo("png")}
            />
+           <ConnectorCard
+             name="AI Photorealistic Render"
+             detail="Durable async rendering with architectural lighting presets and versioned outputs"
+             format="PNG"
+             icon="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
+             busy={false}
+             onClick={() => {
+               setExportOpen(false);
+               void openRenderStudio();
+             }}
+           />
           <ConnectorCard
             name="Bill of Materials"
             detail="Furniture quantities, sizes and colours as CSV for quoting"
@@ -948,6 +985,16 @@ export function Editor() {
         onClose={() => setCameraOpen(false)}
         onCapture={uploadFile}
       />
+
+      {renderStudioOpen && id && (
+        <RenderStudioModal
+          projectId={id}
+          sourceRevision={remoteRevision ?? 0}
+          initialSourceImageBase64={renderSourceImage}
+          isOpen={renderStudioOpen}
+          onClose={() => setRenderStudioOpen(false)}
+        />
+      )}
     </div>
   );
 }

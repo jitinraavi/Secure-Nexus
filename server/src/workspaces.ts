@@ -221,9 +221,9 @@ export function deleteWorkspaceArtifact(projectId: string, artifactId: string, a
     const { access } = authorize(projectId, actor, true);
     const artifact = db.prepare("SELECT kind,size FROM project_workspace_artifacts WHERE id=? AND project_id=?").get(artifactId, projectId) as { kind: WorkspaceKind; size: number } | undefined;
     if (!artifact) throw new WorkspaceError(404, "Artifact not found", "ARTIFACT_NOT_FOUND");
-    const referenced = db.prepare("SELECT 1 AS found FROM project_workspace_snapshots WHERE project_id=? AND payload_artifact_id=? UNION ALL SELECT 1 AS found FROM project_workspace_artifact_refs WHERE project_id=? AND artifact_id=? UNION ALL SELECT 1 AS found FROM project_native_jobs WHERE project_id=? AND input_artifact_id=? UNION ALL SELECT 1 AS found FROM project_native_job_artifacts WHERE project_id=? AND artifact_id=? LIMIT 1")
-      .get(projectId, artifactId, projectId, artifactId, projectId, artifactId, projectId, artifactId);
-    if (referenced) throw new WorkspaceError(409, "Artifact is referenced by saved workspace history or a native job", "ARTIFACT_REFERENCED");
+    const referenced = db.prepare("SELECT 1 AS found FROM project_workspace_snapshots WHERE project_id=? AND payload_artifact_id=? UNION ALL SELECT 1 AS found FROM project_workspace_artifact_refs WHERE project_id=? AND artifact_id=? UNION ALL SELECT 1 AS found FROM project_native_jobs WHERE project_id=? AND input_artifact_id=? UNION ALL SELECT 1 AS found FROM project_native_job_artifacts WHERE project_id=? AND artifact_id=? UNION ALL SELECT 1 AS found FROM project_render_jobs WHERE project_id=? AND (source_image_artifact_id=? OR output_artifact_id=?) LIMIT 1")
+      .get(projectId, artifactId, projectId, artifactId, projectId, artifactId, projectId, artifactId, projectId, artifactId, artifactId);
+    if (referenced) throw new WorkspaceError(409, "Artifact is referenced by saved workspace history, a native job, or a render job", "ARTIFACT_REFERENCED");
     db.prepare("DELETE FROM project_workspace_artifacts WHERE id=? AND project_id=?").run(artifactId, projectId);
     tenantAudit(access, actor, "workspace.artifact.delete", { artifactId, kind: artifact.kind, size: artifact.size });
   });

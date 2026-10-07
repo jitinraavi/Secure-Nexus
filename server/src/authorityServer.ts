@@ -23,6 +23,8 @@ import cadExchangeRoutes from "./routes/cadExchange.js";
 import collaborationRoutes from "./routes/collaboration.js";
 import organizationRoutes from "./routes/organizations.js";
 import ssoRoutes from "./routes/sso.js";
+import renderJobRoutes from "./routes/renderJobs.js";
+import { reconcileInterruptedRenderJobs } from "./renderJobs.js";
 import { authorityGatewayMiddleware, normalizeIp, requireAuthorityConfiguration } from "./topology.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -88,6 +90,7 @@ app.use("/api/secrets", secretRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/projects/:projectId/workspaces", workspaceRoutes);
 app.use("/api/projects/:projectId/jobs", nativeJobRoutes);
+app.use("/api/projects/:projectId/renders", renderJobRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/share", shareRoutes);
 app.use("/api/payments", paymentRoutes);
@@ -154,6 +157,7 @@ app.use(
 );
 
 export function startAuthorityServer() {
+  reconcileInterruptedRenderJobs();
   const server = app.listen(PORT, () => {
     console.log(`[groundwork] API listening on http://localhost:${PORT}`);
     console.log(`[groundwork] Environment: ${IS_PROD ? "production" : "development"}`);
