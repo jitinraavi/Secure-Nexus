@@ -1,0 +1,82 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: groundwork-app
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - GROUNDWORK_DATA_DIR=/data
+      - MASTER_KEY=${MASTER_KEY}
+      - PREVIOUS_MASTER_KEY=${PREVIOUS_MASTER_KEY:-}
+      - MAIL_PROVIDER=${MAIL_PROVIDER:-console}
+      - MAIL_HOST=${MAIL_HOST:-}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_SECURE=${MAIL_SECURE:-false}
+      - MAIL_USER=${MAIL_USER:-}
+      - MAIL_PASS=${MAIL_PASS:-}
+      - MAIL_FROM=${MAIL_FROM:-Groundwork <noreply@groundwork.design>}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - PAYMENTS_MODE=${PAYMENTS_MODE:-demo}
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID:-}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET:-}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET:-}
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_MODEL=${AI_MODEL:-}
+      - AI_BASE_URL=${AI_BASE_URL:-}
+      - RENDER_JOB_MAX_ACTIVE=${RENDER_JOB_MAX_ACTIVE:-2}
+    volumes:
+      - groundwork_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: groundwork-worker
+    restart: unless-stopped
+    profiles:
+      - worker
+    environment:
+      - NODE_ENV=production
+      - GROUNDWORK_DATA_DIR=/data
+      - MASTER_KEY=${MASTER_KEY}
+      - NATIVE_WORKER_ENABLED=true
+      - NATIVE_ISOLATION_ACKNOWLEDGED=true
+      - NATIVE_PRLIMIT_PATH=/usr/bin/prlimit
+      - NATIVE_DWG2DXF_PATH=/usr/bin/dwg2dxf
+      - NATIVE_DXF2DWG_PATH=/usr/bin/dxf2dwg
+      - NATIVE_SANDBOX_UID=10001
+      - NATIVE_SANDBOX_GID=10001
+    volumes:
+      - groundwork_data:/data
+    depends_on:
+      app:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: groundwork-redis
+    restart: unless-stopped
+    profiles:
+      - collaboration
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  groundwork_data:
+    name: groundwork_data
+  redis_data:
+    name: redis_data

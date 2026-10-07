@@ -15,7 +15,7 @@ import {
 } from "../config.js";
 import { hashPassword, randomId, randomToken, sha256Hex, verifyPassword } from "../crypto.js";
 import { db, now } from "../db.js";
-import { sendOtpEmail } from "../mailer.js";
+import { sendOtpEmail, testMailConnection } from "../mailer.js";
 import {
   asyncHandler,
   AuthedRequest,
@@ -873,6 +873,17 @@ router.post(
     ).run(now(), session.user_id);
     logAudit(session.user_id, "auth.2fa_disabled", "Two-factor authentication disabled", req);
     res.json({ ok: true });
+  }),
+);
+
+/* POST /api/auth/test-mail - deliverability diagnostic */
+router.post(
+  "/test-mail",
+  requireSession,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const recipient = typeof req.body?.recipient === "string" ? req.body.recipient.trim() : req.user?.email;
+    const result = await testMailConnection(recipient);
+    res.json(result);
   }),
 );
 

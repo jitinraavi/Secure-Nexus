@@ -95,3 +95,111 @@ export function sendOtpEmail(to: string, code: string): Promise<MailResult> {
   );
 }
 
+export interface MailDiagnosticResult {
+  ok: boolean;
+  provider: "resend" | "smtp" | "console";
+  details: string;
+  config: {
+    host?: string;
+    port?: number;
+    secure?: boolean;
+    from: string;
+    hasAuth: boolean;
+  };
+  timestamp: number;
+}
+
+export async function testMailConnection(recipientEmail?: string): Promise<MailDiagnosticResult> {
+  const t = pickTransport();
+  const timestamp = Date.now();
+  const baseConfig = {
+    from: MAIL.from,
+    hasAuth: Boolean(MAIL.user && MAIL.pass),
+  };
+
+  if (t.type === "smtp") {
+    try {
+      await t.transport.verify();
+      if (recipientEmail) {
+        await t.transport.sendMail({
+          from: MAIL.from,
+          to: recipientEmail,
+          subject: "Groundwork SMTP Diagnostic Test",
+          text: `This is an automated deliverability test from your Groundwork instance.\n\nTimestamp: ${new Date(timestamp).toISOString()}\nSMTP Host: ${MAIL.host}:${MAIL.port}\nStatus: Verified successfully.`,
+        });
+      }
+      return {
+        ok: true,
+        provider: "smtp",
+        details: recipientEmail
+          ? `SMTP connection verified and test email sent to ${recipientEmail}`
+          : `SMTP connection and authentication verified successfully with ${MAIL.host}:${MAIL.port}`,
+        config: { ...baseConfig, host: MAIL.host, port: MAIL.port, secure: MAIL.secure },
+        timestamp,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        provider: "smtp",
+        details: `SMTP verification failed: ${msg}`,
+        config: { ...baseConfig, host: MAIL.host, port: MAIL.port, secure: MAIL.secure },
+        timestamp,
+      };
+    }
+  }
+
+  if (t.type === "resend") {
+    if (!MAIL.resendKey) {
+      return {
+        ok: false,
+        provider: "resend",
+        details: "Resend API key is not configured.",
+        config: baseConfig,
+        timestamp,
+      };
+    }
+    try {
+      if (recipientEmail) {
+        await sendResend(
+          recipientEmail,
+          "Groundwork Resend Diagnostic Test",
+          `<p>Automated deliverability test from Groundwork via Resend.<br/>Timestamp: ${new Date(timestamp).toISOString()}</p>`
+        );
+        return {
+          ok: true,
+          provider: "resend",
+          details: `Resend test email dispatched successfully to ${recipientEmail}`,
+          config: baseConfig,
+          timestamp,
+        };
+      }
+      return {
+        ok: true,
+        provider: "resend",
+        details: "Resend API key configured and ready.",
+        config: baseConfig,
+        timestamp,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        provider: "resend",
+        details: `Resend test failed: ${msg}`,
+        config: baseConfig,
+        timestamp,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    provider: "console",
+    details: "Console provider active (development mode). Verification codes are logged to terminal.",
+    config: baseConfig,
+    timestamp,
+  };
+}
+
+

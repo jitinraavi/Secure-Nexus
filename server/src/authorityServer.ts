@@ -25,7 +25,9 @@ import collaborationRoutes from "./routes/collaboration.js";
 import organizationRoutes from "./routes/organizations.js";
 import ssoRoutes from "./routes/sso.js";
 import renderJobRoutes from "./routes/renderJobs.js";
+import adminBackupRoutes from "./routes/adminBackup.js";
 import { reconcileInterruptedRenderJobs } from "./renderJobs.js";
+import { startDatabaseScheduler, checkpointDatabase } from "./databaseBackup.js";
 import { authorityGatewayMiddleware, normalizeIp, requireAuthorityConfiguration } from "./topology.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -100,6 +102,7 @@ app.use("/api/cad-exchange", cadExchangeRoutes);
 app.use("/api/collaboration", collaborationRoutes);
 app.use("/api/organizations", organizationRoutes);
 app.use("/api/sso", ssoRoutes);
+app.use("/api/admin/backups", adminBackupRoutes);
 
 app.use("/api", (_req, res) => {
   res.status(404).json({ error: "Not found" });
@@ -179,6 +182,7 @@ export function seedDevUserIfEmpty(): void {
 export function startAuthorityServer() {
   reconcileInterruptedRenderJobs();
   seedDevUserIfEmpty();
+  const stopDatabaseScheduler = startDatabaseScheduler();
   const server = app.listen(PORT, () => {
     console.log(`[groundwork] API listening on http://localhost:${PORT}`);
     console.log(`[groundwork] Environment: ${IS_PROD ? "production" : "development"}`);
@@ -192,6 +196,12 @@ export function startAuthorityServer() {
   async function stopServer(): Promise<void> {
     if (stopping) return;
     stopping = true;
+    stopDatabaseScheduler();
+    try {
+      checkpointDatabase("TRUNCATE");
+    } catch (err) {
+      console.error("[groundwork] Error checkpointing WAL during shutdown:", err);
+    }
     server.close();
     await nativeWorker.stop();
     process.exit(0);

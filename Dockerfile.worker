@@ -1,0 +1,53 @@
+# ================================================================
+# Groundwork Sandboxed Native Job Worker (LibreDWG + OpenSees)
+# Isolated environment for CAD conversion and structural solver jobs
+# ================================================================
+
+FROM node:22-bookworm-slim AS worker-base
+WORKDIR /app
+
+# Install native prerequisites: util-linux (prlimit), libredwg tools, build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    libredwg-tools \
+    util-linux \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create sandboxed restricted unprivileged user (UID/GID 10001) with no login shell
+RUN groupadd -g 10001 groundwork-sandbox && \
+    useradd -u 10001 -g groundwork-sandbox -s /usr/sbin/nologin -M groundwork-sandbox
+
+# Copy dependency manifests
+COPY package.json package-lock.json ./
+COPY server/package.json ./server/
+COPY client/package.json ./client/
+
+RUN npm ci
+
+# Copy server code
+COPY server ./server
+COPY tsconfig.json ./
+
+# Compile server code
+RUN npm run build -w server
+RUN npm prune --omit=dev
+
+ENV NODE_ENV=production
+ENV GROUNDWORK_DATA_DIR=/data
+ENV NATIVE_WORKER_ENABLED=true
+ENV NATIVE_ISOLATION_ACKNOWLEDGED=true
+ENV NATIVE_PRLIMIT_PATH=/usr/bin/prlimit
+ENV NATIVE_DWG2DXF_PATH=/usr/bin/dwg2dxf
+ENV NATIVE_DXF2DWG_PATH=/usr/bin/dxf2dwg
+ENV NATIVE_SANDBOX_UID=10001
+ENV NATIVE_SANDBOX_GID=10001
+
+RUN mkdir -p /data/native-jobs && chown -R node:node /data /app
+
+USER node
+
+VOLUME ["/data"]
+
+CMD ["node", "--disable-warning=ExperimentalWarning", "server/dist/index.js"]
