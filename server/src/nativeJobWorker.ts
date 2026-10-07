@@ -20,7 +20,7 @@ async function removeAttempt(directory: string): Promise<void> {
 async function prepareRoot(): Promise<void> {
   await mkdir(ROOT, { recursive: true, mode: 0o700 });
   const stat = await lstat(ROOT);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(ROOT) !== ROOT || stat.uid !== process.getuid?.() || stat.uid === nativeAdapterConfig.sandbox?.uid) throw new Error("Native job root must be a private real directory owned by the API account");
+  if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(ROOT) !== ROOT || (process.getuid && (stat.uid !== process.getuid() || stat.uid === nativeAdapterConfig.sandbox?.uid))) throw new Error("Native job root must be a private real directory owned by the API account");
   await chmod(ROOT, 0o700);
 }
 async function removeExpiredAttempts(): Promise<void> {
