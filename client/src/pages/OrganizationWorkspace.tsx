@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
 import { Badge, Button, Card, Input, Select, Toggle } from "../components/ui";
 import {
@@ -16,11 +15,9 @@ import {
   listPersonalOrganizationProjects,
   reactivateOrganizationSubscription,
   removeOrganizationMember,
-  subscribeOrganization,
   transferOrganizationOwner,
   unlinkOrganizationIdentity,
   updateOrganization,
-  updateOrganizationMember,
   updateOrganizationSeats,
   type Organization,
   type OrganizationBillingInfo,
@@ -66,7 +63,7 @@ function CoordinationWorkspace({ projectId, canEdit }: { projectId: string; canE
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Could not queue issue"); }
   };
   return <Card className="space-y-4 p-5">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-slate-100">Offline coordination workspace</h2><p className="text-sm text-slate-400">Issue tracking remains available offline and syncs when the network returns.</p></div><div className="flex gap-2"><Button variant="secondary" loading={status.syncing} onClick={() => { void sync.current?.synchronize(); }}>Synchronize</Button><Button variant="ghost" onClick={() => { void sync.current?.export(); }}>Export</Button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-slate-100">Offline coordination workspace</h2><p className="text-sm text-slate-400">Issue tracking remains available offline and syncs when the network returns.</p></div><div className="flex gap-2"><Button variant="secondary" loading={status.syncing} onClick={() => { void sync.current?.synchronize(); }}>Synchronize</Button><Button variant="ghost" onClick={() => { if (sync.current) download(`coordination-${projectId}.json`, sync.current.exportQueue()); }}>Export</Button></div></div>
     {(status.error || error) && <p role="alert" className="text-sm text-amber-300">{error || status.error}</p>}
     {!status.durable && <p className="text-sm text-amber-300">Browser storage is unavailable. Keep this tab open or export pending edits.</p>}
     {canEdit && <div className="grid gap-3 md:grid-cols-2"><Input label="New issue title" value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} /><Input label="Description" value={body} maxLength={10000} onChange={(event) => setBody(event.target.value)} /><Button onClick={create}>Create issue</Button></div>}
@@ -109,7 +106,6 @@ function OrganizationWorkspaceContent() {
   const [transferUser, setTransferUser] = useState("");
   const [billing, setBilling] = useState<OrganizationBillingInfo | null>(null);
   const [targetSeats, setTargetSeats] = useState(0);
-  const [billingPlan, setBillingPlan] = useState<"standard" | "enterprise">("standard");
   const [acceptTermReplacement, setAcceptTermReplacement] = useState(false);
   const checkoutRequest = useRef<{ scope: string; key: string; orderId?: string } | null>(null);
   const mounted = useRef(true), actionInFlight = useRef(false);
@@ -133,7 +129,6 @@ function OrganizationWorkspaceContent() {
       if (mounted.current && token === loadToken.current && selectedOrganization.current === id) {
         setBilling(b);
         setTargetSeats(Math.max(1, b.entitlement.effectivePaidSeats));
-        setBillingPlan(b.subscription.plan as "standard" | "enterprise");
         const previous = checkoutRequest.current;
         if (previous?.orderId && b.orders.some(order => order.id === previous.orderId && ["verified", "expired", "failed", "requires_review"].includes(order.status))) checkoutRequest.current = null;
       }
