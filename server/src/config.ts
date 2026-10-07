@@ -81,6 +81,13 @@ export const OTP_TTL_SECONDS = 10 * 60;
 export const OTP_MAX_ATTEMPTS = 5;
 export const OTP_RESEND_COOLDOWN_SECONDS = 30;
 
+export const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean),
+);
+
 /* Pluggable mailer: set MAIL_PROVIDER=smtp or resend (auto-detected from creds if unset) */
 export const MAIL = {
   provider: (process.env.MAIL_PROVIDER || "").toLowerCase(),
@@ -89,8 +96,9 @@ export const MAIL = {
   secure: process.env.MAIL_SECURE === "true",
   user: process.env.MAIL_USER || "",
   pass: process.env.MAIL_PASS || "",
-  from: process.env.MAIL_FROM || "Groundwork <groundwork.login@gmail.com>",
+  from: process.env.MAIL_FROM || "Groundwork <noreply@groundwork.design>",
   resendKey: process.env.RESEND_API_KEY || "",
   devOtp: process.env.GROUNDWORK_DEV_OTP !== "0",
 };
+
 

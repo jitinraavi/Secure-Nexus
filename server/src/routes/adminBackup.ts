@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { ADMIN_EMAILS, IS_PROD } from "../config.js";
 import { requireSession, type AuthedRequest } from "../security.js";
 import {
   checkpointDatabase,
@@ -9,6 +10,16 @@ import {
 const router = Router();
 
 router.use(requireSession);
+router.use((req: AuthedRequest, res, next) => {
+  if (!IS_PROD) {
+    return next();
+  }
+  const email = req.user?.email?.toLowerCase();
+  if (email && ADMIN_EMAILS.has(email)) {
+    return next();
+  }
+  return res.status(403).json({ error: "Forbidden: Admin access required" });
+});
 
 /**
  * GET /api/admin/backups

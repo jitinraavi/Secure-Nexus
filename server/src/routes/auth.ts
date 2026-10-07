@@ -3,6 +3,7 @@ import { randomInt } from "node:crypto";
 import qrcode from "qrcode";
 import { logAudit } from "../audit.js";
 import {
+  ADMIN_EMAILS,
   COOKIE_SESSION,
   IS_PROD,
   LOCK_SECONDS,
@@ -82,6 +83,7 @@ function resolveUser(identifier: string): UserRow | undefined {
 
 /** Dev-mode fallback so usable codes are shown even when SMTP is misconfigured. */
 function devLeak(code: string, mail: { via: string; devCode?: string }): string | undefined {
+  if (IS_PROD) return undefined;
   if (mail.devCode) return mail.devCode;
   if (!IS_PROD && MAIL.devOtp && mail.via === "error") return code;
   return undefined;
@@ -881,7 +883,12 @@ router.post(
   "/test-mail",
   requireSession,
   asyncHandler(async (req: AuthedRequest, res) => {
-    const recipient = typeof req.body?.recipient === "string" ? req.body.recipient.trim() : req.user?.email;
+    const userEmail = req.user?.email || "";
+    const isAdmin = Boolean(userEmail && ADMIN_EMAILS.has(userEmail.toLowerCase()));
+    const recipient =
+      isAdmin && typeof req.body?.recipient === "string" && req.body.recipient.trim()
+        ? req.body.recipient.trim()
+        : userEmail;
     const result = await testMailConnection(recipient);
     res.json(result);
   }),

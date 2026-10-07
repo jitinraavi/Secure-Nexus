@@ -1,9 +1,48 @@
+# Dependency directories
 node_modules/
+
+# Production build outputs
 dist/
+client/dist/
+
+# Persistent data directories & databases
 server/data/
-.serverless/
-*.log
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+backups/
+
+# Environment and secrets (NEVER commit credentials)
 .env
-.env.local
+.env.*
+!.env.example
+!.env.production.example
+server/.env
+server/.env.*
+!server/*.env.example
+client/.env
+client/.env.*
+!client/*.env.example
+
+# Private keys, certificates, credentials
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+
+# Logs and runtime artifacts
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.serverless/
+
+# OS metadata
 .DS_Store
 Thumbs.db

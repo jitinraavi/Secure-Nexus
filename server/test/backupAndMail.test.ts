@@ -146,6 +146,19 @@ test("Database backup and maintenance suite", async (t) => {
     assert.strictEqual(testMailJson.ok, true);
     assert.strictEqual(testMailJson.provider, "console");
 
+    // Non-admin attempting arbitrary external recipient defaults safely to own email
+    const relayAttemptRes = await client.request("/api/auth/test-mail", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": client.csrfToken,
+      },
+      body: JSON.stringify({ recipient: "attacker@external-domain.com" }),
+    });
+    assert.strictEqual(relayAttemptRes.status, 200);
+    const relayAttemptJson = await relayAttemptRes.json();
+    assert.strictEqual(relayAttemptJson.ok, true);
+
     // Admin Backups list
     const backupsListRes = await client.request("/api/admin/backups");
     assert.strictEqual(backupsListRes.status, 200);
