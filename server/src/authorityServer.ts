@@ -6,7 +6,8 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import multer from "multer";
 import { IS_PROD, PORT } from "./config.js";
-import { db } from "./db.js";
+import { db, now } from "./db.js";
+import { hashPassword } from "./crypto.js";
 import { apiLimiter, csrfProtection } from "./security.js";
 import { COUNTRIES } from "./payments/pricing.js";
 import authRoutes from "./routes/auth.js";
@@ -156,8 +157,28 @@ app.use(
   },
 );
 
+export function seedDevUserIfEmpty(): void {
+  if (IS_PROD) return;
+  const count = (db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
+  if (count > 0) return;
+
+  const t = now();
+  const { salt, hash } = hashPassword("Groundwork123!");
+  db.prepare(`
+    INSERT INTO users (
+      id, email, username, email_verified, password_salt, password_hash,
+      country, account_type, password_changed_at, created_at, updated_at
+    ) VALUES (
+      'usr_demo_architect', 'demo@groundwork.design', 'architect', 1, ?, ?,
+      'IN', 'individual', ?, ?, ?
+    )
+  `).run(salt, hash, t, t, t);
+  console.log("[groundwork] Seeded default demo account: demo@groundwork.design (password: Groundwork123!)");
+}
+
 export function startAuthorityServer() {
   reconcileInterruptedRenderJobs();
+  seedDevUserIfEmpty();
   const server = app.listen(PORT, () => {
     console.log(`[groundwork] API listening on http://localhost:${PORT}`);
     console.log(`[groundwork] Environment: ${IS_PROD ? "production" : "development"}`);

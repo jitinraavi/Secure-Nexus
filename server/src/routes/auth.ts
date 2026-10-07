@@ -315,6 +315,13 @@ router.post(
     const user = resolveUser(identifier);
 
     if (!user) {
+      if (!IS_PROD) {
+        res.status(404).json({
+          error: `No account found for "${identifier}". Please click "Create one" below to sign up first, or use the demo account.`,
+          userNotFound: true,
+        });
+        return;
+      }
       /* Respond identically whether or not the account exists (no probing) */
       res.json({
         ok: true,
