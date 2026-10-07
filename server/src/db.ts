@@ -386,6 +386,36 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS organization_subscriptions (
+  organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  plan TEXT NOT NULL DEFAULT 'standard',
+  status TEXT NOT NULL CHECK(status IN ('active', 'past_due', 'canceled', 'unpaid', 'trialing')),
+  base_seats INTEGER NOT NULL DEFAULT 5,
+  paid_seats INTEGER NOT NULL DEFAULT 0,
+  total_seats INTEGER NOT NULL DEFAULT 5,
+  current_period_start INTEGER NOT NULL,
+  current_period_end INTEGER NOT NULL,
+  cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+  provider TEXT NOT NULL DEFAULT 'demo',
+  provider_subscription_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS billing_transitions (
+  id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  payment_id TEXT REFERENCES payments(id) ON DELETE SET NULL,
+  action TEXT NOT NULL CHECK(action IN ('subscribe', 'seat_change', 'renew', 'cancel', 'reactivate', 'expire', 'payment_failed')),
+  previous_state TEXT,
+  new_state TEXT,
+  details TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_billing_transitions_org ON billing_transitions(organization_id, created_at DESC);
 `);
 
 /* Lightweight migrations for pre-existing databases */
@@ -452,6 +482,12 @@ const flowCols = (raw.prepare("PRAGMA table_info(organization_sso_flows)").all()
 if (!flowCols.includes("linking_user_id")) raw.exec("ALTER TABLE organization_sso_flows ADD COLUMN linking_user_id TEXT REFERENCES users(id) ON DELETE CASCADE;");
 const ssoCols = (raw.prepare("PRAGMA table_info(organization_sso)").all() as { name: string }[]).map((column) => column.name);
 if (!ssoCols.includes("configuration_revision")) raw.exec("ALTER TABLE organization_sso ADD COLUMN configuration_revision INTEGER NOT NULL DEFAULT 1;");
+const paymentCols = (raw.prepare("PRAGMA table_info(payments)").all() as { name: string }[]).map((column) => column.name);
+if (!paymentCols.includes("organization_id")) raw.exec("ALTER TABLE payments ADD COLUMN organization_id TEXT REFERENCES organizations(id) ON DELETE SET NULL;");
+raw.exec(`
+  INSERT OR IGNORE INTO organization_subscriptions (organization_id, plan, status, base_seats, paid_seats, total_seats, current_period_start, current_period_end, cancel_at_period_end, provider, created_at, updated_at)
+  SELECT id, 'standard', 'active', 5, 0, 5, created_at, created_at + 31536000, 0, 'demo', created_at, updated_at FROM organizations;
+`);
 
 export type Db = typeof raw;
 export const db: Db = raw;

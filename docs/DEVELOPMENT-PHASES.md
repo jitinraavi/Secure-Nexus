@@ -154,8 +154,17 @@ Exchange workspace version 3 retains the raw coordinate declaration and metadata
 
 Workspace version 4 retains civil source snapshots and restores versions 1–3 drafts without fabricating historical reference declarations. Current survey/reference edits clear results. The separate WKT authority follow-up rejects unreconciled compound and conflicting projection-method authorities. This completes the finite named Phase 5 source contract. Actual LandXML XSD/consumer acceptance, binary interoperability, numerical accuracy and compilation remain unverified. Phase 6 scene production/editor integration is next.
 
-## Exact geometry producer increment, 4 October 2026
+## Exact geometry producer & streaming integration, October 2026
 
 [Geometry production](GEOMETRY-CHUNK-PRODUCTION.md) captures immutable canonical source bytes and SHA-256, preserves exact whole meshes/materials/camera/source IDs and partitions within bounded byte/decoded counts. Flat zero-error manifests describe exact partitions rather than invented simplified LOD. Cooperative cancellation and source fingerprint checks support stale-work rejection. Artifact binding verifies geometry kind, content hashes, byte counts and distinct IDs, then generates same-origin project routes and at most 16 protected source/chunk/provenance references.
 
-This is a source library increment. Upload/capacity reservation, original raw files, workspace/editor controls, project/source-generation checks, reference retention, restore integration and rollback/conflict UI remain required next work. Existing streaming consumers stay available, and no performance, browser, compiler or executable acceptance has occurred. Phase 6 remains incomplete.
+Phase 6 source implementation and editor integration are merged into main: source-gated production, capacity reservations, streaming viewport (`StreamingGeometryViewport.tsx`), workspace recovery, authenticated chunk retrieval, and SHA-256 integrity verification.
+
+## Enterprise authority & billing increment, October 2026
+
+[Enterprise authority and billing](PHASE-7-ENTERPRISE-AUTHORITY.md) establishes a central multi-host authority architecture, eliminating reliance on distributed multi-writer SQLite across multiple application hosts. Secondary hosts proxy API requests to the central authority server.
+
+Tenant-scoped entitlements track base seats and paid seats per organization (`organization_subscriptions`). Adding members and adjusting seat limits enforce dynamic entitlement barriers, preventing over-allocation or seat growth during delinquency (`past_due`, `canceled`).
+
+All billing and subscription changes execute through state-transition records with client- or webhook-supplied idempotency keys (`billing_transitions`), preventing duplicate charges or seat inflation. Payments integrate directly with organization billing via transactional webhooks and demo confirmations. Full audit logging in `organization_audit` tracks every entitlement change, seat adjustment, and administrative transition.
+

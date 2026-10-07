@@ -18,6 +18,7 @@ import {
 import { countryInfo, localPriceMinor } from "../payments/pricing.js";
 import { randomId } from "../crypto.js";
 import { z } from "zod";
+import { applyBillingTransition, organizationRole } from "../organization.js";
 
 const router = Router();
 
@@ -81,6 +82,7 @@ router.get(
 const createSchema = z.object({
   planId: z.enum(["pro", "studio"]),
   method: z.enum(["upi", "card", "paypal"]),
+  organizationId: z.string().min(1).max(128).optional(),
 });
 
 router.post(
@@ -95,6 +97,15 @@ router.post(
     if (!plan) {
       res.status(400).json({ error: "Unknown plan" });
       return;
+    }
+    let organizationId: string | null = null;
+    if (parsed.data.organizationId) {
+      const role = organizationRole(parsed.data.organizationId, req.user!.id);
+      if (role !== "owner" && role !== "admin") {
+        res.status(403).json({ error: "Organization administrator access required" });
+        return;
+      }
+      organizationId = parsed.data.organizationId;
     }
     const method = parsed.data.method as PaymentMethod;
     const user = db.prepare("SELECT email, country FROM users WHERE id = ?").get(req.user!.id) as {
@@ -129,11 +140,12 @@ router.post(
     }
 
     db.prepare(
-      `INSERT INTO payments (id, user_id, provider, method, plan, amount, currency, status, provider_order_id, provider_url, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO payments (id, user_id, organization_id, provider, method, plan, amount, currency, status, provider_order_id, provider_url, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       orderId,
       req.user!.id,
+      organizationId,
       created.provider,
       method,
       plan.id,
@@ -145,7 +157,7 @@ router.post(
       now(),
     );
 
-    logAudit(req.user!.id, "payment.created", { plan: plan.id, method, provider: created.provider }, req);
+    logAudit(req.user!.id, "payment.created", { plan: plan.id, method, provider: created.provider, organizationId }, req);
 
     res.status(201).json({
       paymentId: orderId,
@@ -154,14 +166,15 @@ router.post(
       checkoutUrl: created.checkoutUrl,
       method,
       providerOrderId: created.providerOrderId,
+      organizationId,
     });
   }),
 );
 
 function markPaid(userId: string, paymentId: string) {
   const completed = withTransaction(() => {
-    const payment = db.prepare("SELECT plan, amount, currency, status FROM payments WHERE id = ? AND user_id = ?")
-      .get(paymentId, userId) as { plan: string; amount: number; currency: string; status: string } | undefined;
+    const payment = db.prepare("SELECT plan, amount, currency, status, organization_id FROM payments WHERE id = ? AND user_id = ?")
+      .get(paymentId, userId) as { plan: string; amount: number; currency: string; status: string; organization_id: string | null } | undefined;
     if (!payment || payment.status === "paid" || !["pro", "studio"].includes(payment.plan)) return null;
     const plan = planForId(payment.plan);
     if (!plan || plan.id === "free") return null;
@@ -169,9 +182,23 @@ function markPaid(userId: string, paymentId: string) {
     const result = db.prepare("UPDATE payments SET status = 'paid', completed_at = ? WHERE id = ? AND user_id = ? AND status != 'paid'")
       .run(t, paymentId, userId);
     if (!result.changes) return null;
-    db.prepare("UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = ? WHERE id = ?")
-      .run(plan.id, t + plan.periodDays * 86400, t, userId);
-    return { plan: plan.id, amount: payment.amount / 100, currency: payment.currency };
+
+    if (payment.organization_id) {
+      applyBillingTransition({
+        idempotencyKey: paymentId,
+        organizationId: payment.organization_id,
+        userId,
+        paymentId,
+        action: "renew",
+        newPlan: payment.plan === "studio" ? "enterprise" : "standard",
+        periodDays: plan.periodDays,
+        details: { amount: payment.amount, currency: payment.currency, paymentId },
+      });
+    } else {
+      db.prepare("UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = ? WHERE id = ?")
+        .run(plan.id, t + plan.periodDays * 86400, t, userId);
+    }
+    return { plan: plan.id, amount: payment.amount / 100, currency: payment.currency, organizationId: payment.organization_id };
   });
   if (completed) logAudit(userId, "payment.completed", completed, undefined);
 }

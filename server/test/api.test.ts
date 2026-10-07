@@ -449,4 +449,103 @@ test("roadmap API integration slice", async (t) => {
     assert.equal(missingPhoto.response.status, 404);
     assert.ok(missingPhoto.body.error === "No photo" || missingPhoto.body.error === "Project not found");
   });
+
+  await t.test("manages enterprise authority, tenant entitlements, and idempotent billing", async () => {
+    // 1. Create organization
+    const orgRes = await client.json<{ id: string }>(
+      "/api/organizations",
+      jsonInit("POST", { name: "Nexus Engineering Corp" }, csrfToken),
+    );
+    assert.equal(orgRes.response.status, 201);
+    const orgId = orgRes.body.id;
+
+    // 2. Query default entitlement and billing info
+    const initialBilling = await client.json<{
+      entitlement: {
+        plan: string;
+        status: string;
+        baseSeats: number;
+        paidSeats: number;
+        totalSeats: number;
+        seatsUsed: number;
+        seatsAvailable: number;
+        canAddMember: boolean;
+        isDelinquent: boolean;
+      };
+      subscription: { plan: string; status: string; totalSeats: number };
+      transitions: Array<{ idempotencyKey: string; action: string }>;
+    }>(`/api/organizations/${orgId}/billing`);
+    assert.equal(initialBilling.response.status, 200);
+    assert.equal(initialBilling.body.entitlement.plan, "standard");
+    assert.equal(initialBilling.body.entitlement.status, "active");
+    assert.equal(initialBilling.body.entitlement.baseSeats, 5);
+    assert.equal(initialBilling.body.entitlement.paidSeats, 0);
+    assert.equal(initialBilling.body.entitlement.totalSeats, 5);
+    assert.equal(initialBilling.body.entitlement.seatsUsed, 1); // Owner
+    assert.equal(initialBilling.body.entitlement.seatsAvailable, 4);
+    assert.equal(initialBilling.body.entitlement.canAddMember, true);
+    assert.equal(initialBilling.body.entitlement.isDelinquent, false);
+
+    // 3. Purchase paid seats with idempotency key
+    const seatRes = await client.json<{
+      duplicate: boolean;
+      entitlement: { paidSeats: number; totalSeats: number; seatsAvailable: number };
+    }>(
+      `/api/organizations/${orgId}/billing/seats`,
+      jsonInit("POST", { idempotencyKey: "test_idem_seats_001", targetPaidSeats: 10 }, csrfToken),
+    );
+    assert.equal(seatRes.response.status, 200);
+    assert.equal(seatRes.body.duplicate, false);
+    assert.equal(seatRes.body.entitlement.paidSeats, 10);
+    assert.equal(seatRes.body.entitlement.totalSeats, 15);
+    assert.equal(seatRes.body.entitlement.seatsAvailable, 14);
+
+    // 4. Verify idempotent retry does not double apply
+    const duplicateSeatRes = await client.json<{
+      duplicate: boolean;
+      entitlement: { paidSeats: number; totalSeats: number };
+    }>(
+      `/api/organizations/${orgId}/billing/seats`,
+      jsonInit("POST", { idempotencyKey: "test_idem_seats_001", targetPaidSeats: 10 }, csrfToken),
+    );
+    assert.equal(duplicateSeatRes.response.status, 200);
+    assert.equal(duplicateSeatRes.body.duplicate, true);
+    assert.equal(duplicateSeatRes.body.entitlement.paidSeats, 10);
+    assert.equal(duplicateSeatRes.body.entitlement.totalSeats, 15);
+
+    // 5. Update plan to enterprise
+    const subRes = await client.json<{
+      duplicate: boolean;
+      entitlement: { plan: string };
+    }>(
+      `/api/organizations/${orgId}/billing/subscribe`,
+      jsonInit("POST", { idempotencyKey: "test_idem_sub_001", plan: "enterprise" }, csrfToken),
+    );
+    assert.equal(subRes.response.status, 200);
+    assert.equal(subRes.body.duplicate, false);
+    assert.equal(subRes.body.entitlement.plan, "enterprise");
+
+    // 6. Create payment associated with organization and confirm it
+    const orgPayment = await client.json<{ paymentId: string; organizationId: string }>(
+      "/api/payments/create",
+      jsonInit("POST", { planId: "studio", method: "card", organizationId: orgId }, csrfToken),
+    );
+    assert.equal(orgPayment.response.status, 201);
+    assert.equal(orgPayment.body.organizationId, orgId);
+
+    const confirmOrgPayment = await client.json<{ ok: boolean }>(
+      "/api/payments/confirm-demo",
+      jsonInit("POST", { paymentId: orgPayment.body.paymentId }, csrfToken),
+    );
+    assert.equal(confirmOrgPayment.response.status, 200);
+    assert.equal(confirmOrgPayment.body.ok, true);
+
+    // 7. Verify audit trail and transitions reflect payment renewal
+    const updatedBilling = await client.json<{
+      transitions: Array<{ action: string; idempotencyKey: string }>;
+    }>(`/api/organizations/${orgId}/billing`);
+    assert.equal(updatedBilling.response.status, 200);
+    assert.ok(updatedBilling.body.transitions.some((t) => t.idempotencyKey === orgPayment.body.paymentId && t.action === "renew"));
+  });
 });
+

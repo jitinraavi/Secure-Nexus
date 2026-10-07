@@ -2,7 +2,29 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
 import { Badge, Button, Card, Input, Select, Toggle } from "../components/ui";
-import { addOrganizationMember, bindOrganizationProject, configureOrganizationSso, createOrganization, getOrganization, getOrganizationAudit, getOrganizationSso, listOrganizations, listPersonalOrganizationProjects, removeOrganizationMember, transferOrganizationOwner, unlinkOrganizationIdentity, updateOrganization, updateOrganizationMember, type Organization, type OrganizationDetail, type OrganizationRole } from "../lib/organizationApi";
+import {
+  addOrganizationMember,
+  bindOrganizationProject,
+  configureOrganizationSso,
+  createOrganization,
+  getOrganization,
+  getOrganizationAudit,
+  getOrganizationBilling,
+  getOrganizationSso,
+  listOrganizations,
+  listPersonalOrganizationProjects,
+  removeOrganizationMember,
+  subscribeOrganization,
+  transferOrganizationOwner,
+  unlinkOrganizationIdentity,
+  updateOrganization,
+  updateOrganizationMember,
+  updateOrganizationSeats,
+  type Organization,
+  type OrganizationBillingInfo,
+  type OrganizationDetail,
+  type OrganizationRole,
+} from "../lib/organizationApi";
 import { CoordinationSync, type CoordinationRecord, type CoordinationSyncStatus } from "../lib/operationSync";
 
 function download(name: string, text: string) {
@@ -77,6 +99,9 @@ export function OrganizationWorkspace() {
   const [ssoEnabled, setSsoEnabled] = useState(false);
   const [redirectUri, setRedirectUri] = useState("");
   const [transferUser, setTransferUser] = useState("");
+  const [billing, setBilling] = useState<OrganizationBillingInfo | null>(null);
+  const [targetSeats, setTargetSeats] = useState(0);
+  const [billingPlan, setBillingPlan] = useState<"standard" | "enterprise">("standard");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -91,10 +116,20 @@ export function OrganizationWorkspace() {
     const result = await getOrganization(id);
     if (token !== loadToken.current || selectedOrganization.current !== id) return;
     setDetail(result); setName(result.organization.name); setSeatLimit(result.organization.seatLimit); setRetention(result.organization.auditRetentionDays);
+    try {
+      const b = await getOrganizationBilling(id);
+      if (token === loadToken.current && selectedOrganization.current === id) {
+        setBilling(b);
+        setTargetSeats(b.entitlement.paidSeats);
+        setBillingPlan(b.subscription.plan as "standard" | "enterprise");
+      }
+    } catch {
+      if (token === loadToken.current && selectedOrganization.current === id) setBilling(null);
+    }
   }, []);
   useEffect(() => { let live = true; void refreshList().then((items) => { if (live && items[0]) setOrganizationId(items[0].id); }).catch((failure: unknown) => { if (live) setError(failure instanceof Error ? failure.message : "Could not load organizations"); }); return () => { live = false; }; }, [refreshList]);
   useEffect(() => {
-    setDetail(null); setCoordinationProjectId(""); setIssuer(""); setClientId(""); setClientSecret(""); setRedirectUri(""); setSsoEnabled(false); setError("");
+    setDetail(null); setBilling(null); setCoordinationProjectId(""); setIssuer(""); setClientId(""); setClientSecret(""); setRedirectUri(""); setSsoEnabled(false); setError("");
     if (!organizationId) return;
     let live = true;
     void refreshDetail(organizationId).catch((failure: unknown) => { if (live) setError(failure instanceof Error ? failure.message : "Could not load organization"); });
@@ -125,6 +160,104 @@ export function OrganizationWorkspace() {
     <Card className="grid gap-4 p-5 md:grid-cols-3"><Select label="Organization" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">Select an organization</option>{organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}</Select><Input label="New organization name" value={newName} maxLength={80} onChange={(event) => setNewName(event.target.value)} /><Button loading={busy} disabled={!newName.trim()} onClick={() => { void act(async () => { const result = await createOrganization(newName.trim()); setOrganizationId(result.id); setNewName(""); }, "Organization created"); }}>Create organization</Button></Card>
     {detail && <>
       <div className="flex flex-wrap gap-3"><Badge>{detail.organization.role}</Badge><Badge tone="cyan">{detail.organization.seatsUsed} / {detail.organization.seatLimit} seats</Badge><Badge>{detail.organization.auditRetentionDays} day audit retention</Badge><span className="text-xs text-slate-400">Organization ID: {detail.organization.id}</span></div>
+      {isAdmin && billing && (
+        <Card className="space-y-4 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-100">Enterprise authority & billing entitlements</h2>
+              <p className="text-sm text-slate-400">
+                Tenant-scoped paid seats, central multi-host authorization, and idempotent subscription lifecycle.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge tone={billing.entitlement.isDelinquent ? "rose" : "emerald"}>
+                Plan: {billing.entitlement.plan.toUpperCase()} ({billing.entitlement.status})
+              </Badge>
+              <Badge tone="cyan">
+                {billing.entitlement.seatsUsed} / {billing.entitlement.totalSeats} seats ({billing.entitlement.paidSeats} paid)
+              </Badge>
+              {billing.entitlement.isDelinquent && (
+                <Badge tone="rose">Billing past due / delinquent</Badge>
+              )}
+            </div>
+          </div>
+
+          {isOwner && (
+            <div className="grid gap-4 rounded-lg border border-slate-700 p-4 md:grid-cols-2">
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-slate-200">Adjust paid seats</h3>
+                <div className="flex items-end gap-3">
+                  <Input
+                    label="Paid seats count"
+                    type="number"
+                    min={0}
+                    max={1000}
+                    value={targetSeats}
+                    onChange={(e) => setTargetSeats(Number(e.target.value))}
+                  />
+                  <Button
+                    loading={busy}
+                    disabled={targetSeats === billing.entitlement.paidSeats}
+                    onClick={() => {
+                      void act(async () => {
+                        await updateOrganizationSeats(organizationId, {
+                          idempotencyKey: crypto.randomUUID(),
+                          targetPaidSeats: targetSeats,
+                        });
+                      }, "Paid seats updated");
+                    }}
+                  >
+                    Apply seats
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-slate-200">Subscription plan</h3>
+                <div className="flex items-end gap-3">
+                  <Select
+                    label="Plan tier"
+                    value={billingPlan}
+                    onChange={(e) => setBillingPlan(e.target.value as "standard" | "enterprise")}
+                  >
+                    <option value="standard">Standard (5 base seats)</option>
+                    <option value="enterprise">Enterprise (Unlimited scaling)</option>
+                  </Select>
+                  <Button
+                    variant="secondary"
+                    loading={busy}
+                    disabled={billingPlan === billing.subscription.plan}
+                    onClick={() => {
+                      void act(async () => {
+                        await subscribeOrganization(organizationId, {
+                          idempotencyKey: crypto.randomUUID(),
+                          plan: billingPlan,
+                        });
+                      }, `Plan updated to ${billingPlan}`);
+                    }}
+                  >
+                    Update plan
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {billing.transitions.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Recent billing transitions</h3>
+              <div className="max-h-40 overflow-y-auto rounded-md border border-slate-800 bg-slate-900/60 p-2 text-xs">
+                {billing.transitions.map((t) => (
+                  <div key={t.id} className="flex justify-between py-1 text-slate-300 border-b border-slate-800/50 last:border-0">
+                    <span className="font-mono text-amber-300">{t.action}</span>
+                    <span className="text-slate-400">{new Date(t.createdAt * 1000).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
       {isOwner && <Card className="grid gap-4 p-5 md:grid-cols-3"><Input label="Organization name" value={name} maxLength={80} onChange={(event) => setName(event.target.value)} /><Input label={`Seats (deployment allowance ${detail.seatEntitlement})`} type="number" value={seatLimit} min={detail.organization.seatsUsed} max={detail.seatEntitlement} onChange={(event) => setSeatLimit(Number(event.target.value))} /><Input label="Audit retention days" type="number" value={retention} min={30} max={3650} onChange={(event) => setRetention(Number(event.target.value))} /><Button loading={busy} onClick={() => { void act(() => updateOrganization(organizationId, { name, seatLimit, auditRetentionDays: retention }), "Organization settings saved"); }}>Save settings</Button></Card>}
       <Card className="space-y-4 p-5"><h2 className="font-semibold text-slate-100">Members</h2>{detail.members.map((member) => <div key={member.userId} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700 p-3"><span className="text-sm text-slate-200">{member.username || member.email}</span><div className="flex items-center gap-2"><Badge>{member.role}</Badge>{isAdmin && member.role !== "owner" && (isOwner || member.role !== "admin") && <><Select aria-label={`Role for ${member.email}`} value={member.role} disabled={busy} onChange={(event) => { void act(() => updateOrganizationMember(organizationId, member.userId, event.target.value as Exclude<OrganizationRole, "owner">), "Member role updated"); }}>{isOwner && <option value="admin">Administrator</option>}<option value="editor">Editor</option><option value="viewer">Viewer</option></Select><Button variant="ghost" disabled={busy} onClick={() => { void act(() => removeOrganizationMember(organizationId, member.userId), "Member removed"); }}>Remove</Button></>}</div></div>)}
         {isAdmin && <div className="grid gap-3 md:grid-cols-3"><Input label="Registered email or username" value={identifier} onChange={(event) => setIdentifier(event.target.value)} /><Select label="Role" value={memberRole} onChange={(event) => setMemberRole(event.target.value as Exclude<OrganizationRole, "owner">)}>{isOwner && <option value="admin">Administrator</option>}<option value="editor">Editor</option><option value="viewer">Viewer</option></Select><Button loading={busy} disabled={!identifier.trim()} onClick={() => { void act(async () => { await addOrganizationMember(organizationId, identifier.trim(), memberRole); setIdentifier(""); }, "Member added"); }}>Add member</Button></div>}

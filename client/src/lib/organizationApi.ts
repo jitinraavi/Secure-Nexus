@@ -4,7 +4,44 @@ export type OrganizationRole = "owner" | "admin" | "editor" | "viewer";
 export interface Organization { id: string; name: string; seatLimit: number; seatsUsed: number; auditRetentionDays: number; role: OrganizationRole }
 export interface OrganizationMember { userId: string; email: string; username: string | null; role: OrganizationRole }
 export interface OrganizationProject { id: string; name: string; projectType: string; revision: number }
-export interface OrganizationDetail { organization: Organization; members: OrganizationMember[]; projects: OrganizationProject[]; seatEntitlement: number }
+export interface OrganizationDetail { organization: Organization; members: OrganizationMember[]; projects: OrganizationProject[]; seatEntitlement: number; entitlement?: OrganizationEntitlement }
+export interface OrganizationEntitlement {
+  organizationId: string;
+  plan: string;
+  status: "active" | "past_due" | "canceled" | "unpaid" | "trialing";
+  baseSeats: number;
+  paidSeats: number;
+  totalSeats: number;
+  seatsUsed: number;
+  seatsAvailable: number;
+  canAddMember: boolean;
+  isDelinquent: boolean;
+  currentPeriodEnd: number;
+  cancelAtPeriodEnd: boolean;
+}
+export interface BillingTransition {
+  id: string;
+  idempotencyKey: string;
+  action: string;
+  previousState: Record<string, unknown>;
+  newState: Record<string, unknown>;
+  details: Record<string, unknown>;
+  createdAt: number;
+}
+export interface OrganizationBillingInfo {
+  entitlement: OrganizationEntitlement;
+  subscription: {
+    plan: string;
+    status: string;
+    baseSeats: number;
+    paidSeats: number;
+    totalSeats: number;
+    currentPeriodStart: number;
+    currentPeriodEnd: number;
+    cancelAtPeriodEnd: boolean;
+  };
+  transitions: BillingTransition[];
+}
 export interface OrganizationAuditPage { events: { id: number; actorId: string | null; action: string; detail: unknown; createdAt: number }[]; nextBeforeId: number | null }
 export interface SsoConfiguration { issuer: string; clientId: string; redirectUri: string; enabled: boolean; hasSecret: boolean }
 export async function organizationRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -34,3 +71,8 @@ export const getOrganizationAudit = (id: string, beforeId?: number) => organizat
 export const getOrganizationSso = (id: string) => organizationRequest<{ configuration: SsoConfiguration | null; nativeSaml: false; samlGateway: string; configuredAllowedHosts: boolean }>(`/api/sso/${encodeURIComponent(id)}/config`);
 export const configureOrganizationSso = (id: string, configuration: { issuer: string; clientId: string; clientSecret?: string; enabled: boolean }) => organizationRequest<{ ok: boolean; redirectUri: string }>(`/api/sso/${encodeURIComponent(id)}/config`, "PUT", configuration);
 export const unlinkOrganizationIdentity = (id: string) => organizationRequest<{ ok: boolean }>(`/api/sso/${encodeURIComponent(id)}/identity`, "DELETE");
+export const getOrganizationBilling = (id: string) => organizationRequest<OrganizationBillingInfo>(`${orgPath(id)}/billing`);
+export const updateOrganizationSeats = (id: string, params: { idempotencyKey: string; targetPaidSeats?: number; paidSeatsDelta?: number }) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/seats`, "POST", params);
+export const subscribeOrganization = (id: string, params: { idempotencyKey: string; plan: "standard" | "enterprise"; periodDays?: number }) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/subscribe`, "POST", params);
+export const cancelOrganizationSubscription = (id: string, idempotencyKey: string) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/cancel`, "POST", { idempotencyKey });
+export const reactivateOrganizationSubscription = (id: string, idempotencyKey: string) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/reactivate`, "POST", { idempotencyKey });

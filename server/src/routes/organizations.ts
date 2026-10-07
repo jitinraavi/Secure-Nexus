@@ -2,7 +2,15 @@ import { Router } from "express";
 import { z } from "zod";
 import { randomId } from "../crypto.js";
 import { db, now, withTransaction } from "../db.js";
-import { organizationAdmin, organizationAudit, organizationRole, type OrganizationRole } from "../organization.js";
+import {
+  applyBillingTransition,
+  getOrganizationEntitlement,
+  getOrganizationSubscription,
+  organizationAdmin,
+  organizationAudit,
+  organizationRole,
+  type OrganizationRole,
+} from "../organization.js";
 import { asyncHandler, requireSession, type AuthedRequest } from "../security.js";
 
 const router = Router();
@@ -48,11 +56,13 @@ router.get("/:organizationId", (req: AuthedRequest, res) => {
     .all(req.params.organizationId);
   const projects = db.prepare("SELECT id,name,project_type AS projectType,revision FROM projects WHERE organization_id=? ORDER BY updated_at DESC LIMIT 1000")
     .all(req.params.organizationId);
-  res.json({ organization: summary({ ...row, role }), members, projects, seatEntitlement });
+  const entitlement = getOrganizationEntitlement(req.params.organizationId);
+  res.json({ organization: summary({ ...row, role }), members, projects, seatEntitlement: entitlement.totalSeats, entitlement });
 });
 router.patch("/:organizationId", asyncHandler((req: AuthedRequest, res) => {
   if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") { res.status(403).json({ error: "Organization owner access required" }); return; }
-  const parsed = z.object({ name: z.string().trim().min(1).max(80), seatLimit: z.number().int().min(1).max(seatEntitlement), auditRetentionDays: z.number().int().min(30).max(3650) }).safeParse(req.body);
+  const entitlement = getOrganizationEntitlement(req.params.organizationId);
+  const parsed = z.object({ name: z.string().trim().min(1).max(80), seatLimit: z.number().int().min(1).max(entitlement.totalSeats), auditRetentionDays: z.number().int().min(30).max(3650) }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid organization settings or seat entitlement exceeded" }); return; }
   const changed = withTransaction(() => {
     if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") return false;
@@ -66,6 +76,113 @@ router.patch("/:organizationId", asyncHandler((req: AuthedRequest, res) => {
   if (!changed) { res.status(409).json({ error: "Remove members before reducing seats below current usage" }); return; }
   res.json({ ok: true });
 }));
+router.get("/:organizationId/billing", (req: AuthedRequest, res) => {
+  if (!admin(req)) { res.status(403).json({ error: "Organization administrator access required" }); return; }
+  const entitlement = getOrganizationEntitlement(req.params.organizationId);
+  const subscription = getOrganizationSubscription(req.params.organizationId);
+  const transitions = db.prepare(
+    "SELECT id, idempotency_key AS idempotencyKey, action, previous_state AS previousState, new_state AS newState, details, created_at AS createdAt FROM billing_transitions WHERE organization_id = ? ORDER BY created_at DESC LIMIT 50"
+  ).all(req.params.organizationId) as { id: string; idempotencyKey: string; action: string; previousState: string; newState: string; details: string; createdAt: number }[];
+  res.json({
+    entitlement,
+    subscription,
+    transitions: transitions.map((t) => ({
+      ...t,
+      previousState: JSON.parse(t.previousState || "{}"),
+      newState: JSON.parse(t.newState || "{}"),
+      details: JSON.parse(t.details || "{}"),
+    })),
+  });
+});
+router.post("/:organizationId/billing/seats", asyncHandler((req: AuthedRequest, res) => {
+  if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") {
+    res.status(403).json({ error: "Organization owner access required" });
+    return;
+  }
+  const parsed = z.object({
+    idempotencyKey: z.string().min(1).max(128),
+    targetPaidSeats: z.number().int().min(0).max(10000).optional(),
+    paidSeatsDelta: z.number().int().min(-10000).max(10000).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success || (parsed.data.targetPaidSeats === undefined && parsed.data.paidSeatsDelta === undefined)) {
+    res.status(400).json({ error: "Must specify idempotencyKey and either targetPaidSeats or paidSeatsDelta" });
+    return;
+  }
+  try {
+    const result = applyBillingTransition({
+      idempotencyKey: parsed.data.idempotencyKey,
+      organizationId: req.params.organizationId,
+      userId: req.user!.id,
+      action: "seat_change",
+      targetPaidSeats: parsed.data.targetPaidSeats,
+      paidSeatsDelta: parsed.data.paidSeatsDelta,
+      details: { requestedBy: req.user!.id },
+    });
+    res.json(result);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Failed to update seat count";
+    res.status(409).json({ error: message });
+  }
+}));
+router.post("/:organizationId/billing/subscribe", asyncHandler((req: AuthedRequest, res) => {
+  if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") {
+    res.status(403).json({ error: "Organization owner access required" });
+    return;
+  }
+  const parsed = z.object({
+    idempotencyKey: z.string().min(1).max(128),
+    plan: z.enum(["standard", "enterprise"]),
+    periodDays: z.number().int().min(1).max(365).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid plan or idempotencyKey" });
+    return;
+  }
+  const result = applyBillingTransition({
+    idempotencyKey: parsed.data.idempotencyKey,
+    organizationId: req.params.organizationId,
+    userId: req.user!.id,
+    action: "subscribe",
+    newPlan: parsed.data.plan,
+    periodDays: parsed.data.periodDays ?? 30,
+    details: { plan: parsed.data.plan },
+  });
+  res.json(result);
+}));
+router.post("/:organizationId/billing/cancel", asyncHandler((req: AuthedRequest, res) => {
+  if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") {
+    res.status(403).json({ error: "Organization owner access required" });
+    return;
+  }
+  const parsed = z.object({
+    idempotencyKey: z.string().min(1).max(128),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "idempotencyKey required" }); return; }
+  const result = applyBillingTransition({
+    idempotencyKey: parsed.data.idempotencyKey,
+    organizationId: req.params.organizationId,
+    userId: req.user!.id,
+    action: "cancel",
+  });
+  res.json(result);
+}));
+router.post("/:organizationId/billing/reactivate", asyncHandler((req: AuthedRequest, res) => {
+  if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") {
+    res.status(403).json({ error: "Organization owner access required" });
+    return;
+  }
+  const parsed = z.object({
+    idempotencyKey: z.string().min(1).max(128),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "idempotencyKey required" }); return; }
+  const result = applyBillingTransition({
+    idempotencyKey: parsed.data.idempotencyKey,
+    organizationId: req.params.organizationId,
+    userId: req.user!.id,
+    action: "reactivate",
+  });
+  res.json(result);
+}));
 router.post("/:organizationId/members", asyncHandler((req: AuthedRequest, res) => {
   if (!admin(req)) { res.status(403).json({ error: "Organization administrator access required" }); return; }
   const parsed = z.object({ identifier: z.string().trim().min(3).max(254), role: roleSchema }).safeParse(req.body);
@@ -74,12 +191,20 @@ router.post("/:organizationId/members", asyncHandler((req: AuthedRequest, res) =
   const target = db.prepare("SELECT id FROM users WHERE email=? COLLATE NOCASE OR username=? COLLATE NOCASE LIMIT 1")
     .get(parsed.data.identifier, parsed.data.identifier) as { id: string } | undefined;
   if (!target) { res.status(404).json({ error: "Registered user not found" }); return; }
+  const entitlement = getOrganizationEntitlement(req.params.organizationId);
+  if (!entitlement.canAddMember) {
+    res.status(409).json({
+      error: entitlement.isDelinquent
+        ? "Organization billing is past due or canceled"
+        : "Organization seat limit reached. Please purchase additional seats."
+    });
+    return;
+  }
   const result = withTransaction(() => {
     if (!admin(req) || (parsed.data.role === "admin" && organizationRole(req.params.organizationId, req.user!.id) !== "owner")) return "forbidden";
     if (organizationRole(req.params.organizationId, target.id)) return "exists";
-    const row = db.prepare("SELECT seat_limit,(SELECT COUNT(*) FROM organization_members WHERE organization_id=organizations.id) AS used FROM organizations WHERE id=?")
-      .get(req.params.organizationId) as { seat_limit: number; used: number };
-    if (row.used >= row.seat_limit) return "full";
+    const currentEntitlement = getOrganizationEntitlement(req.params.organizationId);
+    if (!currentEntitlement.canAddMember) return "full";
     db.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at) VALUES (?,?,?,?)")
       .run(req.params.organizationId, target.id, parsed.data.role, now());
     organizationAudit(req.params.organizationId, req.user!.id, "member.added", { userId: target.id, role: parsed.data.role });
