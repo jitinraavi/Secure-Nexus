@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type ErrorRequestHandler } from "express";
 import crypto from "node:crypto";
 import { logAudit } from "../audit.js";
 import { db, now, withTransaction } from "../db.js";
@@ -15,10 +15,11 @@ import {
   type Plan,
   type Provider,
 } from "../payments/providers.js";
-import { countryInfo, localPriceMinor } from "../payments/pricing.js";
+import { COUNTRIES, countryInfo, localPriceMinor } from "../payments/pricing.js";
 import { randomId } from "../crypto.js";
 import { z } from "zod";
-import { applyBillingTransition, organizationRole } from "../organization.js";
+import { BillingError } from "../organization.js";
+import { applyTenantReceipt, parseRazorpayPaidReceipt } from "../payments/tenantBilling.js";
 
 const router = Router();
 
@@ -98,14 +99,9 @@ router.post(
       res.status(400).json({ error: "Unknown plan" });
       return;
     }
-    let organizationId: string | null = null;
+    const organizationId: string | null = null;
     if (parsed.data.organizationId) {
-      const role = organizationRole(parsed.data.organizationId, req.user!.id);
-      if (role !== "owner" && role !== "admin") {
-        res.status(403).json({ error: "Organization administrator access required" });
-        return;
-      }
-      organizationId = parsed.data.organizationId;
+      res.status(409).json({ error: "Organization capacity requires the separately configured prepaid seat checkout.", code: "tenant_checkout_required" }); return;
     }
     const method = parsed.data.method as PaymentMethod;
     const user = db.prepare("SELECT email, country FROM users WHERE id = ?").get(req.user!.id) as {
@@ -114,12 +110,14 @@ router.post(
     };
     const country = user.country || "IN";
     if (!supportsMethod(method, country)) {
-      res.status(400).json({ error: "This payment method is not available in your country" });
+      res.status(isDemoMode() ? 400 : 503).json({ error: "This payment method is unavailable or its verified live provider is not configured.", code: "payment_unconfigured" });
       return;
     }
 
     const orderId = randomId();
-    const provider: Provider = providerFor(method, country);
+    let provider: Provider;
+    try { provider = providerFor(method, country); }
+    catch { res.status(503).json({ error: "Payment provider is not configured for this method and currency.", code: "payment_unconfigured" }); return; }
     const info = countryInfo(country);
     const amount = localPriceMinor(country, plan.id);
 
@@ -171,11 +169,25 @@ router.post(
   }),
 );
 
-function markPaid(userId: string, paymentId: string) {
+interface PersonalReceipt { provider: "razorpay" | "paypal"; receiptId: string; providerOrderId: string; merchantAccountId: string; amount: number; currency: string }
+function markPaid(userId: string, paymentId: string, receipt: PersonalReceipt | "demo", sessionId?: string) {
   const completed = withTransaction(() => {
-    const payment = db.prepare("SELECT plan, amount, currency, status, organization_id FROM payments WHERE id = ? AND user_id = ?")
-      .get(paymentId, userId) as { plan: string; amount: number; currency: string; status: string; organization_id: string | null } | undefined;
-    if (!payment || payment.status === "paid" || !["pro", "studio"].includes(payment.plan)) return null;
+    const payment = db.prepare("SELECT plan, amount, currency, status, organization_id, provider, provider_order_id FROM payments WHERE id = ? AND user_id = ?")
+      .get(paymentId, userId) as { plan: string; amount: number; currency: string; status: string; organization_id: string | null; provider: string; provider_order_id: string } | undefined;
+    if (!payment || payment.organization_id || !["pro", "studio"].includes(payment.plan)) throw new BillingError("Personal payment not found or tenant receipt unsupported", 409, "invalid_payment");
+    if (sessionId && !db.prepare("SELECT id FROM sessions WHERE id=? AND user_id=? AND status='active' AND expires_at>?").get(sessionId, userId, now())) throw new BillingError("Session changed during payment confirmation", 401, "session_changed");
+    if (receipt === "demo") {
+      if (!isDemoMode() || payment.provider !== "demo") throw new BillingError("Demo confirmation cannot confirm a provider or tenant payment", 403, "demo_only");
+    } else {
+      if (payment.provider !== receipt.provider || payment.provider_order_id !== receipt.providerOrderId || payment.amount !== receipt.amount || payment.currency !== receipt.currency) throw new BillingError("Receipt does not match the stored personal payment", 400, "invalid_receipt");
+      const prior = db.prepare("SELECT payment_id,receipt_id,provider,amount,currency,provider_order_id,merchant_account_id FROM payment_receipts WHERE (provider=? AND receipt_id=?) OR payment_id=?")
+        .get(receipt.provider, receipt.receiptId, paymentId) as { payment_id: string; receipt_id: string; provider: string; amount: number; currency: string; provider_order_id: string; merchant_account_id: string } | undefined;
+      if (prior && (prior.payment_id !== paymentId || prior.receipt_id !== receipt.receiptId || prior.provider !== receipt.provider || prior.amount !== receipt.amount || prior.currency !== receipt.currency || prior.provider_order_id !== receipt.providerOrderId || prior.merchant_account_id !== receipt.merchantAccountId)) throw new BillingError("Receipt already belongs to another payment", 409, "receipt_conflict");
+      if (!prior) db.prepare(`INSERT INTO payment_receipts (provider,receipt_id,payment_id,provider_order_id,merchant_account_id,amount,currency,disposition,received_at) VALUES (?,?,?,?,?,?,?,'applied',?)`)
+        .run(receipt.provider, receipt.receiptId, paymentId, receipt.providerOrderId, receipt.merchantAccountId, receipt.amount, receipt.currency, now());
+    }
+    if (payment.status === "paid") return null;
+    if (payment.status !== "pending") throw new BillingError("Payment is no longer pending", 409, "payment_closed");
     const plan = planForId(payment.plan);
     if (!plan || plan.id === "free") return null;
     const t = now();
@@ -183,21 +195,8 @@ function markPaid(userId: string, paymentId: string) {
       .run(t, paymentId, userId);
     if (!result.changes) return null;
 
-    if (payment.organization_id) {
-      applyBillingTransition({
-        idempotencyKey: paymentId,
-        organizationId: payment.organization_id,
-        userId,
-        paymentId,
-        action: "renew",
-        newPlan: payment.plan === "studio" ? "enterprise" : "standard",
-        periodDays: plan.periodDays,
-        details: { amount: payment.amount, currency: payment.currency, paymentId },
-      });
-    } else {
-      db.prepare("UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = ? WHERE id = ?")
-        .run(plan.id, t + plan.periodDays * 86400, t, userId);
-    }
+    db.prepare("UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = ? WHERE id = ?")
+      .run(plan.id, t + plan.periodDays * 86400, t, userId);
     return { plan: plan.id, amount: payment.amount / 100, currency: payment.currency, organizationId: payment.organization_id };
   });
   if (completed) logAudit(userId, "payment.completed", completed, undefined);
@@ -219,17 +218,18 @@ router.post(
     const payment = db
       .prepare("SELECT * FROM payments WHERE id = ? AND user_id = ?")
       .get(parsed.data.paymentId, req.user!.id) as
-      | { id: string; status: string; plan: string }
+      | { id: string; status: string; plan: string; provider: string; organization_id: string | null }
       | undefined;
     if (!payment) {
       res.status(404).json({ error: "Payment not found" });
       return;
     }
+    if (payment.organization_id || payment.provider !== "demo") { res.status(403).json({ error: "Demo confirmation is restricted to personal demo payments" }); return; }
     if (payment.status === "paid") {
       res.json({ ok: true });
       return;
     }
-    markPaid(req.user!.id, payment.id);
+    markPaid(req.user!.id, payment.id, "demo", req.session!.id);
     res.json({ ok: true });
   }),
 );
@@ -242,6 +242,9 @@ router.post(
       res.status(403).json({ error: "Not available in demo mode" });
       return;
     }
+    if (process.env.PAYPAL_MODE !== "live" || !process.env.PAYPAL_CLIENT_ID || !process.env.PAYPAL_CLIENT_SECRET || !process.env.PAYPAL_MERCHANT_ID) {
+      res.status(503).json({ error: "Live PayPal capture requires complete credentials and configured merchant identity.", code: "payment_unconfigured" }); return;
+    }
     const parsed = z
       .object({ paymentId: z.string().min(1), providerOrderId: z.string().min(1) })
       .safeParse(req.body);
@@ -252,9 +255,9 @@ router.post(
     const payment = db
       .prepare("SELECT * FROM payments WHERE id = ? AND user_id = ? AND provider = 'paypal'")
       .get(parsed.data.paymentId, req.user!.id) as
-      | { id: string; status: string; provider_order_id: string }
+      | { id: string; status: string; provider_order_id: string; amount: number; currency: string; organization_id: string | null }
       | undefined;
-    if (!payment || payment.provider_order_id !== parsed.data.providerOrderId) {
+    if (!payment || payment.organization_id || payment.provider_order_id !== parsed.data.providerOrderId) {
       res.status(404).json({ error: "Payment not found" });
       return;
     }
@@ -268,6 +271,7 @@ router.post(
     const clientSecret = process.env.PAYPAL_CLIENT_SECRET!;
     const authRes = await fetch(`${base}/v1/oauth2/token`, {
       method: "POST",
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -275,24 +279,50 @@ router.post(
       body: "grant_type=client_credentials",
     });
     const auth = (await authRes.json()) as { access_token?: string };
-    if (!auth.access_token) {
+    if (!authRes.ok || !auth.access_token) {
       res.status(502).json({ error: "PayPal authentication failed" });
       return;
     }
-    const cap = await fetch(`${base}/v2/checkout/orders/${payment.provider_order_id}/capture`, {
+    const cap = await fetch(`${base}/v2/checkout/orders/${encodeURIComponent(payment.provider_order_id)}/capture`, {
       method: "POST",
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Bearer ${auth.access_token}`,
         "Content-Type": "application/json",
+        "PayPal-Request-Id": crypto.createHash("sha256").update(`paypal-capture:${payment.id}`).digest("hex").slice(0, 32),
+        Prefer: "return=representation",
       },
     });
-    const captured = (await cap.json()) as { status?: string };
-    if (!cap.ok || captured.status !== "COMPLETED") {
-      logAudit(req.user!.id, "payment.capture_failed", { provider: "paypal", status: captured.status }, req);
-      res.status(502).json({ error: "PayPal capture failed" });
-      return;
+    await cap.body?.cancel();
+    // Capture representations may omit the original unit metadata. The full
+    // authenticated order supplies references/payee plus captured payments;
+    // it also reconciles a prior successful capture whose response was lost.
+    const fetched = await fetch(`${base}/v2/checkout/orders/${encodeURIComponent(payment.provider_order_id)}`, {
+      headers: { Authorization: `Bearer ${auth.access_token}` }, signal: AbortSignal.timeout(20000),
+    });
+    if (!fetched.ok) { res.status(502).json({ error: "PayPal capture could not be verified" }); return; }
+    const captured: unknown = await fetched.json();
+    const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+    const result = object(captured), units = result?.purchase_units;
+    const unit = Array.isArray(units) && units.length === 1 ? object(units[0]) : null;
+    const captures = object(unit?.payments)?.captures;
+    const capture = Array.isArray(captures) && captures.length === 1 ? object(captures[0]) : null;
+    const amount = object(capture?.amount), unitAmount = object(unit?.amount), payee = object(unit?.payee);
+    const digits = COUNTRIES.find((country) => country.currency === payment.currency)?.digits;
+    const value = amount?.value;
+    let amountMinor: number | null = null;
+    if (typeof value === "string" && digits !== undefined && /^\d+(?:\.\d{1,3})?$/.test(value)) {
+      const [whole, fraction = ""] = value.split(".");
+      if (fraction.length <= digits) amountMinor = Number(whole) * 10 ** digits + Number(fraction.padEnd(digits, "0") || "0");
     }
-    markPaid(req.user!.id, payment.id);
+    if (!result || !unit || !capture || !amount || !unitAmount || !payee || result.id !== payment.provider_order_id || result.status !== "COMPLETED" || unit.reference_id !== payment.id || unit.custom_id !== req.user!.id ||
+      payee.merchant_id !== process.env.PAYPAL_MERCHANT_ID || capture.status !== "COMPLETED" || capture.final_capture !== true ||
+      typeof capture.id !== "string" || !/^[A-Za-z0-9]{1,128}$/.test(capture.id) || amount?.currency_code !== payment.currency ||
+      unitAmount?.currency_code !== payment.currency || unitAmount.value !== value || !Number.isSafeInteger(amountMinor) || amountMinor !== payment.amount) {
+      res.status(502).json({ error: "PayPal receipt does not match the stored order, payer reference, merchant, capture, amount or currency.", code: "invalid_receipt" }); return;
+    }
+    markPaid(req.user!.id, payment.id, { provider: "paypal", receiptId: capture.id, providerOrderId: payment.provider_order_id,
+      merchantAccountId: process.env.PAYPAL_MERCHANT_ID, amount: payment.amount, currency: payment.currency }, req.session!.id);
     res.json({ ok: true });
   }),
 );
@@ -301,10 +331,6 @@ router.post(
 router.post(
   "/webhook",
   asyncHandler(async (req, res) => {
-    if (isDemoMode()) {
-      res.status(200).json({ ok: true });
-      return;
-    }
     const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
     const signature = req.get("x-razorpay-signature");
     if (!secret || !signature) {
@@ -322,23 +348,32 @@ router.post(
       res.status(401).json({ error: "Invalid signature" });
       return;
     }
-    const event = req.body as {
-      event?: string;
-      payload?: { payment_link?: { entity?: { notes?: { order_id?: string }; status?: string } } };
-    };
-    if (event.event === "payment_link.paid" && event.payload?.payment_link?.entity?.status === "paid") {
-      const orderId = event.payload?.payment_link?.entity?.notes?.order_id;
-      if (orderId) {
-        const payment = db.prepare("SELECT user_id, status FROM payments WHERE id = ? AND provider = 'razorpay'").get(orderId) as
-          | { user_id: string; status: string }
-          | undefined;
-        if (payment && payment.status !== "paid") {
-          markPaid(payment.user_id, orderId);
+    try {
+      const receipt = parseRazorpayPaidReceipt(req.body);
+      if (!receipt) { res.json({ ok: true }); return; }
+      const tenant = applyTenantReceipt(receipt);
+      if (tenant.handled) { res.json({ ok: true, requiresReview: tenant.requiresReview ?? false }); return; }
+      const payment = db.prepare("SELECT user_id,organization_id FROM payments WHERE id=? AND provider='razorpay'").get(receipt.referenceId) as { user_id: string; organization_id: string | null } | undefined;
+      if (payment?.organization_id) { res.status(409).json({ error: "Legacy tenant payment requires operator reconciliation; it cannot grant seats.", code: "legacy_tenant_payment" }); return; }
+      if (payment) {
+        if (!process.env.RAZORPAY_ACCOUNT_ID || receipt.merchantAccountId !== process.env.RAZORPAY_ACCOUNT_ID || !process.env.RAZORPAY_KEY_ID?.startsWith("rzp_live_")) {
+          res.status(503).json({ error: "Razorpay merchant verification is not configured", code: "payment_unconfigured" }); return;
         }
+        markPaid(payment.user_id, receipt.referenceId, { provider: "razorpay", receiptId: receipt.receiptId, providerOrderId: receipt.linkId,
+          merchantAccountId: receipt.merchantAccountId, amount: receipt.amount, currency: receipt.currency });
       }
+    } catch (error) {
+      if (error instanceof BillingError) { res.status(error.status).json({ error: error.message, code: error.code }); return; }
+      throw error;
     }
     res.json({ ok: true });
   }),
 );
 
+const billingErrorHandler: ErrorRequestHandler = (error: unknown, _req, res, next) => {
+  if (error instanceof BillingError) { res.status(error.status).json({ error: error.message, code: error.code }); return; }
+  next(error);
+};
+router.use(billingErrorHandler);
 export default router;
+

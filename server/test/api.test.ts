@@ -12,6 +12,7 @@ process.env.MASTER_KEY = randomBytes(32).toString("base64");
 process.env.GROUNDWORK_DEV_OTP = "1";
 process.env.MAIL_PROVIDER = "console";
 process.env.PAYMENTS_MODE = "demo";
+process.env.ORGANIZATION_MAX_SEATS = "5";
 delete process.env.DB_PATH;
 delete process.env.PREVIOUS_MASTER_KEY;
 
@@ -450,7 +451,7 @@ test("roadmap API integration slice", async (t) => {
     assert.ok(missingPhoto.body.error === "No photo" || missingPhoto.body.error === "Project not found");
   });
 
-  await t.test("manages enterprise authority, tenant entitlements, and idempotent billing", async () => {
+  await t.test("preserves tenant base seats and rejects unverified commercial grants", async () => {
     // 1. Create organization
     const orgRes = await client.json<{ id: string }>(
       "/api/organizations",
@@ -486,66 +487,60 @@ test("roadmap API integration slice", async (t) => {
     assert.equal(initialBilling.body.entitlement.canAddMember, true);
     assert.equal(initialBilling.body.entitlement.isDelinquent, false);
 
-    // 3. Purchase paid seats with idempotency key
-    const seatRes = await client.json<{
-      duplicate: boolean;
-      entitlement: { paidSeats: number; totalSeats: number; seatsAvailable: number };
-    }>(
+    // A count alone cannot grant capacity or silently accept replacement terms.
+    const seatRes = await client.json<{ error: string }>(
       `/api/organizations/${orgId}/billing/seats`,
       jsonInit("POST", { idempotencyKey: "test_idem_seats_001", targetPaidSeats: 10 }, csrfToken),
     );
-    assert.equal(seatRes.response.status, 200);
-    assert.equal(seatRes.body.duplicate, false);
-    assert.equal(seatRes.body.entitlement.paidSeats, 10);
-    assert.equal(seatRes.body.entitlement.totalSeats, 15);
-    assert.equal(seatRes.body.entitlement.seatsAvailable, 14);
+    assert.equal(seatRes.response.status, 400);
 
-    // 4. Verify idempotent retry does not double apply
-    const duplicateSeatRes = await client.json<{
-      duplicate: boolean;
-      entitlement: { paidSeats: number; totalSeats: number };
-    }>(
-      `/api/organizations/${orgId}/billing/seats`,
-      jsonInit("POST", { idempotencyKey: "test_idem_seats_001", targetPaidSeats: 10 }, csrfToken),
-    );
-    assert.equal(duplicateSeatRes.response.status, 200);
-    assert.equal(duplicateSeatRes.body.duplicate, true);
-    assert.equal(duplicateSeatRes.body.entitlement.paidSeats, 10);
-    assert.equal(duplicateSeatRes.body.entitlement.totalSeats, 15);
+    // Demo mode supplies no real tenant product, including repeated requests.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const unavailable = await client.json<{ code: string }>(
+        `/api/organizations/${orgId}/billing/seats`,
+        jsonInit("POST", { idempotencyKey: "test_idem_seats_001", targetPaidSeats: 10, acceptTermReplacement: true }, csrfToken),
+      );
+      assert.equal(unavailable.response.status, 503);
+      assert.equal(unavailable.body.code, "billing_unconfigured");
+    }
 
-    // 5. Update plan to enterprise
-    const subRes = await client.json<{
-      duplicate: boolean;
-      entitlement: { plan: string };
-    }>(
+    const subRes = await client.json<{ code: string }>(
       `/api/organizations/${orgId}/billing/subscribe`,
       jsonInit("POST", { idempotencyKey: "test_idem_sub_001", plan: "enterprise" }, csrfToken),
     );
-    assert.equal(subRes.response.status, 200);
-    assert.equal(subRes.body.duplicate, false);
-    assert.equal(subRes.body.entitlement.plan, "enterprise");
+    assert.equal(subRes.response.status, 409);
+    assert.equal(subRes.body.code, "payment_required");
 
-    // 6. Create payment associated with organization and confirm it
-    const orgPayment = await client.json<{ paymentId: string; organizationId: string }>(
+    // Personal demo payments cannot be repurposed to activate tenant seats.
+    const orgPayment = await client.json<{ code: string }>(
       "/api/payments/create",
       jsonInit("POST", { planId: "studio", method: "card", organizationId: orgId }, csrfToken),
     );
-    assert.equal(orgPayment.response.status, 201);
-    assert.equal(orgPayment.body.organizationId, orgId);
+    assert.equal(orgPayment.response.status, 409);
+    assert.equal(orgPayment.body.code, "tenant_checkout_required");
 
-    const confirmOrgPayment = await client.json<{ ok: boolean }>(
-      "/api/payments/confirm-demo",
-      jsonInit("POST", { paymentId: orgPayment.body.paymentId }, csrfToken),
-    );
-    assert.equal(confirmOrgPayment.response.status, 200);
-    assert.equal(confirmOrgPayment.body.ok, true);
+    for (const action of ["cancel", "reactivate"]) {
+      const closed = await client.json<{ code: string }>(
+        `/api/organizations/${orgId}/billing/${action}`,
+        jsonInit("POST", { idempotencyKey: `unverified_${action}` }, csrfToken),
+      );
+      assert.equal(closed.response.status, 409);
+      assert.equal(closed.body.code, "verified_term_required");
+    }
 
-    // 7. Verify audit trail and transitions reflect payment renewal
+    // All rejected requests leave capacity and receipt/transition history intact.
     const updatedBilling = await client.json<{
-      transitions: Array<{ action: string; idempotencyKey: string }>;
+      entitlement: { paidSeats: number; effectivePaidSeats: number; totalSeats: number; hasVerifiedPayment: boolean };
+      orders: unknown[]; transitions: unknown[];
     }>(`/api/organizations/${orgId}/billing`);
     assert.equal(updatedBilling.response.status, 200);
-    assert.ok(updatedBilling.body.transitions.some((t) => t.idempotencyKey === orgPayment.body.paymentId && t.action === "renew"));
+    assert.equal(updatedBilling.body.entitlement.paidSeats, 0);
+    assert.equal(updatedBilling.body.entitlement.effectivePaidSeats, 0);
+    assert.equal(updatedBilling.body.entitlement.totalSeats, 5);
+    assert.equal(updatedBilling.body.entitlement.hasVerifiedPayment, false);
+    assert.equal(updatedBilling.body.orders.length, 0);
+    assert.equal(updatedBilling.body.transitions.length, 0);
   });
 });
+
 

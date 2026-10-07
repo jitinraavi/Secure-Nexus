@@ -442,6 +442,52 @@ CREATE TABLE IF NOT EXISTS project_render_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_render_jobs_project ON project_render_jobs(project_id, created_at DESC, id);
 CREATE INDEX IF NOT EXISTS idx_render_jobs_status ON project_render_jobs(status, created_at);
+
+-- Immutable priced intents precede any provider request. A lost response is
+-- retained for reconciliation instead of creating a second charge blindly.
+CREATE TABLE IF NOT EXISTS tenant_billing_orders (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  owner_id TEXT NOT NULL REFERENCES users(id),
+  session_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  plan TEXT NOT NULL CHECK(plan = 'standard'),
+  target_paid_seats INTEGER NOT NULL CHECK(target_paid_seats BETWEEN 1 AND 9999),
+  base_seats INTEGER NOT NULL CHECK(base_seats BETWEEN 1 AND 5),
+  unit_price INTEGER NOT NULL CHECK(unit_price > 0),
+  amount INTEGER NOT NULL CHECK(amount > 0 AND amount <= 100000000),
+  currency TEXT NOT NULL CHECK(currency = 'INR'),
+  term_days INTEGER NOT NULL CHECK(term_days BETWEEN 1 AND 365),
+  base_subscription_revision INTEGER NOT NULL,
+  merchant_account_id TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK(provider = 'razorpay'),
+  provider_link_id TEXT,
+  checkout_url TEXT,
+  status TEXT NOT NULL CHECK(status IN ('creating','pending','creation_unknown','failed','verified','requires_review','expired')),
+  review_reason TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  UNIQUE(organization_id, idempotency_key)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_billing_open ON tenant_billing_orders(organization_id)
+  WHERE status IN ('creating','pending','creation_unknown');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_billing_link ON tenant_billing_orders(provider_link_id) WHERE provider_link_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tenant_billing_history ON tenant_billing_orders(organization_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS payment_receipts (
+  provider TEXT NOT NULL,
+  receipt_id TEXT NOT NULL,
+  payment_id TEXT NOT NULL UNIQUE,
+  provider_order_id TEXT NOT NULL,
+  merchant_account_id TEXT NOT NULL,
+  amount INTEGER NOT NULL CHECK(amount > 0),
+  currency TEXT NOT NULL,
+  disposition TEXT NOT NULL CHECK(disposition IN ('applied','requires_review')),
+  reason TEXT,
+  received_at INTEGER NOT NULL,
+  PRIMARY KEY(provider, receipt_id)
+);
 `);
 
 /* Lightweight migrations for pre-existing databases */
@@ -514,6 +560,9 @@ raw.exec(`
   INSERT OR IGNORE INTO organization_subscriptions (organization_id, plan, status, base_seats, paid_seats, total_seats, current_period_start, current_period_end, cancel_at_period_end, provider, created_at, updated_at)
   SELECT id, 'standard', 'active', 5, 0, 5, created_at, created_at + 31536000, 0, 'demo', created_at, updated_at FROM organizations;
 `);
+const subscriptionCols = (raw.prepare("PRAGMA table_info(organization_subscriptions)").all() as { name: string }[]).map((column) => column.name);
+if (!subscriptionCols.includes("entitlement_revision")) raw.exec("ALTER TABLE organization_subscriptions ADD COLUMN entitlement_revision INTEGER NOT NULL DEFAULT 0;");
+if (!subscriptionCols.includes("verified_order_id")) raw.exec("ALTER TABLE organization_subscriptions ADD COLUMN verified_order_id TEXT REFERENCES tenant_billing_orders(id);");
 
 export type Db = typeof raw;
 export const db: Db = raw;
@@ -541,4 +590,5 @@ export function withTransaction<T>(work: () => T): T {
 export function now(): number {
   return Math.floor(Date.now() / 1000);
 }
+
 

@@ -1,5 +1,5 @@
 import { db } from "./db.js";
-import { organizationRole } from "./organization.js";
+import { organizationCanWrite, organizationRole } from "./organization.js";
 
 export type ProjectRole = "owner" | "editor" | "viewer";
 
@@ -29,6 +29,6 @@ export function getProjectAccess(projectId: string, userId: string): ProjectAcce
 }
 
 export const canReadProject = (access: ProjectAccess | null): access is ProjectAccess => Boolean(access);
-export const canWriteProject = (access: ProjectAccess | null): access is ProjectAccess => Boolean(access && (access.role === "owner" || access.role === "editor"));
+export const canWriteProject = (access: ProjectAccess | null): access is ProjectAccess => Boolean(access && (access.role === "owner" || access.role === "editor") && (!access.organizationId || organizationCanWrite(access.organizationId)));
 export const canManageProject = (access: ProjectAccess | null): access is ProjectAccess => Boolean(access && access.role === "owner");
 

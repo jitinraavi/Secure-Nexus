@@ -95,8 +95,7 @@ const razorpayProvider: Provider = {
         description: `Groundwork ${p.plan.name} plan`,
         customer: { email: p.email, contact: "" },
         notes: { order_id: p.orderId, user_id: p.userId },
-        callback_url: "", // frontend polls the order status
-        callback_method: "get",
+        reference_id: p.orderId,
       }),
     });
     const body = (await resp.json()) as { id?: string; short_url?: string; error?: { description?: string } };
@@ -155,6 +154,7 @@ const paypalProvider: Provider = {
           {
             reference_id: p.orderId,
             custom_id: p.userId,
+            ...(process.env.PAYPAL_MERCHANT_ID ? { payee: { merchant_id: process.env.PAYPAL_MERCHANT_ID } } : {}),
             amount: { currency_code: info.currency, value },
 description: `Groundwork ${p.plan.name} plan`,
           },
@@ -210,8 +210,8 @@ export function availableMethods(country: string | undefined | null): MethodOpti
     return out;
   }
   const out: MethodOption[] = [];
-  const raz = RAZORPAY_BASE64;
-  const pay = process.env.PAYPAL_CLIENT_ID;
+  const raz = RAZORPAY_BASE64 && process.env.RAZORPAY_KEY_ID?.startsWith("rzp_live_") && process.env.RAZORPAY_WEBHOOK_SECRET && process.env.RAZORPAY_ACCOUNT_ID;
+  const pay = process.env.PAYPAL_MODE === "live" && process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET && process.env.PAYPAL_MERCHANT_ID;
   if (inr && raz) {
     out.push({ method: "upi", label: "UPI", provider: "razorpay" });
     out.push({ method: "card", label: "Credit / Debit Card", provider: "razorpay" });
@@ -220,18 +220,6 @@ export function availableMethods(country: string | undefined | null): MethodOpti
   }
   if (pay) out.push({ method: "paypal", label: "PayPal", provider: "paypal" });
   if (!inr && pay) out.push({ method: "card", label: "Credit / Debit Card", provider: "paypal" });
-  if (out.length === 0) {
-    // nothing configured → demo provider keeps the app usable
-    return availableMethodsDemo(inr);
-  }
-  return out;
-}
-
-function availableMethodsDemo(inr: boolean): MethodOption[] {
-  const out: MethodOption[] = [];
-  if (inr) out.push({ method: "upi", label: "UPI", provider: "demo" });
-  out.push({ method: "card", label: "Credit / Debit Card", provider: "demo" });
-  out.push({ method: "paypal", label: "PayPal", provider: "demo" });
   return out;
 }
 
@@ -246,10 +234,32 @@ export function providerFor(method: PaymentMethod, country: string | undefined |
   }
   // card
   if (inr && RAZORPAY_BASE64) return razorpayProvider;
-  if (process.env.PAYPAL_CLIENT_ID) return paypalProvider;
+  if (process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET && process.env.PAYPAL_MERCHANT_ID) return paypalProvider;
   throw new Error("Card payments are not configured for this country");
 }
 
 export function supportsMethod(method: PaymentMethod, country: string | undefined | null): boolean {
   return availableMethods(country).some((m) => m.method === method);
 }
+
+/** Separate priced tenant product; it never routes through the demo provider or personal plan prices. */
+export async function createTenantSeatLink(p: { orderId: string; userId: string; organizationId: string; email: string; amount: number; expireBy: number }): Promise<CreatedPayment> {
+  const key = process.env.RAZORPAY_KEY_ID, secret = process.env.RAZORPAY_KEY_SECRET;
+  if (process.env.PAYMENTS_MODE !== "live" || !key?.startsWith("rzp_live_") || !secret) throw new Error("Live tenant checkout is not configured");
+  const response = await fetch(`${RAZORPAY_BASE}/payment_links`, {
+    method: "POST", signal: AbortSignal.timeout(20000),
+    headers: { Authorization: `Basic ${Buffer.from(`${key}:${secret}`).toString("base64")}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ amount: p.amount, currency: "INR", accept_partial: false, reference_id: p.orderId, expire_by: p.expireBy,
+      description: "Groundwork prepaid organization seat term", customer: { email: p.email },
+      notes: { order_id: p.orderId, user_id: p.userId, organization_id: p.organizationId } }),
+  });
+  const result = await response.json() as { id?: unknown; short_url?: unknown; amount?: unknown; currency?: unknown; reference_id?: unknown; accept_partial?: unknown };
+  if (!response.ok || typeof result.id !== "string" || !/^plink_[A-Za-z0-9]+$/.test(result.id) || result.amount !== p.amount ||
+    result.currency !== "INR" || result.reference_id !== p.orderId || result.accept_partial !== false || typeof result.short_url !== "string") {
+    throw new Error("Provider checkout response does not match the priced intent");
+  }
+  const checkout = new URL(result.short_url);
+  if (checkout.protocol !== "https:" || checkout.hostname !== "rzp.io" || checkout.username || checkout.password || checkout.port) throw new Error("Invalid provider checkout URL");
+  return { provider: "razorpay", providerOrderId: result.id, checkoutUrl: checkout.href, demo: false, method: "card" };
+}
+
