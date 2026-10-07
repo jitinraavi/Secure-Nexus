@@ -393,6 +393,10 @@ export interface UndergroundParking {
   bayRows: number;
   liftLobby: boolean;
   stairLobby: boolean;
+  /** Custom user-defined breadth (width) of underground parking in meters */
+  parkingWidthM?: number;
+  /** Custom user-defined length of underground parking in meters */
+  parkingLengthM?: number;
 }
 
 export interface Parking {

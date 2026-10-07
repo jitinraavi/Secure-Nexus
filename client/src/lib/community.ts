@@ -185,6 +185,8 @@ export function defaultUnderground(): UndergroundParking {
     bayRows: 4,
     liftLobby: true,
     stairLobby: true,
+    parkingWidthM: 36,
+    parkingLengthM: 28,
   };
 }
 

@@ -1,8 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { Sky } from "three/examples/jsm/objects/Sky.js";
 import { createPresentationController, type PresentationApi } from "../lib/presentation";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { createAtmosphericSky, applyAtmosphere, type AtmospherePreset } from "../lib/atmosphere";
+import { AtmosphereControls } from "../components/AtmosphereControls";
+import { ViewportGizmo3D } from "../components/ViewportGizmo3D";
 import type { CadTool } from "../components/CadToolPalette";
 import type { AmenityData, BuildingLevel, CommunityDesign, DraftElement, DraftElementKind, ExteriorPanel, InteriorRoom, StructuralGridLine, TowerData, TowerOpening, VisualizationSettings } from "../types";
 import { addTechnicalEdges, disposeObject3D, material, prism, prismAt } from "../lib/modelcore";
@@ -494,10 +498,25 @@ function buildSite(design: CommunityDesign, selectedId?: string | null, visualiz
   const activeLevelIndex = Math.max(0, levels.findIndex((level) => level.id === design.activeLevelId));
   const activeLevel = levels[activeLevelIndex] ?? levels[0];
 
-  /* Natural ground slab */
-  const ground = prism(W, 0.6, D, material("#7a6a4f", { rough: 1 }));
+  /* Natural ground slab & open-world surrounding terrain */
+  const ground = prism(W, 0.6, D, material("#6b7280", { rough: 0.95 }));
   ground.position.y = -0.3;
   g.add(ground);
+
+  // Expansive open-world lawn perimeter
+  const lawn = prism(W + 18, 0.12, D + 18, material("#2e6b35", { rough: 0.85 }));
+  lawn.position.y = -0.06;
+  lawn.receiveShadow = true;
+  lawn.userData.noSelect = true;
+  g.add(lawn);
+
+  // Surrounding access roadway perimeter with realistic dark asphalt
+  const road = prism(W + 38, 0.08, D + 38, material("#1e293b", { rough: 0.7 }));
+  road.position.y = -0.1;
+  road.receiveShadow = true;
+  road.userData.noSelect = true;
+  g.add(road);
+
   g.add(buildTerrainVisualization(W, D, design.terrain));
 
   /* Map overlay slot (filled asynchronously with OSM / Google map) */
@@ -813,6 +832,12 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
   const groupRef = useRef<THREE.Group | null>(null);
   const rebuildRef = useRef<(() => void) | null>(null);
 
+  const [atmosphere, setAtmosphere] = useState<AtmospherePreset>("noon");
+  const skyRef = useRef<Sky | null>(null);
+  const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
+  const fillLightRef = useRef<THREE.DirectionalLight | null>(null);
+
   const designRef = useRef(design);
   const selectedRef = useRef<string | null>(selectedId ?? null);
   const handlersRef = useRef({ onSelect, onChange, onContextTarget, onPresentationReady });
@@ -866,13 +891,28 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     controls.enabled = false;
     controlsRef.current = controls;
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 0.85));
-    const sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
+    const { sky } = createAtmosphericSky();
+    scene.add(sky);
+    skyRef.current = sky;
+
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x334155, 0.9);
+    scene.add(hemi);
+    hemiLightRef.current = hemi;
+
+    const sun = new THREE.DirectionalLight(0xfff4e0, 2.6);
     sun.position.set(150, 260, 100);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(4096, 4096);
     sun.shadow.camera.near = 10;
     scene.add(sun);
+    sunLightRef.current = sun;
+
+    const fill = new THREE.DirectionalLight(0xa855f7, 0.5);
+    fill.visible = false;
+    scene.add(fill);
+    fillLightRef.current = fill;
+
+    applyAtmosphere(atmosphere, scene, sky, sun, hemi, renderer, fill);
 
     const grid = new THREE.GridHelper(600, 600, 0x1e293b, 0x1e293b);
     grid.position.y = -0.3;
@@ -1205,8 +1245,59 @@ export function CommunityScene({ design, selectedId, onSelect, onChange, onConte
     if (root) updateCommunitySelection(root, selectedId);
   }, [selectedId]);
 
+  useEffect(() => {
+    if (sceneRef.current && sunLightRef.current && hemiLightRef.current && rendererRef.current) {
+      applyAtmosphere(
+        atmosphere,
+        sceneRef.current,
+        skyRef.current,
+        sunLightRef.current,
+        hemiLightRef.current,
+        rendererRef.current,
+        fillLightRef.current ?? undefined,
+      );
+    }
+  }, [atmosphere]);
+
+  const handleSetView = (view: "top" | "front" | "right" | "iso" | "reset") => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    const target = new THREE.Vector3(0, 0, 0);
+    controls.target.copy(target);
+    if (view === "top") {
+      camera.position.set(0, 320, 0);
+    } else if (view === "front") {
+      camera.position.set(0, 45, 240);
+    } else if (view === "right") {
+      camera.position.set(240, 45, 0);
+    } else if (view === "iso") {
+      camera.position.set(180, 150, 220);
+    } else if (view === "reset") {
+      camera.position.set(180, 150, 220);
+    }
+    camera.lookAt(target);
+    controls.update();
+  };
+
   return (
-    <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: "none" }} data-scene="community" />
+    <div className="relative h-full w-full overflow-hidden select-none" data-scene="community">
+      <div ref={containerRef} className="h-full w-full" style={{ touchAction: "none" }} />
+
+      {/* Real-time Atmospheric Lighting HUD (Open-World Gaming Graphics) */}
+      <AtmosphereControls
+        currentPreset={atmosphere}
+        onPresetChange={setAtmosphere}
+        className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20"
+      />
+
+      {/* 3D Orientation Gizmo & ViewCube */}
+      <ViewportGizmo3D
+        camera={cameraRef.current}
+        onSetView={handleSetView}
+        className="absolute top-4 right-4 z-20"
+      />
+    </div>
   );
 }
 

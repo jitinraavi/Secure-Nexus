@@ -18,6 +18,7 @@ import { useToast } from "../components/Toast";
 import { formatMoney, timeAgo } from "../lib/format";
 import { cn } from "../lib/cn";
 import { ProjectWorkspaceLinks } from "../components/ProjectWorkspaceLinks";
+import { TiltCard3D } from "../components/TiltCard3D";
 
 const TYPE_GROUPS: { label: string; types: ProjectType[] }[] = [
   { label: "Interiors", types: ["house"] },
@@ -27,19 +28,21 @@ const TYPE_GROUPS: { label: string; types: ProjectType[] }[] = [
 
 function StatCard({ label, value, icon, accent }: { label: string; value: string | number; icon: string; accent: string }) {
   return (
-    <Card className="p-5">
-      <div className="flex items-center gap-4">
-        <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${accent}`}>
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-            <path d={icon} />
-          </svg>
+    <TiltCard3D maxTilt={6} scale={1.02}>
+      <Card className="p-5 border border-slate-800/80 bg-slate-900/60 backdrop-blur-xl shadow-lg">
+        <div className="flex items-center gap-4">
+          <div className={`flex h-11 w-11 items-center justify-center rounded-xl shadow-inner ${accent}`}>
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+              <path d={icon} />
+            </svg>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-slate-50 tracking-tight">{value}</p>
+            <p className="text-xs font-medium text-slate-400">{label}</p>
+          </div>
         </div>
-        <div>
-          <p className="text-2xl font-bold text-slate-50">{value}</p>
-          <p className="text-xs font-medium text-slate-400">{label}</p>
-        </div>
-      </div>
-    </Card>
+      </Card>
+    </TiltCard3D>
   );
 }
 
@@ -52,6 +55,7 @@ export function Dashboard() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<ProjectType>("residential");
+  const [showTemplates, setShowTemplates] = useState(false);
   const [creating, setCreating] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Project | null>(null);
@@ -251,100 +255,151 @@ export function Dashboard() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {visibleProjects.length === 0 && <Card className="p-6 text-sm text-slate-400">No projects match these library filters.</Card>}
             {visibleProjects.map((p) => (
-              <Card key={p.id} className="group overflow-hidden">
-                <Link to={`/editor/${p.id}`} className="block">
-                  {p.hasPhoto ? (
-                    <div className="relative h-36 w-full overflow-hidden bg-slate-950">
-                      <img src={`/api/projects/${p.id}/photo`} alt={p.name} className="h-full w-full object-cover opacity-80 transition group-hover:opacity-100" />
-                      <span className="absolute bottom-2 right-2 rounded-md bg-slate-950/80 px-1.5 py-0.5 text-[10px] text-emerald-300 backdrop-blur">Photo</span>
-                    </div>
-                  ) : (
-                    <div className="flex h-36 w-full items-center justify-center bg-gradient-to-br from-slate-900 to-slate-950 text-slate-600">
-                      <svg className="h-10 w-10" viewBox="0 0 24 24" fill="currentColor"><path d="M4 13h6V4H4v9zm0 7h6v-5H4v5zm10 0h6v-9h-6v9zm0-16v5h6V4h-6z" /></svg>
-                    </div>
-                  )}
-                </Link>
-                <div className="p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <Link to={`/editor/${p.id}`}>
-                        <h3 className="truncate font-semibold text-slate-100 hover:text-emerald-300">{p.name}</h3>
-                      </Link>
-                      <div className="mt-0.5 flex items-center gap-1.5">
-                        <Badge tone="cyan">{PROJECT_TYPE_LABELS[p.projectType] ?? p.projectType}</Badge>
-                        <p className="text-xs text-slate-500">
-                          {p.widthMm / 1000} × {p.depthMm / 1000} m · updated {timeAgo(p.updatedAt)}
-                        </p>
+              <TiltCard3D key={p.id} maxTilt={5} scale={1.015}>
+                <Card className="group h-full overflow-hidden border border-slate-800/80 bg-slate-900/60 backdrop-blur-xl transition-all duration-300 hover:shadow-2xl hover:shadow-emerald-500/10 hover:border-slate-700">
+                  <Link to={`/editor/${p.id}`} className="block">
+                    {p.hasPhoto ? (
+                      <div className="relative h-36 w-full overflow-hidden bg-slate-950">
+                        <img src={`/api/projects/${p.id}/photo`} alt={p.name} className="h-full w-full object-cover opacity-80 transition group-hover:opacity-100" />
+                        <span className="absolute bottom-2 right-2 rounded-md bg-slate-950/80 px-1.5 py-0.5 text-[10px] text-emerald-300 backdrop-blur">Photo</span>
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        <Badge tone="slate">{p.role ?? "owner"}</Badge>
-                        {p.folder && <Badge tone="slate">{p.folder}</Badge>}
-                        {p.archived && <Badge tone="amber">Archived</Badge>}
-                        {p.isTemplate && <Badge tone="emerald">Template</Badge>}
+                    ) : (
+                      <div className="flex h-36 w-full items-center justify-center bg-gradient-to-br from-slate-900 to-slate-950 text-slate-600">
+                        <svg className="h-10 w-10" viewBox="0 0 24 24" fill="currentColor"><path d="M4 13h6V4H4v9zm0 7h6v-5H4v5zm10 0h6v-9h-6v9zm0-16v5h6V4h-6z" /></svg>
                       </div>
+                    )}
+                  </Link>
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <Link to={`/editor/${p.id}`}>
+                          <h3 className="truncate font-semibold text-slate-100 hover:text-emerald-300">{p.name}</h3>
+                        </Link>
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          <Badge tone="cyan">{PROJECT_TYPE_LABELS[p.projectType] ?? p.projectType}</Badge>
+                          <p className="text-xs text-slate-500">
+                            {p.widthMm / 1000} × {p.depthMm / 1000} m · updated {timeAgo(p.updatedAt)}
+                          </p>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <Badge tone="slate">{p.role ?? "owner"}</Badge>
+                          {p.folder && <Badge tone="slate">{p.folder}</Badge>}
+                          {p.archived && <Badge tone="amber">Archived</Badge>}
+                          {p.isTemplate && <Badge tone="emerald">Template</Badge>}
+                        </div>
+                      </div>
+                      {p.role === "owner" && <button
+                        onClick={() => setConfirmDelete(p)}
+                        className="rounded-lg p-1.5 text-slate-400 opacity-60 transition hover:bg-rose-500/10 hover:text-rose-400 sm:opacity-0 sm:group-hover:opacity-100"
+                        aria-label={`Delete ${p.name}`}
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M3 6h18M8 6V4h8v2m1 0v14a2 2 0 01-2 2H9a2 2 0 01-2-2V6" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>}
                     </div>
-                    {p.role === "owner" && <button
-                      onClick={() => setConfirmDelete(p)}
-                      className="rounded-lg p-1.5 text-slate-400 opacity-60 transition hover:bg-rose-500/10 hover:text-rose-400 sm:opacity-0 sm:group-hover:opacity-100"
-                      aria-label={`Delete ${p.name}`}
-                    >
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M3 6h18M8 6V4h8v2m1 0v14a2 2 0 01-2 2H9a2 2 0 01-2-2V6" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </button>}
+                    <div className="mt-3"><ProjectWorkspaceLinks projectId={p.id} /></div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => { setCopyProject(p); setCopyName(`${p.name} copy`.slice(0, 80)); }}>{p.isTemplate ? "Use template" : "Duplicate"}</Button>
+                      {p.role === "owner" && <>
+                        <Button size="sm" variant="ghost" onClick={() => { setLibraryProject(p); setFolder(p.folder ?? ""); setIsTemplate(Boolean(p.isTemplate)); }}>Organize</Button>
+                        <Button size="sm" variant="ghost" disabled={libraryBusy} onClick={() => void archive(p)}>{p.archived ? "Restore" : "Archive"}</Button>
+                      </>}
+                    </div>
                   </div>
-                  <div className="mt-3"><ProjectWorkspaceLinks projectId={p.id} /></div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => { setCopyProject(p); setCopyName(`${p.name} copy`.slice(0, 80)); }}>{p.isTemplate ? "Use template" : "Duplicate"}</Button>
-                    {p.role === "owner" && <>
-                      <Button size="sm" variant="ghost" onClick={() => { setLibraryProject(p); setFolder(p.folder ?? ""); setIsTemplate(Boolean(p.isTemplate)); }}>Organize</Button>
-                      <Button size="sm" variant="ghost" disabled={libraryBusy} onClick={() => void archive(p)}>{p.archived ? "Restore" : "Archive"}</Button>
-                    </>}
-                  </div>
-                </div>
-              </Card>
+                </Card>
+              </TiltCard3D>
             ))}
           </div>
         )}
       </div>
 
-      <Modal open={showNew} onClose={() => setShowNew(false)} title="New project">
+      <Modal open={showNew} onClose={() => setShowNew(false)} title="New 3D Project">
         <form
           onSubmit={(e) => {
             e.preventDefault();
             void create();
           }}
-          className="space-y-4"
+          className="space-y-5"
         >
-          <Input label="Project name" placeholder="Apartment living room" value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus required />
-          <div className="space-y-3">
-            <span className="text-sm font-medium text-slate-300">Project type</span>
-            {TYPE_GROUPS.map((g) => (
-              <div key={g.label}>
-                <p className="mb-1.5 text-xs font-semibold tracking-wide text-slate-500 uppercase">{g.label}</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {g.types.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setNewType(t)}
-                      className={cn(
-                        "rounded-xl border px-3 py-2 text-left text-sm font-medium transition",
-                        newType === t
-                          ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
-                          : "border-slate-700 bg-slate-900/70 text-slate-400 hover:border-slate-600",
-                      )}
-                    >
-                      {PROJECT_TYPE_LABELS[t]}
-                    </button>
-                  ))}
-                </div>
+          <Input
+            label="Project name"
+            placeholder="e.g. My Freeform Canvas, Sky Tower, or Greenfield Plot"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            autoFocus
+            required
+          />
+
+          {/* Default Freeform Option */}
+          <div className="relative overflow-hidden rounded-2xl border border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 via-slate-900/80 to-slate-950 p-4 shadow-lg shadow-emerald-500/5">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
               </div>
-            ))}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-slate-100">Freeform 3D Canvas (Build Whatever You Want)</h4>
+                  <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold tracking-wide text-emerald-300">DEFAULT</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-400 leading-relaxed">
+                  Start with a clean, open 3D workspace. Freely design any structures, custom land parcels, parking dimensions, landscaping, and architecture without forced template constraints.
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="flex justify-end gap-2">
+
+          {/* Optional Archetype / Template Picker */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+            <button
+              type="button"
+              onClick={() => setShowTemplates((v) => !v)}
+              className="flex w-full items-center justify-between text-left text-xs font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-200 transition"
+            >
+              <span className="flex items-center gap-2">
+                <svg className={cn("h-4 w-4 transition-transform text-slate-500", showTemplates ? "rotate-90 text-emerald-400" : "")} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span>Choose a building template / archetype (Optional)</span>
+              </span>
+              <span className="text-[11px] font-normal normal-case text-slate-500">
+                {showTemplates ? "Hide templates" : `Current: ${PROJECT_TYPE_LABELS[newType] ?? "Freeform"}`}
+              </span>
+            </button>
+
+            {showTemplates && (
+              <div className="mt-4 space-y-3 border-t border-slate-800/80 pt-3">
+                {TYPE_GROUPS.map((g) => (
+                  <div key={g.label}>
+                    <p className="mb-1.5 text-[11px] font-semibold tracking-wide text-slate-500 uppercase">{g.label}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {g.types.map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setNewType(t)}
+                          className={cn(
+                            "rounded-xl border px-3 py-2 text-left text-xs font-medium transition",
+                            newType === t
+                              ? "border-emerald-500 bg-emerald-500/15 text-emerald-300 shadow-sm shadow-emerald-500/20"
+                              : "border-slate-800 bg-slate-900/70 text-slate-400 hover:border-slate-700 hover:text-slate-200",
+                          )}
+                        >
+                          {PROJECT_TYPE_LABELS[t]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="ghost" onClick={() => setShowNew(false)}>Cancel</Button>
-            <Button type="submit" loading={creating}>Create & open</Button>
+            <Button type="submit" loading={creating}>Create Canvas & Open</Button>
           </div>
         </form>
       </Modal>

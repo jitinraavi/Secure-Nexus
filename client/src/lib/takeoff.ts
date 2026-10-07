@@ -47,9 +47,18 @@ const round = (n: number, d = 2) => {
   return Math.round((Number.isFinite(n) ? n : 0) * f) / f;
 };
 
-/** Excavated footprint: union of inflated tower footprints, else site-centred. */
+/** Excavated footprint: user-defined length & breadth, or union of inflated tower footprints, else site-centred. */
 export function pitFootprint(design: CommunityDesign): { x: number; z: number; w: number; d: number } {
   const { w: W, d: D } = landMeters(design.land);
+  const ug = design.parking.underground;
+  if (ug?.parkingWidthM && ug?.parkingLengthM && ug.parkingWidthM > 0 && ug.parkingLengthM > 0) {
+    return {
+      x: 0,
+      z: 0,
+      w: Math.min(ug.parkingWidthM, W),
+      d: Math.min(ug.parkingLengthM, D),
+    };
+  }
   const tps = design.towers.map((t) => towerMeters(t));
   if (tps.length === 0) {
     return { x: 0, z: 0, w: Math.min(W * 0.62, 70), d: Math.min(D * 0.62, 46) };

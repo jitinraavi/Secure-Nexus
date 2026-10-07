@@ -11,6 +11,7 @@ import { buildFurniture, catalogEntry, furnitureMount } from "../lib/catalog";
 import { buildMepScene } from "../lib/mep";
 import { phaseVisible, visualizationSettings } from "../lib/visualization";
 import { createPresentationController, type PresentationApi } from "../lib/presentation";
+import { ViewportGizmo3D } from "../components/ViewportGizmo3D";
 
 const MM = 0.001;
 const WALL_THICKNESS = 120;
@@ -148,6 +149,7 @@ export function Canvas3D({
   const mepGroupRef = useRef<THREE.Group | null>(null);
   const photoGroupRef = useRef<THREE.Group | null>(null);
   const sectionRef = useRef(false);
+  const apiRef = useRef<EditorApi | null>(null);
   const transitionRef = useRef<{ position: THREE.Vector3; target: THREE.Vector3 } | null>(null);
   const itemGroups = useRef(new Map<string, { group: THREE.Group; sig: string }>());
   const pendingItemPatches = useRef(new Map<string, Partial<FurnitureItem>>());
@@ -461,7 +463,7 @@ export function Canvas3D({
     };
     renderer.setAnimationLoop(loop);
 
-    onApiReady({
+    const api: EditorApi = {
       ...presentation.api,
       resetView() {
         stopCameraActions();
@@ -549,10 +551,13 @@ export function Canvas3D({
           if (photoParent && photoGroupRef.current) photoParent.add(photoGroupRef.current);
         }
       },
-    });
+    };
+    apiRef.current = api;
+    onApiReady(api);
 
     return () => {
       presentation.dispose();
+      apiRef.current = null;
       onApiReady(null);
       cancelAnimationFrame(pendingItemRaf.current);
       renderer.setAnimationLoop(null);
@@ -762,7 +767,23 @@ export function Canvas3D({
     if (!pendingItemRaf.current) pendingItemRaf.current = requestAnimationFrame(flushDesignItemPatches);
   };
 
-  return <div ref={containerRef} className="h-full w-full cursor-grab active:cursor-grabbing" />;
+  const handleSetView = (view: "top" | "front" | "right" | "iso" | "reset") => {
+    if (view === "top") apiRef.current?.topView();
+    else if (view === "front") apiRef.current?.frontView();
+    else if (view === "right") apiRef.current?.detailView();
+    else apiRef.current?.resetView();
+  };
+
+  return (
+    <div className="relative h-full w-full overflow-hidden select-none">
+      <div ref={containerRef} className="h-full w-full cursor-grab active:cursor-grabbing" />
+      <ViewportGizmo3D
+        camera={cameraRef.current}
+        onSetView={handleSetView}
+        className="absolute top-4 right-4 z-20"
+      />
+    </div>
+  );
 }
 
 function groupSync(group: THREE.Group, item: FurnitureItem, sig: string, room: Design["room"]) {

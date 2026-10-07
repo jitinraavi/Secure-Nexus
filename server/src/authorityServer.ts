@@ -52,7 +52,7 @@ app.use(
         fontSrc: ["'self'", "data:"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
-        frameAncestors: ["'none'"],
+        frameAncestors: IS_PROD ? ["'none'"] : null,
         formAction: ["'self'"],
         upgradeInsecureRequests: IS_PROD ? [] : null,
       },

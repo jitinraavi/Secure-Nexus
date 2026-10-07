@@ -1,44 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { SiteLocation } from "../types";
 import { Button, Input } from "../components/ui";
-import { bearingDeg, boundaryMetrics, googleEarthUrl, polylineLengthM, type BoundaryMetrics } from "../lib/geo";
+import {
+  boundaryMetrics,
+  googleEarthUrl,
+  type BoundaryMetrics,
+  type LatLng,
+} from "../lib/geo";
 
-/**
- * Site locator.
- *
- * Uses the Google Maps JavaScript API (satellite/hybrid) to find the site,
- * drop a draggable pin, and either trace a boundary (area mode — airports,
- * ports, dams) or a route centreline (route mode — highways). When no
- * VITE_GOOGLE_MAPS_KEY is configured it degrades to manual coordinate entry
- * plus a Google Earth deep link, so the wizard keeps working offline.
- */
-
-const KEY = (import.meta.env.VITE_GOOGLE_MAPS_KEY ?? "").trim();
-const DEFAULT_CENTER = { lat: 12.9716, lng: 77.5946 };
-
-type MapsStatus = "loading" | "ready" | "error" | "nokey";
 export type LocatorMode = "area" | "route";
-
-let loaderPromise: Promise<typeof google> | null = null;
-
-function loadGoogleMaps(key: string): Promise<typeof google> {
-  if (loaderPromise) return loaderPromise;
-  loaderPromise = new Promise((resolve, reject) => {
-    const w = window as unknown as { google?: typeof google };
-    if (w.google?.maps) {
-      resolve(w.google);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&v=weekly`;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => (w.google ? resolve(w.google) : reject(new Error("Google Maps loaded without namespace")));
-    script.onerror = () => reject(new Error("Failed to load Google Maps"));
-    document.head.appendChild(script);
-  });
-  return loaderPromise;
-}
 
 interface SiteLocatorProps {
   location?: SiteLocation;
@@ -48,376 +18,258 @@ interface SiteLocatorProps {
 }
 
 export function SiteLocator({ location, mode = "area", onChange, onApplyBoundary }: SiteLocatorProps) {
-  const mapEl = useRef<HTMLDivElement>(null);
-  const searchEl = useRef<HTMLInputElement>(null);
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const markerRef = useRef<google.maps.Marker | null>(null);
-  const polygonRef = useRef<google.maps.Polygon | null>(null);
-  const routeRef = useRef<google.maps.Polyline | null>(null);
-  const routePoints = useRef<{ lat: number; lng: number }[]>([]);
-  const routeDraw = useRef(false);
-  const metricsRef = useRef<BoundaryMetrics | null>(null);
-  const cbRef = useRef({ onChange, onApplyBoundary });
-  const locRef = useRef(location);
-  cbRef.current = { onChange, onApplyBoundary };
-  locRef.current = location;
+  const [lat, setLat] = useState(location?.lat ? String(location.lat) : "12.9716");
+  const [lng, setLng] = useState(location?.lng ? String(location.lng) : "77.5946");
+  const [landShape, setLandShape] = useState<"rectangle" | "polygon" | "corridor">("rectangle");
+  const [measuredWidth, setMeasuredWidth] = useState(location?.boundaryWidthM ? String(location.boundaryWidthM) : "80");
+  const [measuredLength, setMeasuredLength] = useState(location?.boundaryDepthM ? String(location.boundaryDepthM) : "60");
+  const [unit, setUnit] = useState<"m" | "ft">("m");
+  const [polygonCoordsText, setPolygonCoordsText] = useState("");
+  const [rotationDeg, setRotationDeg] = useState(location?.boundaryRotationDeg ? String(location.boundaryRotationDeg) : "0");
+  const [showEarthGuide, setShowEarthGuide] = useState(false);
+  const [createdFeedback, setCreatedFeedback] = useState<string | null>(null);
 
-  const [status, setStatus] = useState<MapsStatus>(KEY ? "loading" : "nokey");
-  const [tracing, setTracing] = useState(false);
-  const [routing, setRouting] = useState(false);
-  const [manualLat, setManualLat] = useState(location ? String(location.lat) : "");
-  const [manualLng, setManualLng] = useState(location ? String(location.lng) : "");
-  const [metrics, setMetrics] = useState<BoundaryMetrics | null>(null);
-  const [routeLength, setRouteLength] = useState<number | null>(location?.routeLengthM ?? null);
+  const currentLat = Number(lat) || 12.9716;
+  const currentLng = Number(lng) || 77.5946;
+  const earthUrl = googleEarthUrl(currentLat, currentLng);
 
-  useEffect(() => {
-    if (!KEY) return;
-    let cancelled = false;
-    loadGoogleMaps(KEY)
-      .then((g) => {
-        if (cancelled || !mapEl.current) return;
-        const center = locRef.current ? { lat: locRef.current.lat, lng: locRef.current.lng } : DEFAULT_CENTER;
-        const map = new g.maps.Map(mapEl.current, {
-          center,
-          zoom: locRef.current?.zoom ?? 17,
-          mapTypeId: "hybrid",
-          tilt: 0,
-          streetViewControl: false,
-          fullscreenControl: false,
-          mapTypeControl: true,
-          mapTypeControlOptions: {
-            style: g.maps.MapTypeControlStyle.HORIZONTAL_BAR,
-            position: g.maps.ControlPosition.TOP_RIGHT,
-          },
-        });
-        mapRef.current = map;
+  const handleCreateCanvas = () => {
+    const toMetersFactor = unit === "ft" ? 0.3048 : 1;
+    let wM = (Number(measuredWidth) || 80) * toMetersFactor;
+    let lM = (Number(measuredLength) || 60) * toMetersFactor;
+    const rot = Number(rotationDeg) || 0;
+    const center: LatLng = { lat: currentLat, lng: currentLng };
 
-        const marker = new g.maps.Marker({ position: center, map, draggable: true, title: "Drag to set the site centre" });
-        markerRef.current = marker;
+    let boundaryPts: LatLng[] = [];
 
-        const sync = (lat: number, lng: number, extra?: Partial<SiteLocation>) => {
-          cbRef.current.onChange({ lat, lng, zoom: map.getZoom(), ...extra });
-        };
-
-        const ensurePolygon = () => {
-          if (polygonRef.current) return polygonRef.current;
-          const polygon = new g.maps.Polygon({
-            map,
-            paths: [],
-            fillColor: "#34d399",
-            fillOpacity: 0.25,
-            strokeColor: "#34d399",
-            strokeWeight: 2,
-            editable: true,
-            draggable: true,
-            clickable: false,
-          });
-          const recompute = () => {
-            const path = polygon.getPath().getArray().map((p) => ({ lat: p.lat(), lng: p.lng() }));
-            const m = boundaryMetrics(path);
-            if (!m) return;
-            metricsRef.current = m;
-            setMetrics(m);
-            cbRef.current.onChange({
-              ...(locRef.current ?? { lat: m.center.lat, lng: m.center.lng }),
-              lat: m.center.lat,
-              lng: m.center.lng,
-              zoom: map.getZoom(),
-              boundary: path,
-              boundaryWidthM: m.widthM,
-              boundaryDepthM: m.depthM,
-              boundaryRotationDeg: m.rotationDeg,
-            });
-          };
-          const path = polygon.getPath();
-          path.addListener("set_at", recompute);
-          path.addListener("insert_at", recompute);
-          path.addListener("remove_at", recompute);
-          polygonRef.current = polygon;
-          return polygon;
-        };
-
-        const refreshRoute = () => {
-          const pts = routePoints.current;
-          const len = polylineLengthM(pts);
-          setRouteLength(pts.length >= 2 ? len : null);
-          const last = pts[pts.length - 1];
-          const bearing = pts.length >= 2 ? bearingDeg(pts[0], pts[1]) : undefined;
-          cbRef.current.onChange({
-            ...(locRef.current ?? { lat: last.lat, lng: last.lng }),
-            lat: last.lat,
-            lng: last.lng,
-            zoom: map.getZoom(),
-            route: pts,
-            routeLengthM: pts.length >= 2 ? Math.round(len * 10) / 10 : undefined,
-            routeBearingDeg: bearing !== undefined ? Math.round(bearing * 10) / 10 : undefined,
-          });
-        };
-
-        marker.addListener("dragend", () => {
-          const pos = marker.getPosition();
-          if (pos) sync(pos.lat(), pos.lng(), { address: locRef.current?.address, route: locRef.current?.route });
-        });
-
-        map.addListener("click", (e: google.maps.MapMouseEvent) => {
-          if (!e.latLng) return;
-          if (mode === "route" && routeDraw.current) {
-            routePoints.current = [...routePoints.current, { lat: e.latLng.lat(), lng: e.latLng.lng() }];
-            if (!routeRef.current) {
-              routeRef.current = new g.maps.Polyline({
-                map,
-                path: routePoints.current,
-                strokeColor: "#34d399",
-                strokeWeight: 4,
-                clickable: false,
-              });
-            } else {
-              routeRef.current.setPath(routePoints.current);
-            }
-            refreshRoute();
-            return;
-          }
-          if (mode === "area" && tracing) {
-            ensurePolygon().getPath().push(e.latLng);
-            return;
-          }
-          marker.setPosition(e.latLng);
-          sync(e.latLng.lat(), e.latLng.lng(), { address: locRef.current?.address });
-        });
-
-        map.addListener("dblclick", () => {
-          if (tracing) {
-            setTracing(false);
-            map.setOptions({ draggableCursor: undefined });
-          }
-          if (routeDraw.current) {
-            routeDraw.current = false;
-            setRouting(false);
-            map.setOptions({ draggableCursor: undefined });
-          }
-        });
-
-        if (searchEl.current) {
-          const ac = new g.maps.places.Autocomplete(searchEl.current, { fields: ["geometry", "formatted_address", "name"] });
-          ac.bindTo("bounds", map);
-          ac.addListener("place_changed", () => {
-            const place = ac.getPlace();
-            const loc = place.geometry?.location;
-            if (!loc) return;
-            map.setCenter(loc);
-            map.setZoom(mode === "route" ? 15 : 18);
-            marker.setPosition(loc);
-            sync(loc.lat(), loc.lng(), { address: place.formatted_address ?? place.name });
-          });
+    if (landShape === "polygon" && polygonCoordsText.trim()) {
+      // Parse custom corner coordinates if provided
+      const lines = polygonCoordsText.trim().split("\n");
+      const parsed: LatLng[] = [];
+      for (const line of lines) {
+        const parts = line.split(/[,\s]+/).map(Number);
+        if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
+          parsed.push({ lat: parts[0], lng: parts[1] });
         }
+      }
+      if (parsed.length >= 3) {
+        boundaryPts = parsed;
+        const m = boundaryMetrics(parsed);
+        if (m) {
+          wM = m.widthM;
+          lM = m.depthM;
+        }
+      }
+    }
 
-        setStatus("ready");
-      })
-      .catch(() => {
-        if (!cancelled) setStatus("error");
-      });
+    // Default synthetic rectangular corners based on measured dimensions
+    if (boundaryPts.length < 3) {
+      const halfW = wM / 2 / 111320;
+      const halfL = lM / 2 / 110540;
+      boundaryPts = [
+        { lat: currentLat + halfL, lng: currentLng - halfW },
+        { lat: currentLat + halfL, lng: currentLng + halfW },
+        { lat: currentLat - halfL, lng: currentLng + halfW },
+        { lat: currentLat - halfL, lng: currentLng - halfW },
+      ];
+    }
 
-    return () => {
-      cancelled = true;
+    const calculatedArea = Math.round(wM * lM);
+    const metrics: BoundaryMetrics = {
+      center,
+      widthM: Math.round(wM * 10) / 10,
+      depthM: Math.round(lM * 10) / 10,
+      rotationDeg: rot,
+      areaM2: calculatedArea,
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  useEffect(() => {
-    if (!location || !mapRef.current || !markerRef.current) return;
-    const pos = { lat: location.lat, lng: location.lng };
-    const current = markerRef.current.getPosition();
-    if (!current || Math.abs(current.lat() - pos.lat) > 1e-9 || Math.abs(current.lng() - pos.lng) > 1e-9) {
-      markerRef.current.setPosition(pos);
-      mapRef.current.panTo(pos);
-    }
-  }, [location]);
+    // Replicate exact dimensions into the site location
+    const updatedLocation: SiteLocation = {
+      lat: currentLat,
+      lng: currentLng,
+      zoom: 18,
+      boundary: boundaryPts,
+      boundaryWidthM: metrics.widthM,
+      boundaryDepthM: metrics.depthM,
+      boundaryRotationDeg: rot,
+      ...(mode === "route" ? { routeLengthM: Math.max(wM, lM), routeBearingDeg: rot } : {}),
+    };
 
-  const startTracing = () => {
-    polygonRef.current?.setMap(null);
-    polygonRef.current = null;
-    metricsRef.current = null;
-    setMetrics(null);
-    setTracing(true);
-    mapRef.current?.setOptions({ draggableCursor: "crosshair" });
-  };
+    onChange(updatedLocation);
+    onApplyBoundary?.(metrics);
 
-  const stopTracing = () => {
-    setTracing(false);
-    mapRef.current?.setOptions({ draggableCursor: undefined });
-  };
-
-  const startRoute = () => {
-    routePoints.current = [];
-    routeRef.current?.setMap(null);
-    routeRef.current = null;
-    setRouteLength(null);
-    routeDraw.current = true;
-    setRouting(true);
-    setTracing(false);
-    mapRef.current?.setOptions({ draggableCursor: "crosshair" });
-  };
-
-  const stopRoute = () => {
-    routeDraw.current = false;
-    setRouting(false);
-    mapRef.current?.setOptions({ draggableCursor: undefined });
-  };
-
-  const undoRoute = () => {
-    if (routePoints.current.length === 0) return;
-    routePoints.current = routePoints.current.slice(0, -1);
-    routeRef.current?.setPath(routePoints.current);
-    const pts = routePoints.current;
-    setRouteLength(pts.length >= 2 ? polylineLengthM(pts) : null);
-    if (locRef.current) onChange({ ...locRef.current, route: pts, routeLengthM: pts.length >= 2 ? Math.round(polylineLengthM(pts) * 10) / 10 : undefined });
-  };
-
-  const clearBoundary = () => {
-    polygonRef.current?.setMap(null);
-    polygonRef.current = null;
-    metricsRef.current = null;
-    setMetrics(null);
-    stopTracing();
-    if (location) {
-      const { boundary, boundaryWidthM, boundaryDepthM, boundaryRotationDeg, ...rest } = location;
-      void boundary;
-      void boundaryWidthM;
-      void boundaryDepthM;
-      void boundaryRotationDeg;
-      onChange(rest);
-    }
-  };
-
-  const clearRoute = () => {
-    routeRef.current?.setMap(null);
-    routeRef.current = null;
-    routePoints.current = [];
-    setRouteLength(null);
-    stopRoute();
-    if (location) {
-      const { route, routeLengthM, routeBearingDeg, ...rest } = location;
-      void route;
-      void routeLengthM;
-      void routeBearingDeg;
-      onChange(rest);
-    }
-  };
-
-  const applyManual = () => {
-    const lat = Number(manualLat);
-    const lng = Number(manualLng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
-    onChange({ ...(location ?? {}), lat, lng });
-  };
-
-  const locateMe = () => {
-    navigator.geolocation?.getCurrentPosition((pos) => {
-      const next = { ...(location ?? {}), lat: pos.coords.latitude, lng: pos.coords.longitude };
-      setManualLat(String(next.lat));
-      setManualLng(String(next.lng));
-      onChange(next);
-    });
+    setCreatedFeedback(`Canvas created: ${metrics.widthM}m × ${metrics.depthM}m (${metrics.areaM2.toLocaleString()} m²) replicated in 3D scene.`);
+    setTimeout(() => setCreatedFeedback(null), 6000);
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Site location</p>
-        <div className="flex-1" />
-        {location && (
-          <a
-            href={googleEarthUrl(location.lat, location.lng)}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:border-emerald-500 hover:text-emerald-300"
-          >
-            Open in Google Earth
-          </a>
+    <div className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-slate-100">
+      {/* Header with Google Earth View Link */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+              🌍
+            </span>
+            Google Earth Land & Canvas
+          </h3>
+          <p className="text-xs text-slate-400">
+            Inspect real land in Google Earth, measure its boundary, and replicate exact dimensions as your project canvas.
+          </p>
+        </div>
+
+        <a
+          href={earthUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20 shadow-sm"
+        >
+          <span>View in Google Earth</span>
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+        </a>
+      </div>
+
+      {/* Google Earth Measurement Guide Toggle */}
+      <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+        <button
+          type="button"
+          onClick={() => setShowEarthGuide(!showEarthGuide)}
+          className="flex w-full items-center justify-between text-left text-xs font-medium text-slate-300 hover:text-emerald-300"
+        >
+          <span>📏 How to measure land in Google Earth</span>
+          <span className="text-emerald-400 text-xs">{showEarthGuide ? "Hide guidance ▲" : "Show steps ▼"}</span>
+        </button>
+        {showEarthGuide && (
+          <ol className="mt-2.5 list-decimal space-y-1 pl-4 text-xs leading-relaxed text-slate-400">
+            <li>Click <strong>"View in Google Earth"</strong> above to navigate to your site location.</li>
+            <li>In Google Earth, click the <strong>Ruler / Measure</strong> icon (on the left panel).</li>
+            <li>Click points around your property or plot boundary to measure perimeter, length & breadth, or area.</li>
+            <li>Enter those measured numbers below and click <strong>"Create Canvas"</strong> to replicate the exact shape in 3D.</li>
+          </ol>
         )}
       </div>
 
-      {status === "loading" && <p className="text-xs text-slate-500">Loading map…</p>}
+      {/* Coordinates */}
+      <div className="grid grid-cols-2 gap-3">
+        <Input
+          label="Site Latitude"
+          value={lat}
+          onChange={(e) => setLat(e.target.value)}
+          placeholder="12.9716"
+        />
+        <Input
+          label="Site Longitude"
+          value={lng}
+          onChange={(e) => setLng(e.target.value)}
+          placeholder="77.5946"
+        />
+      </div>
 
-      {status === "ready" && (
-        <>
-          <input
-            ref={searchEl}
-            placeholder="Search address, landmark or locality…"
-            className="w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-emerald-500"
-          />
-          <div ref={mapEl} className="h-72 w-full overflow-hidden rounded-xl border border-slate-800" data-map="site" />
-
-          {mode === "route" ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="secondary" onClick={locateMe}>Use my location</Button>
-              {routing ? (
-                <Button size="sm" onClick={stopRoute}>Finish route</Button>
-              ) : (
-                <Button size="sm" variant="secondary" onClick={startRoute}>Draw route</Button>
-              )}
-              <Button size="sm" variant="secondary" onClick={undoRoute} disabled={!routeLength && routeLength !== 0}>Undo point</Button>
-              <Button size="sm" variant="secondary" onClick={clearRoute} disabled={routeLength == null}>Clear route</Button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="secondary" onClick={locateMe}>Use my location</Button>
-              {tracing ? (
-                <Button size="sm" onClick={stopTracing}>Finish boundary</Button>
-              ) : (
-                <Button size="sm" variant="secondary" onClick={startTracing}>Draw boundary</Button>
-              )}
-              <Button size="sm" variant="secondary" onClick={clearBoundary} disabled={!metrics && !location?.boundary}>Clear boundary</Button>
-              <Button size="sm" onClick={() => metrics && cbRef.current.onApplyBoundary?.(metrics)} disabled={!metrics}>
-                Apply boundary as size
-              </Button>
-            </div>
-          )}
-
-          {mode === "route" && routing && (
-            <p className="text-[11px] font-semibold text-emerald-400">Tap along the road to trace the alignment · double-click or “Finish route” to stop.</p>
-          )}
-          {mode === "area" && tracing && (
-            <p className="text-[11px] font-semibold text-emerald-400">Tap the map to add boundary corners · double-click or “Finish boundary” to close.</p>
-          )}
-
-          {routeLength != null && (
-            <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-200">
-              Route {routeLength < 1000 ? `${Math.round(routeLength)} m` : `${(routeLength / 1000).toFixed(2)} km`}
-              {location?.routeBearingDeg !== undefined ? ` · bearing ${location.routeBearingDeg}°` : ""}
-            </p>
-          )}
-          {metrics && (
-            <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-200">
-              Boundary {metrics.widthM} × {metrics.depthM} m · {metrics.areaM2.toLocaleString()} m² · rotated {metrics.rotationDeg}°
-            </p>
-          )}
-          <p className="text-[11px] leading-relaxed text-slate-500">
-            {mode === "route"
-              ? "Search the corridor on the map, then trace the centreline — the route length and bearing drive the model."
-              : "Drag the pin or tap the map to set the site centre, then trace the boundary — the size updates from the best-fit rectangle."}
-          </p>
-        </>
-      )}
-
-      {(status === "nokey" || status === "error") && (
-        <div className="space-y-3">
-          <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs leading-relaxed text-slate-400">
-            {status === "nokey"
-              ? "Add VITE_GOOGLE_MAPS_KEY to client/.env.local to enable the satellite map, route and boundary tracing."
-              : "The map could not be loaded (check the API key, billing and allowed referrers). Enter coordinates manually instead."}
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <Input label="Latitude" value={manualLat} onChange={(e) => setManualLat(e.target.value)} placeholder="12.9716" />
-            <Input label="Longitude" value={manualLng} onChange={(e) => setManualLng(e.target.value)} placeholder="77.5946" />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={applyManual} disabled={!manualLat.trim() || !manualLng.trim()}>Set location</Button>
-            <Button size="sm" variant="secondary" onClick={locateMe}>Use my location</Button>
+      {/* Shape & Measurement Options */}
+      <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3.5">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold text-slate-300">Measured Land Shape</span>
+          <div className="flex rounded-lg border border-slate-800 bg-slate-900 p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setUnit("m")}
+              className={`rounded px-2.5 py-0.5 font-medium transition ${unit === "m" ? "bg-emerald-500/20 text-emerald-300" : "text-slate-400"}`}
+            >
+              Meters
+            </button>
+            <button
+              type="button"
+              onClick={() => setUnit("ft")}
+              className={`rounded px-2.5 py-0.5 font-medium transition ${unit === "ft" ? "bg-emerald-500/20 text-emerald-300" : "text-slate-400"}`}
+            >
+              Feet
+            </button>
           </div>
         </div>
-      )}
+
+        <div className="flex gap-2">
+          {(["rectangle", "polygon", "corridor"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setLandShape(s)}
+              className={`flex-1 rounded-lg border py-1.5 text-xs font-medium capitalize transition ${
+                landShape === s
+                  ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
+                  : "border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label={`Breadth / Width (${unit})`}
+            value={measuredWidth}
+            onChange={(e) => setMeasuredWidth(e.target.value)}
+            placeholder={unit === "m" ? "80" : "260"}
+          />
+          <Input
+            label={`Length / Depth (${unit})`}
+            value={measuredLength}
+            onChange={(e) => setMeasuredLength(e.target.value)}
+            placeholder={unit === "m" ? "60" : "200"}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="Plot Orientation / Rotation (°)"
+            value={rotationDeg}
+            onChange={(e) => setRotationDeg(e.target.value)}
+            placeholder="0"
+          />
+          <div className="flex flex-col justify-end">
+            <div className="rounded-lg border border-slate-800 bg-slate-900/80 p-2 text-xs text-slate-400">
+              Est. Area: <strong className="text-emerald-400">
+                {(
+                  (Number(measuredWidth) || 0) * (Number(measuredLength) || 0)
+                ).toLocaleString()} {unit === "m" ? "m²" : "sq ft"}
+              </strong>
+            </div>
+          </div>
+        </div>
+
+        {landShape === "polygon" && (
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">
+              Optional Google Earth Corner Coordinates (lat, lng per line):
+            </label>
+            <textarea
+              value={polygonCoordsText}
+              onChange={(e) => setPolygonCoordsText(e.target.value)}
+              placeholder="12.9716, 77.5946&#10;12.9720, 77.5950&#10;12.9715, 77.5955"
+              rows={3}
+              className="w-full rounded-xl border border-slate-800 bg-slate-900/80 p-2.5 font-mono text-xs text-slate-200 outline-none focus:border-emerald-500"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Create Canvas Action Button */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+        <Button
+          onClick={handleCreateCanvas}
+          className="w-full sm:w-auto bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 font-semibold shadow-lg shadow-emerald-950/40"
+        >
+          ✨ Create Canvas from Measured Land
+        </Button>
+
+        {createdFeedback && (
+          <p className="text-xs font-medium text-emerald-400 animate-fade-in">
+            {createdFeedback}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
-

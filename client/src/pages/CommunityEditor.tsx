@@ -166,6 +166,32 @@ function UndergroundForm({
         <Num label="Clear height / floor" value={ug.floorHeight} onChange={(v) => setUg({ floorHeight: Math.max(v || 2.4, 2.4) })} min={2.4} step={0.1} unit=" m" />
       </div>
       <div className="grid grid-cols-2 gap-3">
+        <Num
+          label="Parking Breadth (Width)"
+          value={ug.parkingWidthM ?? 36}
+          onChange={(v) => {
+            const width = Math.max(v || 10, 6);
+            const cols = Math.max(1, Math.floor((width - 4) / ((ug.bayWidth || 2.5) + 0.5)));
+            setUg({ parkingWidthM: width, bayCols: cols });
+          }}
+          min={6}
+          step={1}
+          unit=" m"
+        />
+        <Num
+          label="Parking Length (Depth)"
+          value={ug.parkingLengthM ?? 28}
+          onChange={(v) => {
+            const length = Math.max(v || 10, 6);
+            const rows = Math.max(1, Math.floor((length - 6) / ((ug.bayLength || 5) + 2.0)));
+            setUg({ parkingLengthM: length, bayRows: rows });
+          }}
+          min={6}
+          step={1}
+          unit=" m"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
         <Num label="Foundation depth" value={ug.foundationDepth} onChange={(v) => setUg({ foundationDepth: Math.max(v || 0.5, 0.5) })} min={0.5} step={0.1} unit=" m" />
         <Num label="Total dig depth" value={total} onChange={() => {}} disabled unit=" m" />
       </div>
@@ -481,6 +507,32 @@ export function CommunityEditor({ branch, community, onChange, projectName, desi
     </p>
   ) : (
     <Section title="Basement structure (below grade)">
+      <div className="grid grid-cols-2 gap-3">
+        <Num
+          label="Parking Breadth (Width)"
+          value={ug.parkingWidthM ?? 36}
+          onChange={(v) => {
+            const width = Math.max(v || 10, 6);
+            const cols = Math.max(1, Math.floor((width - 4) / ((ug.bayWidth || 2.5) + 0.5)));
+            update({ parking: { ...park, underground: { ...ug, parkingWidthM: width, bayCols: cols } } });
+          }}
+          min={6}
+          step={1}
+          unit=" m"
+        />
+        <Num
+          label="Parking Length (Depth)"
+          value={ug.parkingLengthM ?? 28}
+          onChange={(v) => {
+            const length = Math.max(v || 10, 6);
+            const rows = Math.max(1, Math.floor((length - 6) / ((ug.bayLength || 5) + 2.0)));
+            update({ parking: { ...park, underground: { ...ug, parkingLengthM: length, bayRows: rows } } });
+          }}
+          min={6}
+          step={1}
+          unit=" m"
+        />
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <Num label="Pillar spacing X" value={ug.pillarSpacingX} onChange={(v) => update({ parking: { ...park, underground: { ...ug, pillarSpacingX: Math.max(v || 4, 4) } } })} min={4} step={0.5} unit=" m" />
         <Num label="Pillar spacing Z" value={ug.pillarSpacingZ} onChange={(v) => update({ parking: { ...park, underground: { ...ug, pillarSpacingZ: Math.max(v || 4, 4) } } })} min={4} step={0.5} unit=" m" />
