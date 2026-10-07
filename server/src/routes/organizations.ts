@@ -1,22 +1,26 @@
-import { Router } from "express";
+import { Router, type ErrorRequestHandler } from "express";
 import { z } from "zod";
 import { randomId } from "../crypto.js";
 import { db, now, withTransaction } from "../db.js";
 import {
   applyBillingTransition,
+  assertOrganizationOwnerSession,
+  BillingError,
   getOrganizationEntitlement,
   getOrganizationSubscription,
   organizationAdmin,
   organizationAudit,
   organizationRole,
+  organizationBaseSeats,
   type OrganizationRole,
 } from "../organization.js";
 import { asyncHandler, requireSession, type AuthedRequest } from "../security.js";
+import { createTenantSeatCheckout, listTenantBillingOrders, tenantBillingConfiguration } from "../payments/tenantBilling.js";
 
 const router = Router();
 router.use(requireSession);
 const roleSchema = z.enum(["admin", "editor", "viewer"]);
-const seatEntitlement = Math.min(10000, Math.max(1, Number.parseInt(process.env.ORGANIZATION_MAX_SEATS || "5", 10) || 5));
+const seatEntitlement = organizationBaseSeats();
 const admin = (req: AuthedRequest) => organizationAdmin(req.params.organizationId, req.user!.id);
 function summary(row: { id: string; name: string; seat_limit: number; audit_retention_days: number; role: OrganizationRole; seats_used: number }) {
   return { id: row.id, name: row.name, seatLimit: row.seat_limit, seatsUsed: Number(row.seats_used), auditRetentionDays: row.audit_retention_days, role: row.role };
@@ -61,11 +65,12 @@ router.get("/:organizationId", (req: AuthedRequest, res) => {
 });
 router.patch("/:organizationId", asyncHandler((req: AuthedRequest, res) => {
   if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") { res.status(403).json({ error: "Organization owner access required" }); return; }
-  const entitlement = getOrganizationEntitlement(req.params.organizationId);
-  const parsed = z.object({ name: z.string().trim().min(1).max(80), seatLimit: z.number().int().min(1).max(entitlement.totalSeats), auditRetentionDays: z.number().int().min(30).max(3650) }).safeParse(req.body);
+  const parsed = z.object({ name: z.string().trim().min(1).max(80), seatLimit: z.number().int().min(1).max(10000), auditRetentionDays: z.number().int().min(30).max(3650) }).strict().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid organization settings or seat entitlement exceeded" }); return; }
   const changed = withTransaction(() => {
-    if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") return false;
+    assertOrganizationOwnerSession(req.params.organizationId, req.user!.id, req.session!.id);
+    const current = getOrganizationEntitlement(req.params.organizationId);
+    if (!current.validEntitlement || parsed.data.seatLimit > current.totalSeats) return false;
     const seats = db.prepare("SELECT COUNT(*) AS count FROM organization_members WHERE organization_id=?").get(req.params.organizationId) as { count: number };
     if (seats.count > parsed.data.seatLimit) return false;
     db.prepare("UPDATE organizations SET name=?,seat_limit=?,audit_retention_days=?,updated_at=? WHERE id=?")
@@ -73,19 +78,22 @@ router.patch("/:organizationId", asyncHandler((req: AuthedRequest, res) => {
     organizationAudit(req.params.organizationId, req.user!.id, "organization.settings", parsed.data);
     return true;
   });
-  if (!changed) { res.status(409).json({ error: "Remove members before reducing seats below current usage" }); return; }
+  if (!changed) { res.status(409).json({ error: "Seat limit must cover current members and fit the current verified entitlement. Remove excess members before reducing it." }); return; }
   res.json({ ok: true });
 }));
 router.get("/:organizationId/billing", (req: AuthedRequest, res) => {
   if (!admin(req)) { res.status(403).json({ error: "Organization administrator access required" }); return; }
   const entitlement = getOrganizationEntitlement(req.params.organizationId);
   const subscription = getOrganizationSubscription(req.params.organizationId);
+  res.set("Cache-Control", "private, no-store");
   const transitions = db.prepare(
     "SELECT id, idempotency_key AS idempotencyKey, action, previous_state AS previousState, new_state AS newState, details, created_at AS createdAt FROM billing_transitions WHERE organization_id = ? ORDER BY created_at DESC LIMIT 50"
   ).all(req.params.organizationId) as { id: string; idempotencyKey: string; action: string; previousState: string; newState: string; details: string; createdAt: number }[];
   res.json({
     entitlement,
     subscription,
+    configuration: tenantBillingConfiguration(),
+    orders: listTenantBillingOrders(req.params.organizationId),
     transitions: transitions.map((t) => ({
       ...t,
       previousState: JSON.parse(t.previousState || "{}"),
@@ -94,34 +102,27 @@ router.get("/:organizationId/billing", (req: AuthedRequest, res) => {
     })),
   });
 });
-router.post("/:organizationId/billing/seats", asyncHandler((req: AuthedRequest, res) => {
+router.post("/:organizationId/billing/seats", asyncHandler(async (req: AuthedRequest, res) => {
   if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") {
     res.status(403).json({ error: "Organization owner access required" });
     return;
   }
-  const parsed = z.object({
-    idempotencyKey: z.string().min(1).max(128),
-    targetPaidSeats: z.number().int().min(0).max(10000).optional(),
-    paidSeatsDelta: z.number().int().min(-10000).max(10000).optional(),
-  }).safeParse(req.body);
-  if (!parsed.success || (parsed.data.targetPaidSeats === undefined && parsed.data.paidSeatsDelta === undefined)) {
-    res.status(400).json({ error: "Must specify idempotencyKey and either targetPaidSeats or paidSeatsDelta" });
+  const parsed = z.object({ idempotencyKey: z.string().min(1).max(128), targetPaidSeats: z.number().int().min(1).max(9999),
+    acceptTermReplacement: z.literal(true) }).strict().safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Specify an idempotency key, positive targetPaidSeats, and explicit acceptTermReplacement=true." });
     return;
   }
   try {
-    const result = applyBillingTransition({
+    const result = await createTenantSeatCheckout({
       idempotencyKey: parsed.data.idempotencyKey,
       organizationId: req.params.organizationId,
-      userId: req.user!.id,
-      action: "seat_change",
+      userId: req.user!.id, sessionId: req.session!.id,
       targetPaidSeats: parsed.data.targetPaidSeats,
-      paidSeatsDelta: parsed.data.paidSeatsDelta,
-      details: { requestedBy: req.user!.id },
     });
-    res.json(result);
+    res.status(result.order.status === "creation_unknown" ? 202 : 200).json(result);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to update seat count";
-    res.status(409).json({ error: message });
+    res.status(err instanceof BillingError ? err.status : 500).json({ error: err instanceof BillingError ? err.message : "Could not create seat checkout", code: err instanceof BillingError ? err.code : "billing_failed" });
   }
 }));
 router.post("/:organizationId/billing/subscribe", asyncHandler((req: AuthedRequest, res) => {
@@ -129,25 +130,10 @@ router.post("/:organizationId/billing/subscribe", asyncHandler((req: AuthedReque
     res.status(403).json({ error: "Organization owner access required" });
     return;
   }
-  const parsed = z.object({
-    idempotencyKey: z.string().min(1).max(128),
-    plan: z.enum(["standard", "enterprise"]),
-    periodDays: z.number().int().min(1).max(365).optional(),
-  }).safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "Invalid plan or idempotencyKey" });
-    return;
-  }
-  const result = applyBillingTransition({
-    idempotencyKey: parsed.data.idempotencyKey,
-    organizationId: req.params.organizationId,
-    userId: req.user!.id,
-    action: "subscribe",
-    newPlan: parsed.data.plan,
-    periodDays: parsed.data.periodDays ?? 30,
-    details: { plan: parsed.data.plan },
+  withTransaction(() => {
+    assertOrganizationOwnerSession(req.params.organizationId, req.user!.id, req.session!.id);
   });
-  res.json(result);
+  res.status(409).json({ error: "Direct plan activation is unavailable. Use the configured prepaid seat checkout. Enterprise and PayPal tenant products are not configured.", code: "payment_required" });
 }));
 router.post("/:organizationId/billing/cancel", asyncHandler((req: AuthedRequest, res) => {
   if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") {
@@ -156,12 +142,13 @@ router.post("/:organizationId/billing/cancel", asyncHandler((req: AuthedRequest,
   }
   const parsed = z.object({
     idempotencyKey: z.string().min(1).max(128),
-  }).safeParse(req.body);
+  }).strict().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "idempotencyKey required" }); return; }
   const result = applyBillingTransition({
     idempotencyKey: parsed.data.idempotencyKey,
     organizationId: req.params.organizationId,
     userId: req.user!.id,
+    sessionId: req.session!.id,
     action: "cancel",
   });
   res.json(result);
@@ -173,12 +160,13 @@ router.post("/:organizationId/billing/reactivate", asyncHandler((req: AuthedRequ
   }
   const parsed = z.object({
     idempotencyKey: z.string().min(1).max(128),
-  }).safeParse(req.body);
+  }).strict().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "idempotencyKey required" }); return; }
   const result = applyBillingTransition({
     idempotencyKey: parsed.data.idempotencyKey,
     organizationId: req.params.organizationId,
     userId: req.user!.id,
+    sessionId: req.session!.id,
     action: "reactivate",
   });
   res.json(result);
@@ -292,4 +280,10 @@ router.get("/:organizationId/audit", (req: AuthedRequest, res) => {
   res.set("Cache-Control", "private, no-store");
   res.json({ events: events.map((event) => ({ ...event, detail: JSON.parse(event.detail) as unknown })), nextBeforeId: events.length === 500 ? events[events.length - 1].id : null });
 });
+const billingErrorHandler: ErrorRequestHandler = (error: unknown, _req, res, next) => {
+  if (error instanceof BillingError) { res.status(error.status).json({ error: error.message, code: error.code }); return; }
+  next(error);
+};
+router.use(billingErrorHandler);
 export default router;
+

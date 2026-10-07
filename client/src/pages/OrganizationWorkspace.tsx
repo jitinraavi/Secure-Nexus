@@ -7,6 +7,7 @@ import {
   bindOrganizationProject,
   configureOrganizationSso,
   createOrganization,
+  cancelOrganizationSubscription,
   getOrganization,
   getOrganizationAudit,
   getOrganizationBilling,
@@ -14,7 +15,7 @@ import {
   listOrganizations,
   listPersonalOrganizationProjects,
   removeOrganizationMember,
-  subscribeOrganization,
+  reactivateOrganizationSubscription,
   transferOrganizationOwner,
   unlinkOrganizationIdentity,
   updateOrganization,
@@ -81,6 +82,11 @@ function CoordinationWorkspace({ projectId, canEdit }: { projectId: string; canE
 }
 
 export function OrganizationWorkspace() {
+  const { user } = useAuth();
+  return <OrganizationWorkspaceContent key={user?.id ?? "signed-out"} />;
+}
+function OrganizationWorkspaceContent() {
+  const { user } = useAuth();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [organizationId, setOrganizationId] = useState("");
   const [detail, setDetail] = useState<OrganizationDetail | null>(null);
@@ -101,7 +107,10 @@ export function OrganizationWorkspace() {
   const [transferUser, setTransferUser] = useState("");
   const [billing, setBilling] = useState<OrganizationBillingInfo | null>(null);
   const [targetSeats, setTargetSeats] = useState(0);
-  const [billingPlan, setBillingPlan] = useState<"standard" | "enterprise">("standard");
+  const [acceptTermReplacement, setAcceptTermReplacement] = useState(false);
+  const checkoutRequest = useRef<{ scope: string; key: string; orderId?: string } | null>(null);
+  const mounted = useRef(true), actionInFlight = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -110,26 +119,27 @@ export function OrganizationWorkspace() {
   selectedOrganization.current = organizationId;
   const isAdmin = detail?.organization.role === "owner" || detail?.organization.role === "admin";
   const isOwner = detail?.organization.role === "owner";
-  const refreshList = useCallback(async () => { const result = await listOrganizations(); setOrganizations(result.organizations); return result.organizations; }, []);
+  const refreshList = useCallback(async () => { const result = await listOrganizations(); if (!mounted.current) return []; setOrganizations(result.organizations); return result.organizations; }, []);
   const refreshDetail = useCallback(async (id: string) => {
     const token = ++loadToken.current;
     const result = await getOrganization(id);
-    if (token !== loadToken.current || selectedOrganization.current !== id) return;
+    if (!mounted.current || token !== loadToken.current || selectedOrganization.current !== id) return;
     setDetail(result); setName(result.organization.name); setSeatLimit(result.organization.seatLimit); setRetention(result.organization.auditRetentionDays);
     try {
       const b = await getOrganizationBilling(id);
-      if (token === loadToken.current && selectedOrganization.current === id) {
+      if (mounted.current && token === loadToken.current && selectedOrganization.current === id) {
         setBilling(b);
-        setTargetSeats(b.entitlement.paidSeats);
-        setBillingPlan(b.subscription.plan as "standard" | "enterprise");
+        setTargetSeats(Math.max(1, b.entitlement.effectivePaidSeats));
+        const previous = checkoutRequest.current;
+        if (previous?.orderId && b.orders.some(order => order.id === previous.orderId && ["verified", "expired", "failed", "requires_review"].includes(order.status))) checkoutRequest.current = null;
       }
     } catch {
-      if (token === loadToken.current && selectedOrganization.current === id) setBilling(null);
+      if (mounted.current && token === loadToken.current && selectedOrganization.current === id) setBilling(null);
     }
   }, []);
   useEffect(() => { let live = true; void refreshList().then((items) => { if (live && items[0]) setOrganizationId(items[0].id); }).catch((failure: unknown) => { if (live) setError(failure instanceof Error ? failure.message : "Could not load organizations"); }); return () => { live = false; }; }, [refreshList]);
   useEffect(() => {
-    setDetail(null); setBilling(null); setCoordinationProjectId(""); setIssuer(""); setClientId(""); setClientSecret(""); setRedirectUri(""); setSsoEnabled(false); setError("");
+    setDetail(null); setBilling(null); setAcceptTermReplacement(false); setCoordinationProjectId(""); setIssuer(""); setClientId(""); setClientSecret(""); setRedirectUri(""); setSsoEnabled(false); setError("");
     if (!organizationId) return;
     let live = true;
     void refreshDetail(organizationId).catch((failure: unknown) => { if (live) setError(failure instanceof Error ? failure.message : "Could not load organization"); });
@@ -138,17 +148,26 @@ export function OrganizationWorkspace() {
     return () => { live = false; loadToken.current += 1; };
   }, [organizationId, refreshDetail]);
   const act = async (work: () => Promise<unknown>, message: string) => {
-    if (busy) return;
+    if (actionInFlight.current || !mounted.current) return;
+    actionInFlight.current = true;
     setBusy(true); setError(""); setNotice("");
-    try { await work(); await refreshList(); if (organizationId && selectedOrganization.current === organizationId) await refreshDetail(organizationId); setNotice(message); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : "Organization action failed"); }
-    finally { setBusy(false); }
+    try {
+      await work();
+      if (!mounted.current) return;
+      await refreshList();
+      if (organizationId && selectedOrganization.current === organizationId) await refreshDetail(organizationId);
+      if (mounted.current && (!organizationId || selectedOrganization.current === organizationId)) setNotice(message);
+    }
+    catch (failure) { if (mounted.current && (!organizationId || selectedOrganization.current === organizationId)) setError(failure instanceof Error ? failure.message : "Organization action failed"); }
+    finally { actionInFlight.current = false; if (mounted.current) setBusy(false); }
   };
   const exportAudit = async () => {
     let before: number | undefined;
     const events: unknown[] = [];
     for (let page = 0; page < 20; page += 1) {
-      const result = await getOrganizationAudit(organizationId, before); events.push(...result.events);
+      const result = await getOrganizationAudit(organizationId, before);
+      if (!mounted.current || selectedOrganization.current !== organizationId) return;
+      events.push(...result.events);
       if (result.nextBeforeId === null) { download("organization-audit.json", JSON.stringify({ organizationId, events }, null, 2)); return; }
       before = result.nextBeforeId;
     }
@@ -166,7 +185,7 @@ export function OrganizationWorkspace() {
             <div>
               <h2 className="font-semibold text-slate-100">Enterprise authority & billing entitlements</h2>
               <p className="text-sm text-slate-400">
-                Tenant-scoped paid seats, central multi-host authorization, and idempotent subscription lifecycle.
+                Prepaid seat capacity activates after a matched live provider receipt. Existing data stays available for reading and member cleanup after expiry.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -174,7 +193,7 @@ export function OrganizationWorkspace() {
                 Plan: {billing.entitlement.plan.toUpperCase()} ({billing.entitlement.status})
               </Badge>
               <Badge tone="cyan">
-                {billing.entitlement.seatsUsed} / {billing.entitlement.totalSeats} seats ({billing.entitlement.paidSeats} paid)
+                {billing.entitlement.seatsUsed} / {Math.min(billing.entitlement.totalSeats, billing.entitlement.seatLimit)} seats ({billing.entitlement.effectivePaidSeats} verified paid)
               </Badge>
               {billing.entitlement.isDelinquent && (
                 <Badge tone="rose">Billing past due / delinquent</Badge>
@@ -182,66 +201,64 @@ export function OrganizationWorkspace() {
             </div>
           </div>
 
+          {!billing.configuration.configured && <p role="status" className="text-sm text-amber-300">Checkout unconfigured: {billing.configuration.reason}</p>}
+          {billing.entitlement.overCapacity && <p role="alert" className="text-sm text-amber-300">This organization exceeds effective capacity. Project changes and new members are blocked. Reads, billing and removing members remain available.</p>}
+          {!billing.entitlement.hasVerifiedPayment && billing.entitlement.paidSeats > 0 && <p className="text-sm text-amber-300">Earlier unverified seat counts are retained in history and provide no paid capacity.</p>}
           {isOwner && (
             <div className="grid gap-4 rounded-lg border border-slate-700 p-4 md:grid-cols-2">
               <div className="space-y-3">
-                <h3 className="text-sm font-medium text-slate-200">Adjust paid seats</h3>
+                <h3 className="text-sm font-medium text-slate-200">Purchase a prepaid seat term</h3>
                 <div className="flex items-end gap-3">
                   <Input
-                    label="Paid seats count"
+                    label="Target additional paid seats"
                     type="number"
-                    min={0}
-                    max={1000}
+                    min={1}
+                    max={10000 - billing.entitlement.baseSeats}
                     value={targetSeats}
                     onChange={(e) => setTargetSeats(Number(e.target.value))}
                   />
                   <Button
                     loading={busy}
-                    disabled={targetSeats === billing.entitlement.paidSeats}
+                    disabled={!billing.configuration.configured || !acceptTermReplacement || !Number.isSafeInteger(targetSeats) || targetSeats < 1 ||
+                      targetSeats + billing.entitlement.baseSeats > 10000 || targetSeats + billing.entitlement.baseSeats < billing.entitlement.seatsUsed ||
+                      targetSeats * (billing.configuration.unitPrice ?? 0) > billing.configuration.maximumAmount || billing.orders.some(order => ["creating", "pending", "creation_unknown"].includes(order.status) && order.expiresAt > Date.now() / 1000)}
                     onClick={() => {
                       void act(async () => {
-                        await updateOrganizationSeats(organizationId, {
-                          idempotencyKey: crypto.randomUUID(),
-                          targetPaidSeats: targetSeats,
-                        });
-                      }, "Paid seats updated");
+                        const scope = `${user?.id}:${organizationId}:${targetSeats}`;
+                        if (checkoutRequest.current?.scope !== scope) checkoutRequest.current = { scope, key: crypto.randomUUID() };
+                        const request = checkoutRequest.current;
+                        const created = await updateOrganizationSeats(organizationId, { idempotencyKey: request.key,
+                          targetPaidSeats: targetSeats, acceptTermReplacement: true });
+                        if (mounted.current && checkoutRequest.current === request) {
+                          if (["verified", "expired", "failed", "requires_review"].includes(created.order.status)) checkoutRequest.current = null;
+                          else request.orderId = created.order.id;
+                        }
+                      }, "Checkout intent saved. Use the hosted link below; capacity remains unchanged until a verified receipt arrives.");
                     }}
                   >
-                    Apply seats
+                    Create payment link
                   </Button>
                 </div>
               </div>
 
               <div className="space-y-3">
-                <h3 className="text-sm font-medium text-slate-200">Subscription plan</h3>
-                <div className="flex items-end gap-3">
-                  <Select
-                    label="Plan tier"
-                    value={billingPlan}
-                    onChange={(e) => setBillingPlan(e.target.value as "standard" | "enterprise")}
-                  >
-                    <option value="standard">Standard (5 base seats)</option>
-                    <option value="enterprise">Enterprise (Unlimited scaling)</option>
-                  </Select>
-                  <Button
-                    variant="secondary"
-                    loading={busy}
-                    disabled={billingPlan === billing.subscription.plan}
-                    onClick={() => {
-                      void act(async () => {
-                        await subscribeOrganization(organizationId, {
-                          idempotencyKey: crypto.randomUUID(),
-                          plan: billingPlan,
-                        });
-                      }, `Plan updated to ${billingPlan}`);
-                    }}
-                  >
-                    Update plan
-                  </Button>
-                </div>
+                <h3 className="text-sm font-medium text-slate-200">Term and price</h3>
+                <p className="text-sm text-slate-400">{billing.configuration.configured ? `INR ${((billing.configuration.unitPrice ?? 0) * targetSeats / 100).toFixed(2)} for ${billing.configuration.termDays} days and ${targetSeats} additional seats.` : "Price and term must be configured by the deployment operator."}</p>
+                <p className="text-sm text-amber-300">A successful payment replaces the current paid capacity and starts a new term when its receipt is verified. Remaining days are forfeited. No prorating, refunds or automatic renewal are included. Enterprise and PayPal tenant products are unavailable.</p>
+                <Toggle checked={acceptTermReplacement} onChange={setAcceptTermReplacement} label="I accept replacing the current paid term" />
+                {billing.entitlement.hasVerifiedPayment && !billing.entitlement.expired && <Button variant="secondary" loading={busy} onClick={() => {
+                  void act(() => billing.subscription.cancelAtPeriodEnd ? reactivateOrganizationSubscription(organizationId, crypto.randomUUID()) : cancelOrganizationSubscription(organizationId, crypto.randomUUID()), "Paid term flag updated. Automatic renewal is not enabled.");
+                }}>{billing.subscription.cancelAtPeriodEnd ? "Keep existing term" : "Mark cancellation at term end"}</Button>}
+                <Button variant="ghost" disabled={busy} onClick={() => { void act(async () => undefined, "Billing refreshed"); }}>Refresh billing</Button>
               </div>
             </div>
           )}
+
+          {billing.orders.map(order => <div key={order.id} className="space-y-1 rounded-lg border border-slate-700 p-3 text-sm">
+            <div>{order.targetPaidSeats} additional seats · INR {(order.amount / 100).toFixed(2)} · {order.termDays} days · <Badge tone={order.status === "verified" ? "emerald" : "amber"}>{order.status}</Badge></div>
+            {order.checkoutUrl && isOwner && <a href={order.checkoutUrl} target="_blank" rel="noopener noreferrer" className="text-emerald-300 underline">Open Razorpay hosted checkout</a>}
+            {order.reviewReason && <p className="text-amber-300">{order.reviewReason} No paid capacity is granted for this order.</p>}
+          </div>)}
 
           {billing.transitions.length > 0 && (
             <div className="space-y-2">
@@ -271,3 +288,4 @@ export function OrganizationWorkspace() {
     </>}
   </div>;
 }
+

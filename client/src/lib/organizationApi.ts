@@ -11,11 +11,17 @@ export interface OrganizationEntitlement {
   status: "active" | "past_due" | "canceled" | "unpaid" | "trialing";
   baseSeats: number;
   paidSeats: number;
+  effectivePaidSeats: number;
   totalSeats: number;
+  seatLimit: number;
   seatsUsed: number;
   seatsAvailable: number;
   canAddMember: boolean;
   isDelinquent: boolean;
+  expired: boolean;
+  overCapacity: boolean;
+  hasVerifiedPayment: boolean;
+  validEntitlement: boolean;
   currentPeriodEnd: number;
   cancelAtPeriodEnd: boolean;
 }
@@ -39,9 +45,17 @@ export interface OrganizationBillingInfo {
     currentPeriodStart: number;
     currentPeriodEnd: number;
     cancelAtPeriodEnd: boolean;
+    entitlementRevision: number;
+    verifiedOrderId: string | null;
   };
+  configuration: { configured: boolean; reason: string | null; provider: "razorpay"; currency: "INR"; unitPrice: number | null;
+    termDays: number | null; maximumAmount: number; termPolicy: "replace_from_verification"; automaticRenewal: false };
+  orders: TenantBillingOrder[];
   transitions: BillingTransition[];
 }
+export interface TenantBillingOrder { id: string; organizationId: string; targetPaidSeats: number; amount: number; currency: "INR"; termDays: number;
+  status: "creating" | "pending" | "creation_unknown" | "failed" | "verified" | "requires_review" | "expired";
+  checkoutUrl: string | null; createdAt: number; expiresAt: number; completedAt: number | null; reviewReason: string | null }
 export interface OrganizationAuditPage { events: { id: number; actorId: string | null; action: string; detail: unknown; createdAt: number }[]; nextBeforeId: number | null }
 export interface SsoConfiguration { issuer: string; clientId: string; redirectUri: string; enabled: boolean; hasSecret: boolean }
 export async function organizationRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -72,7 +86,8 @@ export const getOrganizationSso = (id: string) => organizationRequest<{ configur
 export const configureOrganizationSso = (id: string, configuration: { issuer: string; clientId: string; clientSecret?: string; enabled: boolean }) => organizationRequest<{ ok: boolean; redirectUri: string }>(`/api/sso/${encodeURIComponent(id)}/config`, "PUT", configuration);
 export const unlinkOrganizationIdentity = (id: string) => organizationRequest<{ ok: boolean }>(`/api/sso/${encodeURIComponent(id)}/identity`, "DELETE");
 export const getOrganizationBilling = (id: string) => organizationRequest<OrganizationBillingInfo>(`${orgPath(id)}/billing`);
-export const updateOrganizationSeats = (id: string, params: { idempotencyKey: string; targetPaidSeats?: number; paidSeatsDelta?: number }) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/seats`, "POST", params);
+export const updateOrganizationSeats = (id: string, params: { idempotencyKey: string; targetPaidSeats: number; acceptTermReplacement: true }) => organizationRequest<{ duplicate: boolean; order: TenantBillingOrder }>(`${orgPath(id)}/billing/seats`, "POST", params);
 export const subscribeOrganization = (id: string, params: { idempotencyKey: string; plan: "standard" | "enterprise"; periodDays?: number }) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/subscribe`, "POST", params);
 export const cancelOrganizationSubscription = (id: string, idempotencyKey: string) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/cancel`, "POST", { idempotencyKey });
 export const reactivateOrganizationSubscription = (id: string, idempotencyKey: string) => organizationRequest<{ duplicate: boolean; entitlement: OrganizationEntitlement }>(`${orgPath(id)}/billing/reactivate`, "POST", { idempotencyKey });
+
