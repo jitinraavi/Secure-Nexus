@@ -1,0 +1,25 @@
+{
+  "short_name": "Groundwork",
+  "name": "Groundwork Design Studio",
+  "description": "Architectural, structural, and BIM design studio with offline operation, encrypted storage, and engineering workflows.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0f172a",
+  "background_color": "#0f172a",
+  "categories": ["productivity", "utilities", "design"],
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}

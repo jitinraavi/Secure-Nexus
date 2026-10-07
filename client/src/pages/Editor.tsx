@@ -29,6 +29,8 @@ import { VisualizationControls } from "../components/VisualizationControls";
 import { visualizationSettings } from "../lib/visualization";
 import { useAuth } from "../auth";
 import { clearPendingDraft, clearRecoveredDraft, hasMergeBase, persistPendingDraft, readPendingDraftResult, recoveryFromAnotherTab, type PendingDraft } from "../lib/offlineDraft";
+import { offlineProjectStore } from "../lib/offlineProjectStore";
+import { offlineQueueStore } from "../lib/offlineQueue";
 import type { MergeDocument } from "../lib/designMerge";
 import { DraftConflictPanel } from "../components/DraftConflictPanel";
 
@@ -129,6 +131,9 @@ export function Editor() {
       acknowledged.current = document;
       revisionRef.current = project.revision ?? 0;
       setRemoteRevision(null); setProjectRole(project.role ?? "owner");
+      if (user?.id) {
+        void offlineProjectStore.cacheProject(user.id, project, document.design);
+      }
       const recovery = user ? readPendingDraftResult(user.id, id!) : { draft: null, error: undefined };
       const recovered = recovery.draft;
       recoveryOrigin.current = recovered; latestDraft.current = recovered;
@@ -139,6 +144,20 @@ export function Editor() {
       setPhotoUrl(project.hasPhoto ? `/api/projects/${id}/photo?v=${project.updatedAt}` : null);
       setLoaded(true);
     } catch (err) {
+      if (user?.id && id) {
+        const cached = await offlineProjectStore.getCachedProject(user.id, id);
+        if (cached && request === loadGeneration.current && currentScope === scopeRef.current) {
+          revisionRef.current = cached.revision;
+          setProjectRole(cached.role);
+          setName(cached.name);
+          setProjectType(cached.projectType);
+          setDesign(cached.design);
+          acknowledged.current = { design: cached.design, name: cached.name, projectType: cached.projectType };
+          setLoaded(true);
+          toast.push({ title: "Opened from offline cache", description: "Network unavailable. Local offline copy loaded.", tone: "info" });
+          return;
+        }
+      }
       if (request === loadGeneration.current && currentScope === scopeRef.current) toast.push({ title: "Could not open project", description: err instanceof Error ? err.message : undefined, tone: "error" });
     }
   }, [id, toast, user?.id]);
@@ -184,10 +203,16 @@ export function Editor() {
         const loadAtSave = loadGeneration.current;
         try {
           setSaving(true);
+          if (typeof navigator !== "undefined" && !navigator.onLine) {
+            throw new TypeError("Offline: Network disconnected");
+          }
           const saved = await patchProject(id, { name: draft.name, projectType: draft.projectType, widthMm: d.room.widthMm, depthMm: d.room.depthMm, designData: JSON.stringify(d), baseRevision: draft.baseRevision });
           if (currentScope !== scopeRef.current || loadAtSave !== loadGeneration.current) return;
           revisionRef.current = saved.revision; pendingBaseRevision.current = null; blockedSaveStatus.current = undefined;
           acknowledged.current = { design: d, name: draft.name, projectType: draft.projectType };
+          if (user?.id) {
+            void offlineProjectStore.cacheProject(user.id, { id, name: draft.name, projectType: draft.projectType, revision: saved.revision } as any, d);
+          }
           if (generation === editGeneration.current) {
             latestDraft.current = null; setPendingDraft(null);
             const cleanup = clearPendingDraft(user.id, id);
@@ -204,9 +229,23 @@ export function Editor() {
           pendingBaseRevision.current = draft.baseRevision;
           const status = err instanceof ApiError ? err.status : undefined;
           blockedSaveStatus.current = status;
-          const failed = { ...(latestDraft.current ?? draft), lastSaveStatus: status, lastSaveError: err instanceof Error ? err.message : "Could not save design" };
-          store(failed);
-          toast.push({ title: "Could not save design", description: failed.lastSaveError, tone: "error" });
+
+          const isNetworkOffline = !status || (typeof navigator !== "undefined" && !navigator.onLine) || err instanceof TypeError;
+          if (isNetworkOffline && user?.id) {
+            void offlineQueueStore.enqueue(
+              user.id,
+              id,
+              "project_save",
+              { name: draft.name, projectType: draft.projectType, widthMm: d.room.widthMm, depthMm: d.room.depthMm, designData: JSON.stringify(d), baseRevision: draft.baseRevision, design: d },
+              draft.baseRevision,
+            );
+            void offlineProjectStore.cacheProject(user.id, { id, name: draft.name, projectType: draft.projectType, revision: draft.baseRevision } as any, d);
+            toast.push({ title: "Offline: changes queued safely", description: "Offline queue updated. Will synchronize when reconnected.", tone: "info" });
+          } else {
+            const failed = { ...(latestDraft.current ?? draft), lastSaveStatus: status, lastSaveError: err instanceof Error ? err.message : "Could not save design" };
+            store(failed);
+            toast.push({ title: "Could not save design", description: failed.lastSaveError, tone: "error" });
+          }
         } finally {
           saveInFlight.current = false;
           if (currentScope === scopeRef.current) setSaving(false);

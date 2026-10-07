@@ -168,3 +168,12 @@ Tenant-scoped entitlements track base seats and paid seats per organization (`or
 
 All billing and subscription changes execute through state-transition records with client- or webhook-supplied idempotency keys (`billing_transitions`), preventing duplicate charges or seat inflation. Payments integrate directly with organization billing via transactional webhooks and demo confirmations. Full audit logging in `organization_audit` tracks every entitlement change, seat adjustment, and administrative transition.
 
+## Real offline & PWA increment, October 2026
+
+[Real offline & PWA Groundwork](PHASE-8-OFFLINE-PWA.md) introduces a complete Progressive Web App shell with offline service worker asset caching, account-isolated project/snapshot storage, immutable operation queues, and deterministic conflict resolution.
+
+Application shell assets are cached using a network-first/offline-fallback service worker (`sw.js`) and registered through a web app manifest (`manifest.webmanifest`). Projects and snapshots are cached in account-scoped IndexedDB (`offlineProjectStore.ts`) subject to strict 50 MB and 50-project limits with LRU eviction, while protecting projects with in-flight queue items.
+
+Offline saves and job submissions are queued immutably in an operations queue (`offlineQueue.ts`), automatically superseding redundant older saves and supporting explicit statuses (`queued`, `syncing`, `completed`, `conflicted`, `failed`, `superseded`). Upon reconnection, `offlineSyncManager.ts` rechecks user session permissions, verifies server revisions, and flags concurrent edits as conflicts with local draft recovery rather than silently overwriting. User logouts immediately clear in-memory caches and active session references to isolate sensitive project data.
+
+

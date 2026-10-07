@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { bootstrap, getMe, logout as apiLogout, setCsrfToken } from "./api";
+import { offlineProjectStore } from "./lib/offlineProjectStore";
+import { offlineQueueStore } from "./lib/offlineQueue";
 import type { User } from "./types";
 
 interface AuthState {
@@ -46,6 +48,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const logout = useCallback(async () => {
+    if (user?.id) {
+      offlineProjectStore.clearActiveUserSession(user.id);
+      offlineQueueStore.clearActiveUserSession(user.id);
+    }
     try {
       await apiLogout();
     } catch {
@@ -53,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setCsrfToken(null);
     setUser(null);
-  }, []);
+  }, [user?.id]);
 
   const value = useMemo(
     () => ({ user, loading, refresh, logout }),

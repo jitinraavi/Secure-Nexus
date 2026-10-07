@@ -3,6 +3,7 @@ import { useAuth } from "../auth";
 import { Logo } from "./Logo";
 import { useToast } from "./Toast";
 import { cn } from "../lib/cn";
+import { OfflineSyncIndicator } from "./OfflineSyncIndicator";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: "M4 13h6V4H4v9zm0 7h6v-5H4v5zm10 0h6v-9h-6v9zm0-16v5h6V4h-6z" },
@@ -37,9 +38,12 @@ export function Layout() {
   return (
     <div className="flex min-h-screen">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-slate-800/80 bg-slate-950/75 backdrop-blur-xl lg:flex">
-        <div className="px-5 pb-3 pt-6">
+        <div className="px-5 pb-3 pt-6 flex flex-col gap-3">
           <Logo />
-          <p className="mt-5 px-1 text-[10px] font-bold uppercase tracking-[.2em] text-slate-600">Navigation</p>
+          <div className="pt-1">
+            <OfflineSyncIndicator />
+          </div>
+          <p className="px-1 text-[10px] font-bold uppercase tracking-[.2em] text-slate-600">Navigation</p>
         </div>
         <nav className="mt-2 flex-1 space-y-1 px-3">
           {NAV.map((item) => (
@@ -84,9 +88,12 @@ export function Layout() {
       <div className="flex min-h-screen flex-1 flex-col lg:pl-60">
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-800/80 bg-slate-950/80 px-4 py-3 backdrop-blur lg:hidden">
           <Logo />
-          <button onClick={handleLogout} className="rounded-lg px-2 py-1 text-sm text-slate-400 hover:text-rose-300">
-            Sign out
-          </button>
+          <div className="flex items-center gap-2">
+            <OfflineSyncIndicator />
+            <button onClick={handleLogout} className="rounded-lg px-2 py-1 text-sm text-slate-400 hover:text-rose-300">
+              Sign out
+            </button>
+          </div>
         </header>
         <nav aria-label="Mobile navigation" className="flex gap-3 overflow-x-auto border-b border-slate-800 px-4 py-2 lg:hidden">{NAV.map(item => <NavLink key={item.to} to={item.to} className={({ isActive }) => cn("shrink-0 text-xs", isActive ? "text-emerald-300" : "text-slate-400")}>{item.label}</NavLink>)}</nav>
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 lg:px-8">
