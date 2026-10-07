@@ -185,3 +185,4 @@ export function furnitureDimMm(catalogId: string): { w: number; d: number; h: nu
   const entry = catalogEntry(catalogId);
   return entry ? { w: entry.w, d: entry.d, h: entry.h } : { w: 1000, d: 1000, h: 800 };
 }
+

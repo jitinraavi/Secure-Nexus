@@ -420,3 +420,4 @@ export function SiteLocator({ location, mode = "area", onChange, onApplyBoundary
     </div>
   );
 }
+

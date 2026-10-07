@@ -27,3 +27,4 @@ export async function zipFiles(entries: { name: string; content: string | Blob }
   for (const e of entries) zip.file(e.name, e.content);
   return zip.generateAsync({ type: "blob" });
 }
+

@@ -21,3 +21,4 @@ export function familyForId(id?: string) { return FAMILY_LIBRARY.find((family) =
 export function familyForDraftKind(kind: DraftElementKind) { return FAMILY_LIBRARY.filter((family) => family.category === kind); }
 export function familyForMepKind(kind: MepElementKind) { const category = kind === "equipment" ? "mep-equipment" : kind === "fixture" ? "mep-fixture" : undefined; return category ? FAMILY_LIBRARY.filter((family) => family.category === category) : []; }
 export function familyMetadata(family: FamilyDefinition, type = family.types[0]): ParametricFamilyMetadata { return { libraryId: family.id, family: family.name, type, typeParameters: Object.fromEntries(family.typeParameters.map((item) => [item.key, item.defaultValue])), instanceParameters: Object.fromEntries(family.instanceParameters.map((item) => [item.key, item.defaultValue])), metadata: family.metadata }; }
+

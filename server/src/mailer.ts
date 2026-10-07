@@ -94,3 +94,4 @@ export function sendOtpEmail(to: string, code: string): Promise<MailResult> {
     `Hi there,\n\nYour Groundwork verification code is ${code}.\n\nThis code expires in 10 minutes. If you did not request it, you can ignore this email.`,
   );
 }
+

@@ -301,3 +301,4 @@ export function runCommunityCommand(input: string, design: CommunityDesign, bran
 
   return { design, reply: "I could not map that command yet. Try “help” for supported commands." };
 }
+

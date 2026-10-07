@@ -82,3 +82,4 @@ export function validateCadMetadata(metadata: CadExchangeMetadata): CadValidatio
   }
   return issues;
 }
+

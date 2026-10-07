@@ -27,3 +27,4 @@ export function useTheme(): ThemeContextValue {
   if (!value) throw new Error("useTheme must be used within ThemeProvider");
   return value;
 }
+

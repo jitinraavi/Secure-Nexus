@@ -93,3 +93,4 @@ export const MAIL = {
   resendKey: process.env.RESEND_API_KEY || "",
   devOtp: process.env.GROUNDWORK_DEV_OTP !== "0",
 };
+

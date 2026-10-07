@@ -79,3 +79,4 @@ export function syncDraftFamilyParameters(draft: DraftElement, patch: Partial<Dr
   if (typeof patch.h === "number" && "height" in family.typeParameters) family.typeParameters.height = patch.h;
   return { ...patch, family };
 }
+
