@@ -44,6 +44,7 @@ For the centralized topology configure the authority with:
 | Variable | Required value |
 | --- | --- |
 | `GROUNDWORK_SERVER_ROLE` | `authority` |
+| `NODE_ENV` | `production`; required gateway mode refuses insecure development session cookies. |
 | `GROUNDWORK_AUTHORITY_GATEWAY_MODE` | `required` |
 | `GROUNDWORK_AUTHORITY_ID` | Stable 8–64 character letters/digits/underscore/hyphen identifier shared by all gateways. |
 | `GROUNDWORK_GATEWAY_SECRET` | Provisioned random secret: at least 32 random bytes represented as 43–128 base64url characters, shared only with authorized gateways. Character validation is not an entropy check. |
@@ -83,7 +84,7 @@ the source does not bypass certificate checks or follow upstream network redirec
 
 Do not copy the authority `.env` onto a gateway. Secondary startup explicitly
 rejects nonempty `MASTER_KEY`, `PREVIOUS_MASTER_KEY`, `DB_PATH`,
-`GROUNDWORK_DATA_DIR`, payment secrets, assistant API key, Redis credential or mail
+`GROUNDWORK_DATA_DIR`, payment secrets (including `RAZORPAY_WEBHOOK_SECRET`), assistant API key, Redis credential or mail
 credentials. Native workers must be unset or `NATIVE_WORKER_ENABLED=false`.
 The client asset directory is read-only; gateways need no authority data volume.
 
@@ -120,7 +121,8 @@ addition to their session/CSRF credentials; the gateway offers no CORS exception
 
 Cookies and multiple `Set-Cookie` headers pass through unchanged. Current session
 cookies are host-only, so one canonical public host avoids cross-host session
-sharing. Configure the authority as production so session cookies remain Secure.
+sharing. Required gateway authority startup enforces production so session cookies
+remain Secure.
 SSO uses the same canonical `PUBLIC_APP_ORIGIN` for registered callbacks. Existing
 OIDC state, nonce, browser-binding cookie, PKCE, signature and membership checks
 remain on the authority. Redirect responses are relayed to the browser; locations
@@ -140,6 +142,18 @@ they preserve the existing heartbeat/event replay behavior. WebSocket and HTTP
 upgrade tunnels are unsupported. Configure edge buffering, body limits, idle
 timeouts and TLS ingress to permit these existing SSE/multipart workflows.
 
+Raw fragments in incoming request targets are rejected before URL construction;
+the gateway never silently drops a fragment to choose a different API target.
+Same-authority relative redirect locations resolve against the actual API request
+URL before returning to the public host. Successful complete transfers keep the
+agent's normal TLS connection reuse; incomplete uploads/responses cancel both
+directions and all bounded transforms. Incoming upgrade and CONNECT requests are
+closed explicitly. Early API validation/capacity rejections close their connection
+after the error instead of draining a rejected upload on a reusable socket.
+Importing the guarded authority index from an unrelated file named `index.ts` or
+`index.js` no longer starts a listener or worker; only the exact
+resolved authority entry path starts them automatically.
+
 ## Source review and deferred acceptance
 
 Inspection covered role-before-import isolation, copied route/worker wiring,
@@ -154,3 +168,4 @@ credential entropy, TLS termination or proxy header configuration.
 Primary references: [Node HTTP](https://nodejs.org/api/http.html),
 [Node HTTPS](https://nodejs.org/api/https.html),
 [Express proxy trust](https://expressjs.com/en/guide/behind-proxies/).
+
