@@ -5,17 +5,18 @@ import { Badge, Button, Card, Input, Select, Toggle } from "../components/ui";
 import {
   addOrganizationMember,
   bindOrganizationProject,
+  cancelOrganizationSubscription,
   configureOrganizationSso,
   createOrganization,
-  cancelOrganizationSubscription,
   getOrganization,
   getOrganizationAudit,
   getOrganizationBilling,
   getOrganizationSso,
   listOrganizations,
   listPersonalOrganizationProjects,
-  removeOrganizationMember,
   reactivateOrganizationSubscription,
+  removeOrganizationMember,
+  subscribeOrganization,
   transferOrganizationOwner,
   unlinkOrganizationIdentity,
   updateOrganization,
@@ -33,6 +34,7 @@ function download(name: string, text: string) {
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = name; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
 function CoordinationWorkspace({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
   const { user } = useAuth();
   const sync = useRef<CoordinationSync | null>(null);
@@ -64,15 +66,14 @@ function CoordinationWorkspace({ projectId, canEdit }: { projectId: string; canE
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Could not queue issue"); }
   };
   return <Card className="space-y-4 p-5">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-slate-100">Offline coordination workspace</h2><p className="text-sm text-slate-400">Issue fields synchronize independently using deterministic registers. Pending edits are saved in this browser.</p></div><Badge tone={status.pending ? "amber" : "emerald"}>{status.pending} pending · {status.backend}</Badge></div>
-    <div className="flex gap-2"><Button variant="secondary" loading={status.syncing} onClick={() => { void sync.current?.synchronize(); }}>Synchronize</Button><Button variant="ghost" onClick={() => { const text = sync.current?.exportQueue(); if (text) download("coordination-pending.json", text); }}>Export pending queue</Button></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-slate-100">Offline coordination workspace</h2><p className="text-sm text-slate-400">Issue tracking remains available offline and syncs when the network returns.</p></div><div className="flex gap-2"><Button variant="secondary" loading={status.syncing} onClick={() => { void sync.current?.synchronize(); }}>Synchronize</Button><Button variant="ghost" onClick={() => { void sync.current?.export(); }}>Export</Button></div></div>
     {(status.error || error) && <p role="alert" className="text-sm text-amber-300">{error || status.error}</p>}
     {!status.durable && <p className="text-sm text-amber-300">Browser storage is unavailable. Keep this tab open or export pending edits.</p>}
-    {canEdit && <div className="grid gap-3 md:grid-cols-2"><Input label="New issue title" value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} /><Input label="Description" value={body} maxLength={10000} onChange={(event) => setBody(event.target.value)} /><Button disabled={!title.trim()} onClick={create}>Queue issue</Button></div>}
+    {canEdit && <div className="grid gap-3 md:grid-cols-2"><Input label="New issue title" value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} /><Input label="Description" value={body} maxLength={10000} onChange={(event) => setBody(event.target.value)} /><Button onClick={create}>Create issue</Button></div>}
     {!records.length && <p className="text-sm text-slate-400">No coordination issues yet.</p>}
     {records.map((record) => <div key={record.id} className="grid gap-3 rounded-xl border border-slate-700 p-4 md:grid-cols-2">
       <Input label="Title" defaultValue={record.title} key={`${record.id}-title-${record.title}`} disabled={!canEdit} maxLength={200} onBlur={(event) => { if (event.target.value !== record.title) edit(record.id, "title", event.target.value); }} />
-      <Select label="Status" value={record.status} disabled={!canEdit} onChange={(event) => edit(record.id, "status", event.target.value)}><option value="open">Open</option><option value="in-progress">In progress</option><option value="resolved">Resolved</option></Select>
+      <Select label="Status" value={record.status} disabled={!canEdit} onChange={(event) => edit(record.id, "status", event.target.value)}><option value="open">Open</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="done">Done</option></Select>
       <Input label="Description" defaultValue={record.body} key={`${record.id}-body-${record.body}`} disabled={!canEdit} maxLength={10000} onBlur={(event) => { if (event.target.value !== record.body) edit(record.id, "body", event.target.value); }} />
       <Input label="Assignee" defaultValue={record.assignee} key={`${record.id}-assignee-${record.assignee}`} disabled={!canEdit} maxLength={120} onBlur={(event) => { if (event.target.value !== record.assignee) edit(record.id, "assignee", event.target.value); }} />
       <Input label="Due date" type="date" value={record.dueDate} disabled={!canEdit} onChange={(event) => edit(record.id, "dueDate", event.target.value)} />
@@ -85,6 +86,7 @@ export function OrganizationWorkspace() {
   const { user } = useAuth();
   return <OrganizationWorkspaceContent key={user?.id ?? "signed-out"} />;
 }
+
 function OrganizationWorkspaceContent() {
   const { user } = useAuth();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -107,6 +109,7 @@ function OrganizationWorkspaceContent() {
   const [transferUser, setTransferUser] = useState("");
   const [billing, setBilling] = useState<OrganizationBillingInfo | null>(null);
   const [targetSeats, setTargetSeats] = useState(0);
+  const [billingPlan, setBillingPlan] = useState<"standard" | "enterprise">("standard");
   const [acceptTermReplacement, setAcceptTermReplacement] = useState(false);
   const checkoutRequest = useRef<{ scope: string; key: string; orderId?: string } | null>(null);
   const mounted = useRef(true), actionInFlight = useRef(false);
@@ -130,6 +133,7 @@ function OrganizationWorkspaceContent() {
       if (mounted.current && token === loadToken.current && selectedOrganization.current === id) {
         setBilling(b);
         setTargetSeats(Math.max(1, b.entitlement.effectivePaidSeats));
+        setBillingPlan(b.subscription.plan as "standard" | "enterprise");
         const previous = checkoutRequest.current;
         if (previous?.orderId && b.orders.some(order => order.id === previous.orderId && ["verified", "expired", "failed", "requires_review"].includes(order.status))) checkoutRequest.current = null;
       }
@@ -144,7 +148,7 @@ function OrganizationWorkspaceContent() {
     let live = true;
     void refreshDetail(organizationId).catch((failure: unknown) => { if (live) setError(failure instanceof Error ? failure.message : "Could not load organization"); });
     void listPersonalOrganizationProjects().then((result) => { if (live) setPersonalProjects(result.projects); }).catch(() => { if (live) setPersonalProjects([]); });
-    void getOrganizationSso(organizationId).then((result) => { if (!live || !result.configuration) return; setIssuer(result.configuration.issuer); setClientId(result.configuration.clientId); setRedirectUri(result.configuration.redirectUri); setSsoEnabled(result.configuration.enabled); }).catch(() => { /* ordinary members do not receive provider configuration */ });
+    void getOrganizationSso(organizationId).then((result) => { if (!live || !result.configuration) return; setIssuer(result.configuration.issuer); setClientId(result.configuration.clientId); setRedirectUri(result.configuration.redirectUri); setSsoEnabled(result.configuration.enabled); }).catch(() => { if (live) setSsoEnabled(false); });
     return () => { live = false; loadToken.current += 1; };
   }, [organizationId, refreshDetail]);
   const act = async (work: () => Promise<unknown>, message: string) => {
@@ -173,31 +177,24 @@ function OrganizationWorkspaceContent() {
     }
     download("organization-audit-partial.json", JSON.stringify({ organizationId, events, nextBeforeId: before, partial: true }, null, 2));
   };
+
   return <div className="mx-auto max-w-6xl space-y-6 p-5">
-    <div><h1 className="text-2xl font-semibold text-slate-100">Organization workspace</h1><p className="mt-1 text-sm text-slate-400">Manage tenant projects, seats, roles, identity providers and shared coordination.</p></div>
+    <div><h1 className="text-2xl font-semibold text-slate-100">Organization workspace</h1><p className="mt-1 text-sm text-slate-400">Manage tenant projects, seats, roles, identity providers and billing.</p></div>
     {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}{notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
-    <Card className="grid gap-4 p-5 md:grid-cols-3"><Select label="Organization" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">Select an organization</option>{organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}</Select><Input label="New organization name" value={newName} maxLength={80} onChange={(event) => setNewName(event.target.value)} /><Button loading={busy} disabled={!newName.trim()} onClick={() => { void act(async () => { const result = await createOrganization(newName.trim()); setOrganizationId(result.id); setNewName(""); }, "Organization created"); }}>Create organization</Button></Card>
+    <Card className="grid gap-4 p-5 md:grid-cols-3"><Select label="Organization" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">Select an organization</option>{organizations.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}</Select><Input label="Organization name" value={newName} onChange={(event) => setNewName(event.target.value)} /><Button onClick={() => { void act(async () => { await createOrganization(newName.trim()); setNewName(""); }, "Organization created"); }} disabled={!newName.trim()}>Create organization</Button></Card>
     {detail && <>
-      <div className="flex flex-wrap gap-3"><Badge>{detail.organization.role}</Badge><Badge tone="cyan">{detail.organization.seatsUsed} / {detail.organization.seatLimit} seats</Badge><Badge>{detail.organization.auditRetentionDays} day audit retention</Badge><span className="text-xs text-slate-400">Organization ID: {detail.organization.id}</span></div>
+      <div className="flex flex-wrap gap-3"><Badge>{detail.organization.role}</Badge><Badge tone="cyan">{detail.organization.seatsUsed} / {detail.organization.seatLimit} seats</Badge><Badge>{detail.organization.auditRetentionDays} day retention</Badge></div>
       {isAdmin && billing && (
         <Card className="space-y-4 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-semibold text-slate-100">Enterprise authority & billing entitlements</h2>
-              <p className="text-sm text-slate-400">
-                Prepaid seat capacity activates after a matched live provider receipt. Existing data stays available for reading and member cleanup after expiry.
-              </p>
+              <p className="text-sm text-slate-400">Prepaid seat capacity activates after a matched live provider receipt. Existing data stays available for reading and member cleanup after expiry.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge tone={billing.entitlement.isDelinquent ? "rose" : "emerald"}>
-                Plan: {billing.entitlement.plan.toUpperCase()} ({billing.entitlement.status})
-              </Badge>
-              <Badge tone="cyan">
-                {billing.entitlement.seatsUsed} / {Math.min(billing.entitlement.totalSeats, billing.entitlement.seatLimit)} seats ({billing.entitlement.effectivePaidSeats} verified paid)
-              </Badge>
-              {billing.entitlement.isDelinquent && (
-                <Badge tone="rose">Billing past due / delinquent</Badge>
-              )}
+              <Badge tone={billing.entitlement.isDelinquent ? "rose" : "emerald"}>Plan: {billing.entitlement.plan.toUpperCase()} ({billing.entitlement.status})</Badge>
+              <Badge tone="cyan">{billing.entitlement.seatsUsed} / {Math.min(billing.entitlement.totalSeats, billing.entitlement.seatLimit)} seats ({billing.entitlement.effectivePaidSeats} verified paid)</Badge>
+              {billing.entitlement.isDelinquent && <Badge tone="rose">Billing past due / delinquent</Badge>}
             </div>
           </div>
 
@@ -209,33 +206,17 @@ function OrganizationWorkspaceContent() {
               <div className="space-y-3">
                 <h3 className="text-sm font-medium text-slate-200">Purchase a prepaid seat term</h3>
                 <div className="flex items-end gap-3">
-                  <Input
-                    label="Target additional paid seats"
-                    type="number"
-                    min={1}
-                    max={10000 - billing.entitlement.baseSeats}
-                    value={targetSeats}
-                    onChange={(e) => setTargetSeats(Number(e.target.value))}
-                  />
-                  <Button
-                    loading={busy}
-                    disabled={!billing.configuration.configured || !acceptTermReplacement || !Number.isSafeInteger(targetSeats) || targetSeats < 1 ||
-                      targetSeats + billing.entitlement.baseSeats > 10000 || targetSeats + billing.entitlement.baseSeats < billing.entitlement.seatsUsed ||
-                      targetSeats * (billing.configuration.unitPrice ?? 0) > billing.configuration.maximumAmount || billing.orders.some(order => ["creating", "pending", "creation_unknown"].includes(order.status) && order.expiresAt > Date.now() / 1000)}
-                    onClick={() => {
-                      void act(async () => {
-                        const scope = `${user?.id}:${organizationId}:${targetSeats}`;
-                        if (checkoutRequest.current?.scope !== scope) checkoutRequest.current = { scope, key: crypto.randomUUID() };
-                        const request = checkoutRequest.current;
-                        const created = await updateOrganizationSeats(organizationId, { idempotencyKey: request.key,
-                          targetPaidSeats: targetSeats, acceptTermReplacement: true });
-                        if (mounted.current && checkoutRequest.current === request) {
-                          if (["verified", "expired", "failed", "requires_review"].includes(created.order.status)) checkoutRequest.current = null;
-                          else request.orderId = created.order.id;
-                        }
-                      }, "Checkout intent saved. Use the hosted link below; capacity remains unchanged until a verified receipt arrives.");
-                    }}
-                  >
+                  <Input label="Target additional paid seats" type="number" min={1} max={10000 - billing.entitlement.baseSeats} value={targetSeats} onChange={(e) => setTargetSeats(Number(e.target.value))} />
+                  <Button loading={busy} disabled={!billing.configuration.configured || !acceptTermReplacement || !Number.isSafeInteger(targetSeats) || targetSeats < 1 || targetSeats + billing.entitlement.baseSeats > 10000 || targetSeats + billing.entitlement.baseSeats < billing.entitlement.seatsUsed || targetSeats * (billing.configuration.unitPrice ?? 0) > billing.configuration.maximumAmount || billing.orders.some(order => ["creating", "pending", "creation_unknown"].includes(order.status) && order.expiresAt > Date.now() / 1000)} onClick={() => { void act(async () => {
+                    const scope = `${user?.id}:${organizationId}:${targetSeats}`;
+                    if (checkoutRequest.current?.scope !== scope) checkoutRequest.current = { scope, key: crypto.randomUUID() };
+                    const request = checkoutRequest.current;
+                    const created = await updateOrganizationSeats(organizationId, { idempotencyKey: request.key, targetPaidSeats: targetSeats, acceptTermReplacement: true });
+                    if (mounted.current && checkoutRequest.current === request) {
+                      if (["verified", "expired", "failed", "requires_review"].includes(created.order?.status ?? "")) checkoutRequest.current = null;
+                      else request.orderId = created.order?.id;
+                    }
+                  }, "Checkout intent saved. Use the hosted link below; capacity remains unchanged until a verified receipt arrives."); }}>
                     Create payment link
                   </Button>
                 </div>
@@ -244,11 +225,9 @@ function OrganizationWorkspaceContent() {
               <div className="space-y-3">
                 <h3 className="text-sm font-medium text-slate-200">Term and price</h3>
                 <p className="text-sm text-slate-400">{billing.configuration.configured ? `INR ${((billing.configuration.unitPrice ?? 0) * targetSeats / 100).toFixed(2)} for ${billing.configuration.termDays} days and ${targetSeats} additional seats.` : "Price and term must be configured by the deployment operator."}</p>
-                <p className="text-sm text-amber-300">A successful payment replaces the current paid capacity and starts a new term when its receipt is verified. Remaining days are forfeited. No prorating, refunds or automatic renewal are included. Enterprise and PayPal tenant products are unavailable.</p>
+                <p className="text-sm text-amber-300">A successful payment replaces the current paid capacity and starts a new term when its receipt is verified. Remaining days are forfeited. No prorating, refunds or automatic renewal are included.</p>
                 <Toggle checked={acceptTermReplacement} onChange={setAcceptTermReplacement} label="I accept replacing the current paid term" />
-                {billing.entitlement.hasVerifiedPayment && !billing.entitlement.expired && <Button variant="secondary" loading={busy} onClick={() => {
-                  void act(() => billing.subscription.cancelAtPeriodEnd ? reactivateOrganizationSubscription(organizationId, crypto.randomUUID()) : cancelOrganizationSubscription(organizationId, crypto.randomUUID()), "Paid term flag updated. Automatic renewal is not enabled.");
-                }}>{billing.subscription.cancelAtPeriodEnd ? "Keep existing term" : "Mark cancellation at term end"}</Button>}
+                {billing.entitlement.hasVerifiedPayment && !billing.entitlement.expired && <Button variant="secondary" loading={busy} onClick={() => { void act(() => billing.subscription.cancelAtPeriodEnd ? reactivateOrganizationSubscription(organizationId, crypto.randomUUID()) : cancelOrganizationSubscription(organizationId, crypto.randomUUID()), "Paid term flag updated. Automatic renewal is not enabled."); }}>{billing.subscription.cancelAtPeriodEnd ? "Keep existing term" : "Mark cancellation at term end"}</Button>}
                 <Button variant="ghost" disabled={busy} onClick={() => { void act(async () => undefined, "Billing refreshed"); }}>Refresh billing</Button>
               </div>
             </div>
@@ -275,14 +254,12 @@ function OrganizationWorkspaceContent() {
           )}
         </Card>
       )}
-      {isOwner && <Card className="grid gap-4 p-5 md:grid-cols-3"><Input label="Organization name" value={name} maxLength={80} onChange={(event) => setName(event.target.value)} /><Input label={`Seats (deployment allowance ${detail.seatEntitlement})`} type="number" value={seatLimit} min={detail.organization.seatsUsed} max={detail.seatEntitlement} onChange={(event) => setSeatLimit(Number(event.target.value))} /><Input label="Audit retention days" type="number" value={retention} min={30} max={3650} onChange={(event) => setRetention(Number(event.target.value))} /><Button loading={busy} onClick={() => { void act(() => updateOrganization(organizationId, { name, seatLimit, auditRetentionDays: retention }), "Organization settings saved"); }}>Save settings</Button></Card>}
-      <Card className="space-y-4 p-5"><h2 className="font-semibold text-slate-100">Members</h2>{detail.members.map((member) => <div key={member.userId} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700 p-3"><span className="text-sm text-slate-200">{member.username || member.email}</span><div className="flex items-center gap-2"><Badge>{member.role}</Badge>{isAdmin && member.role !== "owner" && (isOwner || member.role !== "admin") && <><Select aria-label={`Role for ${member.email}`} value={member.role} disabled={busy} onChange={(event) => { void act(() => updateOrganizationMember(organizationId, member.userId, event.target.value as Exclude<OrganizationRole, "owner">), "Member role updated"); }}>{isOwner && <option value="admin">Administrator</option>}<option value="editor">Editor</option><option value="viewer">Viewer</option></Select><Button variant="ghost" disabled={busy} onClick={() => { void act(() => removeOrganizationMember(organizationId, member.userId), "Member removed"); }}>Remove</Button></>}</div></div>)}
-        {isAdmin && <div className="grid gap-3 md:grid-cols-3"><Input label="Registered email or username" value={identifier} onChange={(event) => setIdentifier(event.target.value)} /><Select label="Role" value={memberRole} onChange={(event) => setMemberRole(event.target.value as Exclude<OrganizationRole, "owner">)}>{isOwner && <option value="admin">Administrator</option>}<option value="editor">Editor</option><option value="viewer">Viewer</option></Select><Button loading={busy} disabled={!identifier.trim()} onClick={() => { void act(async () => { await addOrganizationMember(organizationId, identifier.trim(), memberRole); setIdentifier(""); }, "Member added"); }}>Add member</Button></div>}
-        {isOwner && <div className="flex flex-wrap items-end gap-3"><Select label="Transfer ownership to member" value={transferUser} onChange={(event) => setTransferUser(event.target.value)}><option value="">Select a member</option>{detail.members.filter((member) => member.role !== "owner").map((member) => <option key={member.userId} value={member.userId}>{member.username || member.email}</option>)}</Select><Button variant="secondary" disabled={!transferUser || busy} onClick={() => { void act(() => transferOrganizationOwner(organizationId, transferUser), "Organization ownership transferred"); }}>Transfer ownership</Button></div>}
-      </Card>
-      <Card className="space-y-4 p-5"><h2 className="font-semibold text-slate-100">Tenant projects</h2><p className="text-sm text-slate-400">Binding a personal project applies organization roles and revokes its existing public links and individual invitations.</p>{detail.projects.map((project) => <div key={project.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700 p-3"><span className="text-sm text-slate-200">{project.name}</span><Link className="text-sm text-amber-300" to={`/editor/${project.id}`}>Open project</Link></div>)}{isAdmin && <div className="flex flex-wrap items-end gap-3"><Select label="Personal project you own" value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Select a project</option>{personalProjects.filter((project) => !detail.projects.some((bound) => bound.id === project.id)).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select><Button disabled={!projectId || busy} onClick={() => { void act(() => bindOrganizationProject(organizationId, projectId), "Project bound to organization"); }}>Bind project</Button></div>}</Card>
-      <Card className="space-y-4 p-5"><h2 className="font-semibold text-slate-100">Single sign-on</h2><p className="text-sm text-slate-400">Link your current account by signing in to the configured provider. Each member proves both identities. SAML providers connect through a SAML-to-OIDC broker.</p><div className="flex flex-wrap gap-4"><a className="text-sm text-amber-300" href={`/api/sso/${encodeURIComponent(organizationId)}/start?link=1`}>Link my provider identity</a><a className="text-sm text-amber-300" href={`/api/sso/${encodeURIComponent(organizationId)}/start`}>Sign in through provider</a><Button variant="ghost" disabled={busy} onClick={() => { void act(() => unlinkOrganizationIdentity(organizationId), "Provider identity unlinked"); }}>Unlink my identity</Button></div>{isOwner && <><div className="grid gap-3 md:grid-cols-2"><Input label="OIDC issuer" value={issuer} onChange={(event) => setIssuer(event.target.value)} /><Input label="Client ID" value={clientId} onChange={(event) => setClientId(event.target.value)} /><Input label="Replace client secret (blank keeps existing)" type="password" autoComplete="new-password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} /><Toggle label="Enable organization SSO" checked={ssoEnabled} onChange={setSsoEnabled} /></div>{redirectUri && <p className="break-all text-xs text-slate-400">Provider callback: {redirectUri}</p>}<Button loading={busy} onClick={() => { void act(async () => { const result = await configureOrganizationSso(organizationId, { issuer, clientId, enabled: ssoEnabled, ...(clientSecret ? { clientSecret } : {}) }); setRedirectUri(result.redirectUri); setClientSecret(""); }, "Provider configuration saved"); }}>Save provider</Button></>}</Card>
-      {isAdmin && <Card className="flex flex-wrap items-center justify-between gap-3 p-5"><div><h2 className="font-semibold text-slate-100">Organization audit export</h2><p className="text-sm text-slate-400">Exports retained administration and coordination events, up to 10,000 entries per download.</p></div><Button variant="secondary" loading={busy} onClick={() => { void act(exportAudit, "Audit export downloaded"); }}>Export audit JSON</Button></Card>}
+      {isOwner && <Card className="grid gap-4 p-5 md:grid-cols-3"><Input label="Organization name" value={name} maxLength={80} onChange={(event) => setName(event.target.value)} /><Input label={`Seat limit (${detail.organization.seatLimit})`} type="number" min={1} max={10000} value={seatLimit} onChange={(event) => setSeatLimit(Number(event.target.value))} /><Input label="Audit retention days" type="number" min={30} max={3650} value={retention} onChange={(event) => setRetention(Number(event.target.value))} /><Button onClick={() => { void act(async () => { await updateOrganization(organizationId, { name, seatLimit, auditRetentionDays: retention }); }, "Organization settings updated"); }} disabled={!name.trim()}>Save settings</Button></Card>}
+      <Card className="space-y-4 p-5"><h2 className="font-semibold text-slate-100">Members</h2>{detail.members.map((member) => <div key={member.userId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 p-2"><div className="text-sm text-slate-200"><span>{member.email}</span>{member.username && <span className="ml-2 text-slate-400">@{member.username}</span>}</div><div className="flex items-center gap-2"><Badge>{member.role}</Badge>{isAdmin && member.role !== "owner" && <Button variant="ghost" onClick={() => { void act(async () => { await removeOrganizationMember(organizationId, member.userId); }, "Member removed"); }}>Remove</Button>}</div></div>)}{isAdmin && <div className="grid gap-3 md:grid-cols-3"><Input label="Registered email or username" value={identifier} onChange={(event) => setIdentifier(event.target.value)} /><Select label="Role" value={memberRole} onChange={(event) => setMemberRole(event.target.value as Exclude<OrganizationRole, "owner">)}><option value="editor">Editor</option><option value="admin">Admin</option><option value="viewer">Viewer</option></Select><Button onClick={() => { void act(async () => { await addOrganizationMember(organizationId, identifier, memberRole); setIdentifier(""); }, "Member added"); }} disabled={!identifier.trim()}>Add member</Button></div>}</Card>
+      {isOwner && <Card className="space-y-4 p-5"><h2 className="font-semibold text-slate-100">Transfer ownership</h2><div className="flex flex-wrap items-end gap-3"><Select label="Transfer ownership to member" value={transferUser} onChange={(event) => setTransferUser(event.target.value)}><option value="">Select a member</option>{detail.members.filter((member) => member.role !== "owner").map((member) => <option key={member.userId} value={member.userId}>{member.email}</option>)}</Select><Button variant="secondary" disabled={!transferUser} onClick={() => { void act(async () => { await transferOrganizationOwner(organizationId, transferUser); setTransferUser(""); }, "Ownership transferred"); }}>Transfer ownership</Button></div></Card>}
+      <Card className="space-y-4 p-5"><h2 className="font-semibold text-slate-100">Tenant projects</h2><p className="text-sm text-slate-400">Binding a personal project applies organization roles and a shared project workspace.</p><div className="grid gap-3 md:grid-cols-2"><Select label="Personal project" value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Select a project</option>{personalProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select><Button variant="secondary" disabled={!projectId} onClick={() => { void act(async () => { await bindOrganizationProject(organizationId, projectId); setProjectId(""); }, "Project bound to organization"); }}>Bind project</Button></div></Card>
+      <Card className="space-y-4 p-5"><h2 className="font-semibold text-slate-100">Single sign-on</h2><p className="text-sm text-slate-400">Link your current account by signing in to the configured identity provider.</p>{isAdmin && <div className="grid gap-3 md:grid-cols-2"><Input label="Issuer" value={issuer} onChange={(event) => setIssuer(event.target.value)} /><Input label="Client ID" value={clientId} onChange={(event) => setClientId(event.target.value)} /><Input label="Redirect URI" value={redirectUri} onChange={(event) => setRedirectUri(event.target.value)} /><Input label="Client secret" type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} /><label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={ssoEnabled} onChange={(event) => setSsoEnabled(event.target.checked)} /> Enable SSO</label><Button variant="secondary" onClick={() => { void act(async () => { await configureOrganizationSso(organizationId, { issuer, clientId, clientSecret: clientSecret || undefined, enabled: ssoEnabled }); }, "SSO configuration saved"); }}>Save SSO settings</Button></div>}{!isAdmin && <p className="text-sm text-slate-400">SSO configuration is restricted to owners and admins.</p>}<Button variant="ghost" onClick={() => { void act(async () => { await unlinkOrganizationIdentity(organizationId); }, "Identity unlinked"); }}>Unlink identity</Button></Card>
+      {isAdmin && <Card className="flex flex-wrap items-center justify-between gap-3 p-5"><div><h2 className="font-semibold text-slate-100">Organization audit export</h2><p className="text-sm text-slate-400">Export the tenant audit stream for compliance review.</p></div><Button variant="secondary" onClick={() => { void exportAudit(); }}>Export audit</Button></Card>}
       <Select label="Coordination project" value={coordinationProjectId} onChange={(event) => setCoordinationProjectId(event.target.value)}><option value="">Select a tenant project</option>{detail.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</Select>
       {coordinationProjectId && <CoordinationWorkspace key={coordinationProjectId} projectId={coordinationProjectId} canEdit={detail.organization.role !== "viewer"} />}
     </>}
