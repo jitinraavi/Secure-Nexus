@@ -417,6 +417,7 @@ export function InfraEditor({ kind, infra, onChange, projectName, design, onVisu
         location={infra.location}
         mode={LOCATOR_MODE[kind]}
         onChange={(loc) => update({ location: loc })}
+        onApplyBoundary={() => applyFromLocation()}
       />
       <Button size="sm" variant="secondary" onClick={applyFromLocation} disabled={!infra.location}>
         {applyLabel}
