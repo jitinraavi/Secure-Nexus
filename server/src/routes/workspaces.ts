@@ -1,5 +1,5 @@
 import { Router, type Response } from "express";
-import multer from "multer";
+import { boundedUpload } from "../uploads.js";
 import { z } from "zod";
 import { logAudit } from "../audit.js";
 import { canWriteProject, getProjectAccess } from "../projectAccess.js";
@@ -17,10 +17,8 @@ const historyQuerySchema = z.object({
   beforeRevision: z.string().regex(/^\d{1,16}$/).transform(Number).refine((value) => Number.isSafeInteger(value) && value > 0, "Invalid history revision"),
 }).strict();
 const artifactQuerySchema = z.object({ kind: kindSchema.optional() }).strict();
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_ARTIFACT_BYTES, files: 1, fields: 1, fieldNameSize: 32, fieldSize: 128, parts: 2, headerPairs: 50 },
-}).single("file");
+const upload = boundedUpload("file", { fileSize: MAX_ARTIFACT_BYTES, fields: 1, fieldNameSize: 32,
+  fieldSize: 128, parts: 2, allowedFields: ["kind"], sizeCode: "ARTIFACT_SIZE" });
 
 function actor(req: AuthedRequest): WorkspaceActor {
   if (!req.user || !req.session) throw new WorkspaceError(401, "Not authenticated", "SESSION_EXPIRED");
@@ -57,20 +55,7 @@ router.get("/artifacts", handle((req, res) => {
   if (!parsed.success) throw new WorkspaceError(400, "Invalid artifact query", "INVALID_QUERY");
   res.json(listWorkspaceArtifacts(req.params.projectId, actor(req), parsed.data.kind));
 }));
-router.post("/artifacts", (req: AuthedRequest, res, next) => {
-  upload(req, res, (error: unknown) => {
-    if (!error) { next(); return; }
-    if (error instanceof multer.MulterError) {
-      res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({
-        error: error.code === "LIMIT_FILE_SIZE" ? "Artifact exceeds the 64 MiB limit" : "Upload requires exactly one file and one module kind field",
-        code: error.code === "LIMIT_FILE_SIZE" ? "ARTIFACT_SIZE" : "INVALID_MULTIPART",
-      });
-      return;
-    }
-    // Malformed multipart is an input error; do not expose parser internals.
-    res.status(400).json({ error: "Invalid multipart upload", code: "INVALID_MULTIPART" });
-  });
-}, handle((req, res) => {
+router.post("/artifacts", upload, handle((req, res) => {
   const parsed = z.object({ kind: kindSchema }).strict().safeParse(req.body);
   if (!parsed.success || !req.file) throw new WorkspaceError(400, "Upload requires a valid module kind and one file", "INVALID_MULTIPART");
   const artifact = createWorkspaceArtifact(req.params.projectId, parsed.data.kind, actor(req), req.file.originalname, req.file.buffer);

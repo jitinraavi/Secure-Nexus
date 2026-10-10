@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "test": "node --import tsx --test test/browser-security.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

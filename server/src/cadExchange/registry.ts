@@ -24,4 +24,3 @@ cadExchangeProviders.register(createAutodeskOdaAdapter({
   endpoint: process.env.CAD_EXCHANGE_ENDPOINT || "",
   sdkCapability: process.env.CAD_EXCHANGE_SDK_CAPABILITY === "true",
 }));
-

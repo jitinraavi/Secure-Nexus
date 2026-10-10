@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 
@@ -15,7 +16,28 @@ function ensureDir(dir: string) {
 }
 
 export const NODE_ENV = process.env.NODE_ENV || "development";
+if (!["development", "test", "production"].includes(NODE_ENV)) {
+  throw new Error("NODE_ENV must be development, test or production");
+}
 export const IS_PROD = NODE_ENV === "production";
+
+export function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  const normalized = address.toLowerCase().replace(/^\[|\]$/g, "");
+  if (normalized === "localhost" || normalized === "::1") return true;
+  const ipv4 = normalized.startsWith("::ffff:") ? normalized.slice(7) : normalized;
+  return isIP(ipv4) === 4 && ipv4.startsWith("127.");
+}
+
+export const BIND_HOST = process.env.BIND_HOST || (IS_PROD ? "0.0.0.0" : "127.0.0.1");
+if ((!isIP(BIND_HOST) && BIND_HOST !== "localhost") || (!IS_PROD && !isLoopbackAddress(BIND_HOST))) {
+  throw new Error("BIND_HOST must be an IP address or localhost; development and test must bind to loopback");
+}
+
+export const PAYMENTS_MODE = process.env.PAYMENTS_MODE || (IS_PROD ? "" : "demo");
+if (!["demo", "live"].includes(PAYMENTS_MODE) || (IS_PROD && PAYMENTS_MODE !== "live")) {
+  throw new Error("PAYMENTS_MODE must be live in production, or demo/live in development and test");
+}
 
 export const PORT = Number(process.env.PORT || 4000);
 
@@ -61,7 +83,10 @@ function loadOrCreateMasterKey(): Buffer {
 export const MASTER_KEY = loadOrCreateMasterKey();
 
 function readOptionalMasterKey(value: string | undefined): Buffer | null {
-  return value && /^[A-Za-z0-9+/]{40,}={0,2}$/.test(value) ? Buffer.from(value, "base64") : null;
+  if (!value) return null;
+  const decoded = /^[A-Za-z0-9+/]{40,}={0,2}$/.test(value) ? Buffer.from(value, "base64") : null;
+  if (!decoded || decoded.length !== 32) throw new Error("PREVIOUS_MASTER_KEY must be a base64-encoded 32-byte secret");
+  return decoded;
 }
 
 /* Optional one-release key rotation support for decrypting older projects. */
@@ -80,6 +105,9 @@ export const BODY_LIMIT = "256kb";
 export const OTP_TTL_SECONDS = 10 * 60;
 export const OTP_MAX_ATTEMPTS = 5;
 export const OTP_RESEND_COOLDOWN_SECONDS = 30;
+export const TOTP_MAX_ATTEMPTS = 5;
+export const TOTP_LOCK_SECONDS = 15 * 60;
+export const TOTP_ATTEMPT_WINDOW_SECONDS = 15 * 60;
 
 export const ADMIN_EMAILS = new Set(
   (process.env.ADMIN_EMAILS || "")
@@ -98,7 +126,5 @@ export const MAIL = {
   pass: process.env.MAIL_PASS || "",
   from: process.env.MAIL_FROM || "Groundwork <noreply@groundwork.design>",
   resendKey: process.env.RESEND_API_KEY || "",
-  devOtp: process.env.GROUNDWORK_DEV_OTP !== "0",
+  devOtp: !IS_PROD && process.env.GROUNDWORK_DEV_OTP === "1" && isLoopbackAddress(BIND_HOST),
 };
-
-

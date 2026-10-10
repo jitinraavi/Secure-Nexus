@@ -147,4 +147,3 @@ export function applyBillingTransition(params: {
     return { duplicate: false, entitlement: getOrganizationEntitlement(params.organizationId) };
   });
 }
-

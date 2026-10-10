@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback, useRef } from "react";
-import { Button, Card, Input } from "./ui";
+import { useEffect, useState, useCallback, useRef, useId } from "react";
+import { Button, Card, Input, Modal } from "./ui";
 import {
   cancelRenderJob,
   fetchRenderCapabilities,
@@ -43,23 +43,52 @@ export function RenderStudioModal({
   const [selectedPreviewJob, setSelectedPreviewJob] = useState<RenderJobSummary | null>(null);
 
   const pollTimerRef = useRef<number | null>(null);
+  const fileReaderRef = useRef<FileReader | null>(null);
+  const aliveRef = useRef(false);
+  const scopeRef = useRef({ projectId, isOpen });
+  scopeRef.current = { projectId, isOpen };
+  const scopeGeneration = useRef(0);
+  const requestGeneration = useRef(0);
+  const promptId = useId();
+  const [busyJob, setBusyJob] = useState<string | null>(null);
+  const busyJobRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; scopeGeneration.current += 1; requestGeneration.current += 1; fileReaderRef.current?.abort(); };
+  }, []);
+
+  useEffect(() => {
+    scopeGeneration.current += 1;
+    requestGeneration.current += 1;
+    setCapabilities(null); setJobs([]); setSelectedPreviewJob(null); setError(null);
+    setCurrentProjectRevision(sourceRevision); setLoading(false); setSubmitting(false);
+    setBusyJob(null); busyJobRef.current = null;
+    setSourceImageBase64(initialSourceImageBase64 || null);
+    fileReaderRef.current?.abort(); fileReaderRef.current = null;
+    return () => { scopeGeneration.current += 1; requestGeneration.current += 1; };
+  }, [projectId, isOpen]);
 
   const loadData = useCallback(async () => {
-    if (!projectId) return;
+    if (!projectId || !scopeRef.current.isOpen) return;
+    const scope = scopeGeneration.current;
+    const request = ++requestGeneration.current;
+    const isCurrent = () => aliveRef.current && scopeRef.current.projectId === projectId && scopeRef.current.isOpen && scope === scopeGeneration.current && request === requestGeneration.current;
     try {
       setLoading(true);
       const [caps, jobData] = await Promise.all([
         fetchRenderCapabilities(projectId),
         listRenderJobs(projectId),
       ]);
+      if (!isCurrent()) return;
       setCapabilities(caps);
       setJobs(jobData.jobs);
       setCurrentProjectRevision(jobData.project.revision);
       setError(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load render studio data");
+      if (isCurrent()) setError(err instanceof Error ? err.message : "Failed to load render studio data");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [projectId]);
 
@@ -81,10 +110,16 @@ export function RenderStudioModal({
   useEffect(() => {
     const hasActiveJob = jobs.some((j) => j.status === "queued" || j.status === "running");
     if (isOpen && hasActiveJob) {
+      const scope = scopeGeneration.current;
+      const request = requestGeneration.current;
+      const isCurrent = () => aliveRef.current && scopeRef.current.projectId === projectId && scopeRef.current.isOpen && scope === scopeGeneration.current && request === requestGeneration.current;
       pollTimerRef.current = window.setTimeout(() => {
         void listRenderJobs(projectId).then((data) => {
+          if (!isCurrent()) return;
           setJobs(data.jobs);
           setCurrentProjectRevision(data.project.revision);
+        }).catch((cause: unknown) => {
+          if (isCurrent()) setError(cause instanceof Error ? cause.message : "Couldn't refresh rendering progress. Use Refresh to try again.");
         });
       }, 2500);
     }
@@ -104,17 +139,26 @@ export function RenderStudioModal({
       setError("Source image exceeds 32 MiB");
       return;
     }
+    if (!/^image\/(png|jpeg)$/.test(file.type)) {
+      setError("Choose a PNG or JPEG source image.");
+      return;
+    }
+    fileReaderRef.current?.abort();
+    const scope = scopeGeneration.current;
     const reader = new FileReader();
+    fileReaderRef.current = reader;
     reader.onload = () => {
-      if (typeof reader.result === "string") {
+      if (aliveRef.current && scope === scopeGeneration.current && scopeRef.current.isOpen && fileReaderRef.current === reader && typeof reader.result === "string") {
         setSourceImageBase64(reader.result);
       }
     };
+    reader.onerror = () => { if (aliveRef.current && scope === scopeGeneration.current && scopeRef.current.isOpen) setError("Couldn't read this image. Choose another file."); };
     reader.readAsDataURL(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting || loading) return;
     if (!prompt.trim()) {
       setError("Please describe the desired photorealistic architectural render.");
       return;
@@ -124,6 +168,8 @@ export function RenderStudioModal({
       return;
     }
 
+    const scope = scopeGeneration.current;
+    const isCurrent = () => aliveRef.current && scopeRef.current.projectId === projectId && scopeRef.current.isOpen && scope === scopeGeneration.current;
     try {
       setSubmitting(true);
       setError(null);
@@ -134,75 +180,78 @@ export function RenderStudioModal({
         sourceRevision: currentProjectRevision,
         sourceImageBase64,
       });
+      if (!isCurrent()) return;
+      requestGeneration.current += 1;
+      setLoading(false);
       setPrompt("");
       setJobs((prev) => [res.job, ...prev]);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Submission failed");
+      if (isCurrent()) setError(err instanceof Error ? err.message : "Submission failed");
     } finally {
-      setSubmitting(false);
+      if (isCurrent()) setSubmitting(false);
     }
   };
 
   const handleRetry = async (jobId: string) => {
+    if (busyJobRef.current) return;
+    const scope = scopeGeneration.current;
+    const isCurrent = () => aliveRef.current && scopeRef.current.projectId === projectId && scopeRef.current.isOpen && scope === scopeGeneration.current;
+    busyJobRef.current = jobId; setBusyJob(jobId);
     try {
       setError(null);
       const res = await retryRenderJob(projectId, jobId);
+      if (!isCurrent()) return;
+      requestGeneration.current += 1;
+      setLoading(false);
       setJobs((prev) => [res.job, ...prev]);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Retry failed");
+      if (isCurrent()) setError(err instanceof Error ? err.message : "Retry failed");
+    } finally {
+      if (isCurrent()) { busyJobRef.current = null; setBusyJob(null); }
     }
   };
 
   const handleCancel = async (jobId: string) => {
+    if (busyJobRef.current) return;
+    const scope = scopeGeneration.current;
+    const isCurrent = () => aliveRef.current && scopeRef.current.projectId === projectId && scopeRef.current.isOpen && scope === scopeGeneration.current;
+    busyJobRef.current = jobId; setBusyJob(jobId);
     try {
       setError(null);
       const res = await cancelRenderJob(projectId, jobId);
+      if (!isCurrent()) return;
+      requestGeneration.current += 1;
+      setLoading(false);
       setJobs((prev) => prev.map((j) => (j.id === jobId ? res.job : j)));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Cancellation failed");
+      if (isCurrent()) setError(err instanceof Error ? err.message : "Cancellation failed");
+    } finally {
+      if (isCurrent()) { busyJobRef.current = null; setBusyJob(null); }
     }
   };
 
   const handleDownload = async (job: RenderJobSummary) => {
+    const scope = scopeGeneration.current;
+    const isCurrent = () => aliveRef.current && scopeRef.current.projectId === projectId && scopeRef.current.isOpen && scope === scopeGeneration.current;
     try {
       const url = getRenderImageUrl(projectId, job.id, "output");
       const resp = await fetch(url);
       if (!resp.ok) throw new Error("Could not download rendered image");
       const blob = await resp.blob();
+      if (!isCurrent()) return;
       downloadBlob(`render-rev${job.sourceRevision}-${job.id.slice(0, 8)}.png`, blob);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Download failed");
+      if (isCurrent()) setError(err instanceof Error ? err.message : "Download failed");
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="relative w-full max-w-5xl rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4 bg-slate-900/50">
-          <div>
-            <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-              <span>AI Photorealistic Render Studio</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                Phase 9 Durable
-              </span>
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Generate non-destructive, versioned photorealistic architectural renders from your 3D design source.
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-100 p-1.5 rounded-lg hover:bg-slate-800 transition"
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+    <>
+      <Modal open={isOpen && !selectedPreviewJob} onClose={onClose} title="AI rendering studio" wide>
+        <div className="space-y-6">
+          <p className="text-xs leading-relaxed text-slate-400">Explore photorealistic interpretations of your design. Your source model stays unchanged, and each output keeps its project revision.</p>
           {error && (
-            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300">
+            <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300">
               {error}
             </div>
           )}
@@ -210,20 +259,17 @@ export function RenderStudioModal({
           {/* Provider Gating Notice */}
           {capabilities && (
             <div
-              className={`rounded-xl border p-3.5 text-xs flex items-center justify-between ${
+              className={`rounded-xl border p-3.5 text-xs flex flex-wrap gap-2 items-center justify-between ${
                 capabilities.configured
                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
                   : "border-amber-500/30 bg-amber-500/10 text-amber-300"
               }`}
             >
               <div>
-                <span className="font-semibold uppercase tracking-wider mr-2">
-                  Provider: {capabilities.provider} ({capabilities.model})
-                </span>
                 {capabilities.configured ? (
-                  <span>Ready for photorealistic rendering</span>
+                  <><span className="font-semibold mr-2">Ready to render</span><span>{capabilities.provider} · {capabilities.model}</span></>
                 ) : (
-                  <span>Configuration gated: {capabilities.unconfiguredReason}</span>
+                  <><p className="font-semibold">Rendering is not connected yet.</p><p className="mt-1 leading-relaxed">Your workspace administrator can connect a rendering service to enable this feature.</p>{capabilities.unconfiguredReason && <details className="mt-2"><summary className="cursor-pointer">Connection details</summary><p className="mt-2 leading-relaxed">{capabilities.unconfiguredReason}</p></details>}</>
                 )}
               </div>
               <span className="text-[11px] opacity-75">Project Rev {currentProjectRevision}</span>
@@ -231,13 +277,14 @@ export function RenderStudioModal({
           )}
 
           {/* Submit New Render Form */}
-          <Card className="p-4 border-slate-800 bg-slate-950/40 space-y-4">
-            <h3 className="text-sm font-semibold text-slate-200">New Photorealistic Render Job</h3>
+          <Card className="p-4 border-slate-800 bg-slate-950/40">
+            <form onSubmit={event => void handleSubmit(event)} className="space-y-4">
+            <h3 className="text-sm font-semibold text-slate-200">Create a rendering</h3>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Source Viewport Thumbnail */}
               <div className="space-y-2">
-                <label className="text-xs text-slate-400 font-medium">Source Image Snapshot</label>
+                <p className="text-xs text-slate-400 font-medium">Source image</p>
                 <div className="relative aspect-video rounded-xl border border-slate-800 bg-slate-900/60 flex items-center justify-center overflow-hidden">
                   {sourceImageBase64 ? (
                     <img
@@ -253,6 +300,7 @@ export function RenderStudioModal({
                   </span>
                 </div>
                 <Input
+                  aria-label="Upload source image as PNG or JPEG"
                   type="file"
                   accept="image/png,image/jpeg"
                   onChange={(e) => {
@@ -267,16 +315,17 @@ export function RenderStudioModal({
               {/* Style Presets and Prompts */}
               <div className="md:col-span-2 space-y-3">
                 <div>
-                  <label className="text-xs text-slate-400 font-medium block mb-1.5">Style Preset</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <p className="text-xs text-slate-400 font-medium block mb-1.5">Visual style</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" role="group" aria-label="Rendering visual style">
                     {capabilities?.presets.map((preset: RenderPreset) => (
                       <button
                         key={preset.id}
                         type="button"
                         onClick={() => setSelectedPreset(preset.id)}
+                        aria-pressed={selectedPreset === preset.id}
                         className={`text-left p-2 rounded-lg border text-xs transition ${
                           selectedPreset === preset.id
-                            ? "border-indigo-500 bg-indigo-500/15 text-indigo-200 shadow-sm"
+                            ? "border-emerald-500 bg-emerald-500/15 text-emerald-200 shadow-sm"
                             : "border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700"
                         }`}
                       >
@@ -290,43 +339,47 @@ export function RenderStudioModal({
                 </div>
 
                 <div>
-                  <label className="text-xs text-slate-400 font-medium block mb-1">
-                    Architectural Prompt & Lighting Instructions
+                  <label htmlFor={promptId} className="text-xs text-slate-400 font-medium block mb-1">
+                    Describe your design and lighting
                   </label>
                   <textarea
+                    id={promptId}
                     rows={2}
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="e.g. Modern glass curtain wall residence with timber louvers, landscaped reflecting pool, evening lights..."
-                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
 
-                <div className="flex items-center justify-between pt-1">
+                <div className="flex flex-wrap items-center gap-3 justify-between pt-1">
                   <input
+                    aria-label="Details to avoid in the rendering (optional)"
                     type="text"
                     value={negativePrompt}
                     onChange={(e) => setNegativePrompt(e.target.value)}
                     placeholder="Negative prompt (e.g. cartoon, blurry, distorted)"
-                    className="w-2/3 rounded-xl border border-slate-800 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:border-indigo-500 focus:outline-none"
+                    className="gw-field min-w-0 flex-1 px-3 py-1.5 text-xs"
                   />
                   <Button
-                    onClick={handleSubmit}
-                    disabled={submitting || !sourceImageBase64 || !prompt.trim()}
+                    type="submit"
+                    loading={submitting}
+                    disabled={loading || !capabilities || !sourceImageBase64 || !prompt.trim()}
                     className="text-xs px-4"
                   >
-                    {submitting ? "Submitting..." : "Submit Render Job"}
+                    {submitting ? "Creating…" : "Create rendering"}
                   </Button>
                 </div>
               </div>
             </div>
+            </form>
           </Card>
 
           {/* Render History & Versioned Gallery */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-200">
-                Render History & Outputs ({jobs.length})
+                Your renderings ({jobs.length})
               </h3>
               <Button variant="ghost" size="sm" onClick={() => void loadData()} disabled={loading}>
                 Refresh
@@ -334,8 +387,8 @@ export function RenderStudioModal({
             </div>
 
             {jobs.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-800 p-8 text-center text-xs text-slate-500">
-                No render jobs submitted yet for this project.
+              <div role="status" className="rounded-xl border border-dashed border-slate-800 p-8 text-center text-xs text-slate-500">
+                {loading ? "Loading your renderings…" : "No renderings for this project yet."}
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -354,9 +407,9 @@ export function RenderStudioModal({
                               job.status === "succeeded"
                                 ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20"
                                 : job.status === "running"
-                                ? "bg-indigo-500/15 text-indigo-400 border border-indigo-500/20 animate-pulse"
+                                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 animate-pulse"
                                 : job.status === "queued"
-                                ? "bg-sky-500/15 text-sky-400 border border-sky-500/20"
+                                ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/20"
                                 : job.status === "unconfigured"
                                 ? "bg-amber-500/15 text-amber-400 border border-amber-500/20"
                                 : "bg-rose-500/15 text-rose-400 border border-rose-500/20"
@@ -383,15 +436,14 @@ export function RenderStudioModal({
                         {/* Image Preview */}
                         <div className="relative aspect-video rounded-lg overflow-hidden border border-slate-800 bg-slate-900 flex items-center justify-center">
                           {job.status === "succeeded" && job.outputArtifactId ? (
-                            <img
+                            <button type="button" className="h-full w-full" aria-label={`Preview rendering: ${job.prompt}`} onClick={() => setSelectedPreviewJob(job)}><img
                               src={getRenderImageUrl(projectId, job.id, "output")}
                               alt={job.prompt}
-                              className="w-full h-full object-cover cursor-pointer hover:scale-105 transition duration-300"
-                              onClick={() => setSelectedPreviewJob(job)}
-                            />
+                              className="w-full h-full object-cover hover:scale-105 transition duration-300"
+                            /></button>
                           ) : job.status === "running" ? (
-                            <div className="text-center p-4 text-xs text-indigo-300">
-                              <div className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-500 border-t-transparent mb-2" />
+                            <div className="text-center p-4 text-xs text-emerald-300">
+                              <div className="inline-block animate-spin rounded-full h-5 w-5 border-2 border-emerald-500 border-t-transparent mb-2" />
                               <p>Synthesizing photorealistic output...</p>
                             </div>
                           ) : (
@@ -435,6 +487,8 @@ export function RenderStudioModal({
                           <Button
                             variant="danger"
                             size="sm"
+                            disabled={Boolean(busyJob)}
+                            loading={busyJob === job.id}
                             onClick={() => void handleCancel(job.id)}
                             className="text-xs h-7"
                           >
@@ -445,6 +499,8 @@ export function RenderStudioModal({
                           <Button
                             variant="outline"
                             size="sm"
+                            disabled={Boolean(busyJob)}
+                            loading={busyJob === job.id}
                             onClick={() => void handleRetry(job.id)}
                             className="text-xs h-7"
                           >
@@ -462,36 +518,31 @@ export function RenderStudioModal({
             )}
           </div>
         </div>
-      </div>
+      </Modal>
 
       {/* Lightbox Preview Modal */}
       {selectedPreviewJob && (
-        <div
-          className="fixed inset-0 z-60 flex items-center justify-center bg-black/90 p-4"
-          onClick={() => setSelectedPreviewJob(null)}
-        >
-          <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
+        <Modal open={isOpen} onClose={() => setSelectedPreviewJob(null)} title="Rendering preview" wide>
+          <div className="flex flex-col items-center gap-3">
+            {error && <p role="alert" className="w-full rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">{error}</p>}
             <img
               src={getRenderImageUrl(projectId, selectedPreviewJob.id, "output")}
               alt={selectedPreviewJob.prompt}
-              className="max-h-[80vh] w-auto rounded-xl shadow-2xl border border-slate-700 object-contain"
+              className="max-h-[50vh] max-w-full rounded-xl border border-slate-700 object-contain"
             />
-            <div className="mt-3 flex items-center justify-between w-full px-2 text-xs text-slate-300">
-              <span className="truncate max-w-md">{selectedPreviewJob.prompt}</span>
+            <div className="flex flex-wrap items-center justify-between gap-3 w-full text-xs text-slate-300">
+              <p className="min-w-0 flex-1 break-words">{selectedPreviewJob.prompt}</p>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void handleDownload(selectedPreviewJob);
-                }}
+                onClick={() => void handleDownload(selectedPreviewJob)}
               >
                 Download Full PNG
               </Button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
-    </div>
+    </>
   );
 }

@@ -1,3 +1,5 @@
+import { captureLocalWrite, localWriteAllowed, subscribeLocalDataFence } from "./localDataFence";
+
 export type OfflineOperationType =
   | "project_save"
   | "snapshot_create"
@@ -81,11 +83,12 @@ class OfflineQueueStore {
     payload: Record<string, unknown>,
     expectedRevision: number,
   ): Promise<OfflineQueueItem> {
+    const write = captureLocalWrite(userId);
     const now = Date.now();
     const id = crypto.randomUUID();
 
     // If enqueueing a new project_save, mark any older queued saves as superseded
-    if (type === "project_save") {
+    if (write !== null && type === "project_save") {
       const existing = await this.listQueue(userId);
       for (const item of existing) {
         if (item.projectId === projectId && item.type === "project_save" && item.status === "queued") {
@@ -106,10 +109,13 @@ class OfflineQueueStore {
       updatedAt: now,
     };
 
+    if (!localWriteAllowed(userId, write)) return { ...item, status: "failed", errorMessage: "Local account writes are paused during sign-out." };
+
     this.memoryQueue.set(id, item);
 
     try {
       const db = await this.getDB();
+      if (!localWriteAllowed(userId, write)) return { ...item, status: "failed", errorMessage: "Local account writes are paused during sign-out." };
       const tx = db.transaction(STORE_QUEUE, "readwrite");
       tx.objectStore(STORE_QUEUE).put(item);
       await new Promise<void>((resolve, reject) => {
@@ -137,6 +143,8 @@ class OfflineQueueStore {
     const now = Date.now();
 
     const memItem = this.memoryQueue.get(id);
+    const write = memItem ? captureLocalWrite(memItem.userId) : undefined;
+    if (write === null) return;
     if (memItem) {
       memItem.status = status;
       memItem.updatedAt = now;
@@ -153,6 +161,7 @@ class OfflineQueueStore {
       req.onsuccess = () => {
         const item = req.result as OfflineQueueItem | undefined;
         if (item) {
+          if (!localWriteAllowed(item.userId, write === undefined ? captureLocalWrite(item.userId) : write)) return;
           item.status = status;
           item.updatedAt = now;
           if (errorMessage !== undefined) item.errorMessage = errorMessage;
@@ -208,8 +217,9 @@ class OfflineQueueStore {
    * Get pending queued operations in FIFO order for synchronization.
    */
   async getPendingQueue(userId: string): Promise<OfflineQueueItem[]> {
-    const items = await this.listQueue(userId, "queued");
-    return items.sort((a, b) => a.createdAt - b.createdAt);
+    // Interrupted sends retain their bodies; revision checks safely detect a prior commit.
+    const items = await this.listQueue(userId);
+    return items.filter(item => item.status === "queued" || item.status === "syncing").sort((a, b) => a.createdAt - b.createdAt);
   }
 
   /**
@@ -269,6 +279,11 @@ class OfflineQueueStore {
       }
     }
   }
+
+  exportUserMemory(userId: string): OfflineQueueItem[] {
+    return Array.from(this.memoryQueue.values()).filter(item => item.userId === userId);
+  }
 }
 
 export const offlineQueueStore = new OfflineQueueStore();
+subscribeLocalDataFence((userId, fence) => { if (fence.remove) offlineQueueStore.clearActiveUserSession(userId); });

@@ -78,6 +78,58 @@ function jsonInit(method: string, body: unknown, csrfToken?: string): RequestIni
   };
 }
 
+test("workspace multipart uploads accept exactly a file and kind", async (t) => {
+  const client = new CookieClient();
+  const email = `workspace-${randomBytes(6).toString("hex")}@example.test`;
+  const password = "WorkspaceTest123";
+  const signup = await client.json<{ devOtp: string }>("/api/auth/signup", jsonInit("POST", { email, password, confirmPassword: password }));
+  assert.equal(signup.response.status, 201);
+  const verified = await client.json<{ csrfToken: string }>("/api/auth/verify-email", jsonInit("POST", { email, code: signup.body.devOtp }));
+  assert.equal(verified.response.status, 200);
+  const csrfToken = verified.body.csrfToken;
+  const project = await client.json<{ id: string }>("/api/projects", jsonInit("POST", { name: "Multipart regression", projectType: "house" }, csrfToken));
+  assert.equal(project.response.status, 201);
+  const url = `/api/projects/${project.body.id}/workspaces/artifacts`;
+  const payload = '{"meshes":[]}';
+  const upload = (body: FormData) => client.json<{ artifact: { id: string; kind: string; name: string }; code?: string }>(url, {
+    method: "POST", headers: { "x-csrf-token": csrfToken }, body,
+  });
+  const validBody = (fileFirst = false) => {
+    const body = new FormData();
+    if (!fileFirst) body.append("kind", "geometry");
+    body.append("file", new Blob([payload], { type: "application/json" }), "scene.json");
+    if (fileFirst) body.append("kind", "geometry");
+    return body;
+  };
+  for (const fileFirst of [false, true]) {
+    await t.test(`accepts valid parts with ${fileFirst ? "file" : "kind"} first and returns intact data`, async () => {
+      const created = await upload(validBody(fileFirst));
+      assert.equal(created.response.status, 201);
+      assert.equal(created.body.artifact.kind, "geometry");
+      assert.equal(created.body.artifact.name, "scene.json");
+      const read = await client.request(`${url}/${created.body.artifact.id}`);
+      assert.equal(read.status, 200);
+      assert.equal(await read.text(), payload);
+    });
+  }
+  for (const extra of ["file", "field", "duplicate kind", "missing file", "invalid kind"]) {
+    await t.test(`rejects ${extra}`, async () => {
+      const body = validBody();
+      if (extra === "file") body.append("file", new Blob([payload]), "extra.json");
+      if (extra === "field") body.append("unexpected", "value");
+      if (extra === "duplicate kind") body.append("kind", "geometry");
+      if (extra === "missing file") body.delete("file");
+      if (extra === "invalid kind") body.set("kind", "unknown");
+      const rejected = await upload(body);
+      assert.equal(rejected.response.status, 400);
+      assert.equal(rejected.body.code, "INVALID_MULTIPART");
+    });
+  }
+  const inventory = await client.json<{ artifacts: unknown[] }>(url);
+  assert.equal(inventory.response.status, 200);
+  assert.equal(inventory.body.artifacts.length, 2);
+});
+
 after(async () => {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));

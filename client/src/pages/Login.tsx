@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { login, loginWithOtp, requestOtpLogin } from "../api";
 import { Button, Card, Input } from "../components/ui";
-import { Logo } from "../components/Logo";
+import { AuthShell } from "./AuthShell";
 import { useToast } from "../components/Toast";
 
 type LoginMode = "password" | "otp";
@@ -16,7 +16,6 @@ export function Login() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [devHint, setDevHint] = useState<string | null>(null);
   const [otpRequested, setOtpRequested] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -28,7 +27,7 @@ export function Login() {
       navigate("/verify-2fa", { replace: true });
       return;
     }
-    await refresh();
+    await refresh({ afterSignIn: true });
     navigate("/dashboard", { replace: true });
   };
 
@@ -56,10 +55,6 @@ export function Login() {
     setSendingCode(true);
     try {
       const res = await requestOtpLogin(identifier.trim());
-      if (res.devOtp) {
-        setDevHint(res.devOtp);
-        setCode(res.devOtp);
-      }
       const failed = res.delivered === false && !res.devOtp;
       if (failed) {
         const message = res.mailError
@@ -70,10 +65,11 @@ export function Login() {
         return;
       }
       setOtpRequested(true);
+      setCode("");
       toast.push({
         title: "Code sent",
         description: res.devOtp
-          ? `Development code: ${res.devOtp} (auto-filled for local testing)`
+          ? `Development code: ${res.devOtp}`
           : res.message || "Check your inbox for a 6-digit login code.",
         tone: res.devOtp ? "info" : "success",
       });
@@ -105,7 +101,6 @@ export function Login() {
   const resetOtp = () => {
     setOtpRequested(false);
     setCode("");
-    setDevHint(null);
     setError("");
   };
 
@@ -116,31 +111,23 @@ export function Login() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <div className="mb-8 flex justify-center">
-          <Link to="/"><Logo /></Link>
-        </div>
-        <Card className="p-8">
+    <AuthShell>
+        <Card className="auth-card">
           <h1 className="text-2xl font-bold text-slate-100">Welcome back</h1>
           <p className="mt-1 text-sm text-slate-400">Sign in to your design studio workspace.</p>
 
-          <div className="mt-6 grid grid-cols-2 gap-1 rounded-lg bg-slate-800/60 p-1 text-sm font-medium">
+          <div className="public-auth-mode" role="group" aria-label="Sign-in method">
             <button
               type="button"
               onClick={() => switchMode("password")}
-              className={`rounded-md px-3 py-2 transition ${
-                mode === "password" ? "bg-slate-700 text-slate-100 shadow" : "text-slate-400 hover:text-slate-200"
-              }`}
+              aria-pressed={mode === "password"}
             >
               Password
             </button>
             <button
               type="button"
               onClick={() => switchMode("otp")}
-              className={`rounded-md px-3 py-2 transition ${
-                mode === "otp" ? "bg-slate-700 text-slate-100 shadow" : "text-slate-400 hover:text-slate-200"
-              }`}
+              aria-pressed={mode === "otp"}
             >
               Email code
             </button>
@@ -166,7 +153,7 @@ export function Login() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
-              {error && <p className="text-sm text-rose-400">{error}</p>}
+              {error && <p role="alert" className="text-sm text-rose-400">{error}</p>}
               <Button type="submit" loading={loading} className="w-full" size="lg">
                 Sign in
               </Button>
@@ -191,7 +178,7 @@ export function Login() {
                 onChange={(e) => setIdentifier(e.target.value)}
                 required
               />
-              {error && <p className="text-sm text-rose-400">{error}</p>}
+              {error && <p role="alert" className="text-sm text-rose-400">{error}</p>}
               <Button type="submit" loading={sendingCode} className="w-full" size="lg">
                 Send me a code
               </Button>
@@ -221,6 +208,7 @@ export function Login() {
               </div>
               <Input
                 label="6-digit code"
+                autoFocus
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 placeholder="000000"
@@ -229,22 +217,7 @@ export function Login() {
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
                 required
               />
-              {devHint && (
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-300">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-amber-200">Local Dev OTP (console mailer):</span>
-                    <button
-                      type="button"
-                      onClick={() => setCode(devHint)}
-                      className="text-xs font-bold text-amber-200 underline hover:text-white"
-                    >
-                      Auto-fill
-                    </button>
-                  </div>
-                  <p className="mt-1 font-mono font-bold text-sm text-white tracking-widest">{devHint}</p>
-                </div>
-              )}
-              {error && <p className="text-sm text-rose-400">{error}</p>}
+              {error && <p role="alert" className="text-sm text-rose-400">{error}</p>}
               <Button type="submit" loading={loading} className="w-full" size="lg">
                 Sign in with code
               </Button>
@@ -257,28 +230,7 @@ export function Login() {
             </form>
           )}
 
-          <div className="mt-6 rounded-lg border border-slate-700/60 bg-slate-800/40 p-3 text-xs text-slate-300">
-            <div className="flex items-center justify-between">
-              <span className="font-semibold text-slate-200">Quick Demo Account:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setIdentifier("demo@groundwork.design");
-                  setPassword("Groundwork123!");
-                  switchMode("password");
-                  setError("");
-                }}
-                className="font-semibold text-emerald-400 hover:text-emerald-300 underline"
-              >
-                Fill credentials
-              </button>
-            </div>
-            <p className="mt-1 text-[11px] text-slate-400">
-              Email: <code className="text-slate-300 font-mono">demo@groundwork.design</code> | Password: <code className="text-slate-300 font-mono">Groundwork123!</code>
-            </p>
-          </div>
-
-          <details className="mt-4 space-y-3 border-t border-slate-700 pt-4">
+          <details className="mt-6 space-y-3 border-t border-slate-700 pt-4">
             <summary className="cursor-pointer text-sm text-slate-300">Organization sign-in</summary>
             <Input label="Organization ID" value={organizationId} maxLength={120} onChange={event => setOrganizationId(event.target.value)} />
             <Button type="button" variant="secondary" disabled={!organizationId.trim() || loading} onClick={() => window.location.assign(`/api/sso/${encodeURIComponent(organizationId.trim())}/start`)}>Continue with organization SSO</Button>
@@ -291,11 +243,6 @@ export function Login() {
             </Link>
           </p>
         </Card>
-        <p className="mt-4 text-center text-xs text-slate-600">
-          Protected by scrypt hashing, rate limiting and account lockout.
-        </p>
-      </div>
-    </div>
+    </AuthShell>
   );
 }
-

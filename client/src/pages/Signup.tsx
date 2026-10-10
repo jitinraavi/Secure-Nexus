@@ -3,9 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { getCountries, signup, verifyEmail, resendOtp, type CountryOption } from "../api";
 import { Button, Card, Input, Select } from "../components/ui";
-import { Logo } from "../components/Logo";
+import { AuthShell } from "./AuthShell";
 import { useToast } from "../components/Toast";
-import { cn } from "../lib/cn";
 
 const PASSWORD_RULES = [
   { ok: false, label: "At least 8 characters" },
@@ -118,7 +117,7 @@ export function Signup() {
         });
         return;
       }
-      await refresh();
+      await refresh({ afterSignIn: true });
       navigate("/dashboard", { replace: true });
       toast.push({ title: "Account created", description: "Welcome to Groundwork.", tone: "success" });
     } catch (err) {
@@ -133,7 +132,7 @@ export function Signup() {
     setVerifyError("");
     try {
       const res = await verifyEmail(emailRef.current, code.trim());
-      await refresh();
+      await refresh({ afterSignIn: true });
       navigate("/dashboard", { replace: true });
       toast.push({
         title: "Email verified",
@@ -166,17 +165,13 @@ export function Signup() {
 
   if (verifyOpen) {
     return (
-      <div className="flex min-h-screen items-center justify-center px-4 py-8">
-        <div className="w-full max-w-md">
-          <div className="mb-8 flex justify-center">
-            <Link to="/"><Logo /></Link>
-          </div>
-          <Card className="p-8">
+      <AuthShell stage="verify">
+          <Card className="auth-card">
             <h1 className="text-2xl font-bold text-slate-100">Verify your email</h1>
             <p className="mt-1 text-sm text-slate-400">
               We sent a 6-digit code to <span className="text-emerald-300">{emailRef.current}</span>.
             </p>
-            <div className="mt-6 space-y-4">
+            <form className="mt-6 space-y-4" onSubmit={event => { event.preventDefault(); if (code.length === 6 && !verifyBusy) void verify(); }}>
               <Input
                 label="6-digit code"
                 inputMode="numeric"
@@ -198,13 +193,14 @@ export function Signup() {
                   code" option or contact support.
                 </p>
               )}
-              {verifyError && <p className="text-sm text-rose-400">{verifyError}</p>}
-              <Button onClick={verify} loading={verifyBusy} className="w-full" size="lg" disabled={code.length < 6}>
+              {verifyError && <p role="alert" className="text-sm text-rose-400">{verifyError}</p>}
+              <Button type="submit" loading={verifyBusy} className="w-full" size="lg" disabled={code.length < 6}>
                 Verify & continue
               </Button>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-slate-500">Didn't get it?</span>
                 <button
+                  type="button"
                   onClick={resend}
                   disabled={resendBusy || countdown > 0}
                   className="font-semibold text-emerald-400 hover:text-emerald-300 disabled:text-slate-600"
@@ -212,26 +208,22 @@ export function Signup() {
                   {countdown > 0 ? `Resend in ${countdown}s` : resendBusy ? "Sending…" : "Resend code"}
                 </button>
               </div>
-            </div>
+            </form>
           </Card>
-        </div>
-      </div>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4 py-8">
-      <div className="w-full max-w-md">
-        <div className="mb-8 flex justify-center">
-          <Link to="/"><Logo /></Link>
-        </div>
-        <Card className="p-8">
+    <AuthShell stage="signup">
+        <Card className="auth-card">
           <h1 className="text-2xl font-bold text-slate-100">Create your studio</h1>
           <p className="mt-1 text-sm text-slate-400">Pick a handle, then verify your email to get started.</p>
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input
                 label="Username"
+                autoComplete="username"
                 placeholder="e.g. architect_jane"
                 value={username}
                 maxLength={20}
@@ -284,12 +276,8 @@ export function Signup() {
                     key={t}
                     type="button"
                     onClick={() => setAccountType(t)}
-                    className={cn(
-                      "rounded-xl border px-3 py-2 text-sm font-semibold transition",
-                      accountType === t
-                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
-                        : "border-slate-700 bg-slate-900/70 text-slate-400 hover:border-slate-600",
-                    )}
+                    aria-pressed={accountType === t}
+                    className="public-auth-account rounded-lg px-3 py-2 text-xs font-medium transition"
                   >
                     {t === "individual" ? "Individual" : "Business"}
                   </button>
@@ -325,7 +313,7 @@ export function Signup() {
               />
             )}
 
-            {error && <p className="text-sm text-rose-400">{error}</p>}
+            {error && <p role="alert" className="text-sm text-rose-400">{error}</p>}
             <Button type="submit" loading={loading} className="w-full" size="lg">
               Create account
             </Button>
@@ -337,7 +325,6 @@ export function Signup() {
             </Link>
           </p>
         </Card>
-      </div>
-    </div>
+    </AuthShell>
   );
 }

@@ -29,7 +29,7 @@ The API lives in `server/`, the client in `client/`.
 
 ### Collaboration model
 
-The editor uses a server-authoritative revision protocol rather than a CRDT. Each design write includes the last revision observed by the client; a stale write receives `409 REVISION_CONFLICT` and is never applied. The client keeps local edits in place and surfaces that a remote update is available instead of replacing them blindly. Authenticated project owners can subscribe to `/api/collaboration/:projectId/events` via SSE and create encrypted comments/issues; expiring share links remain read-only and do not receive collaboration access. SSE event payloads intentionally contain metadata only, while project and item content remains encrypted at rest. This phase is single-server/in-memory for live fanout, so reconnecting clients recover state through the normal project/revision APIs and multi-instance deployments need a shared event broker for immediate fanout.
+The editor uses a server-authoritative revision protocol rather than a CRDT. Each design write includes the last revision observed by the client; a stale write receives `409 REVISION_CONFLICT` and is never applied. The client keeps local edits in place and surfaces that a remote update is available instead of replacing them blindly. Authenticated project owners, editors and viewers can subscribe to `/api/collaboration/:projectId/events` via SSE and create encrypted comments/issues. Only project owners and editors can change item status or design data; viewers cannot resolve items. Expiring public share links remain read-only and grant no collaboration membership. SSE event payloads intentionally contain metadata only, while project and item content remains encrypted at rest. This phase is single-server/in-memory for live fanout, so reconnecting clients recover state through the normal project/revision APIs and multi-instance deployments need a shared event broker for immediate fanout.
 
 ### Assistant configuration
 
@@ -48,13 +48,9 @@ Navigate to the app at the served port. In production the session/CSRF cookies u
 
 ## Deploy to Render
 
-Option A — from this repo:
-
-1. Push the repo to GitHub/GitLab.
-2. Render → **New** → **Blueprint**, pick the repo (uses the checked-in `render.yaml`), or create a **Web Service** and copy the settings from `render.yaml`.
-3. Render runs `npm ci && npm run build`, starts `npm start`, and health-checks `/api/health`.
-
-Option B — manual web service settings:
+Create a web service with these settings and persistent storage. See
+[release instructions](docs/RELEASE.md) for the required mail, payment, key and
+provider-budget configuration; this repository does not include a Render blueprint.
 
 | Setting | Value |
 | --- | --- |
@@ -63,12 +59,15 @@ Option B — manual web service settings:
 | Start command | `npm start` |
 | Health check path | `/api/health` |
 | Env: `NODE_ENV` | `production` |
+| Env: `PAYMENTS_MODE` | `live` (required in production) |
 | Env: `MASTER_KEY` | **Required stable base64 32-byte secret** (must never change) |
 | Env: `GROUNDWORK_DATA_DIR` | `/var/data` on the required persistent disk |
 
-**Persistence:** production refuses to start without `MASTER_KEY` and `GROUNDWORK_DATA_DIR`. The Render blueprint uses a paid persistent disk mounted at `/var/data`; do not deploy on ephemeral storage or change `MASTER_KEY`, or encrypted data becomes unreadable. `DB_PATH` is an optional directory override and the database filename remains `groundwork.db`.
+**Persistence:** production refuses to start without `MASTER_KEY` and `GROUNDWORK_DATA_DIR`. Configure a persistent disk mounted at `/var/data`; encrypted data requires its matching master key. `DB_PATH` is an optional directory override and the database filename remains `groundwork.db`.
 
-**Going live with payments:** set `PAYMENTS_MODE=live` and add `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` (register the webhook URL `https://<your-app>/api/payments/webhook` for the `payment_link.paid` event) and `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` (set `PAYPAL_MODE=live` for production). In demo mode a "Confirm demo payment" button completes any checkout — never enable that with real credentials.
+**Payments:** production requires `PAYMENTS_MODE=live`; missing, invalid or demo modes fail startup. Razorpay requires a live `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` and `RAZORPAY_ACCOUNT_ID`. Register `https://<your-app>/api/payments/webhook` for `payment_link.paid`. PayPal requires `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_MERCHANT_ID` and `PAYPAL_MODE=live`. Unconfigured live providers cannot grant demo subscriptions. Demo checkout is available in local development/test.
+
+**Email:** configure SMTP or Resend before onboarding users. Production has no console-mail fallback, OTP response disclosure or OTP payload logging. Local code disclosure requires explicit `GROUNDWORK_DEV_OTP=1` and a loopback-only request/service.
 
 Payments are stored with `status`, provider order id and provider URL. PayPal amounts are collected in USD (converted from the INR plan price); Razorpay Payment Links accept UPI and cards natively.
 
@@ -76,11 +75,12 @@ Payments are stored with `status`, provider order id and provider URL. PayPal am
 
 - **Passwords:** scrypt with per-user random 16-byte salt, N=16384/r=8/p=1. Never logged or returned.
 - **At-rest encryption:** AES-256-GCM. The vault key is derived from `MASTER_KEY` via HKDF; each user's blobs use a domain-separated AAD (project data and photos use distinct AADs), so ciphertexts cannot be replayed across resources.
-- **Sessions:** server-side random 256-bit tokens stored as SHA-256 hashes; fixed TTL, `last_seen_at` tracking, programmatic revocation ("log out of all devices"). `SameSite=Lax`, `HttpOnly`, `Secure` in production.
-- **CSRF:** double-submit cookie + server-stored token; anonymous signup/login exempt by design (covered by SameSite=Lax). GET/HEAD/OPTIONS are always safe.
-- **Rate limiting:** per-IP strict limit on auth endpoints (10/15 min) and a global API limit (300/15 min). 5 failed logins lock the account for 15 minutes.
-- **2FA:** TOTP (RFC 6238, SHA-1, 30 s, 6 digits), QR setup, enforced re-entry on login when enabled.
-- **Input:** Zod validation on every route; JSON body ≤ 256 KiB; uploads ≤ 25 MB with magic-byte content sniffing (PNG/JPEG/WebP/GIF); CSP via Helmet (no inline scripts in production), `frame-ancestors none`, strict referrer policy.
+- **Sessions:** random 256-bit tokens stored as SHA-256 hashes, absolute expiry and credential epochs. Password changes/revocation invalidate other active and pending MFA sessions and outstanding email login codes. Cookies use `SameSite=Lax`, `HttpOnly`, and `Secure` in production. Failed logout retains signed-in UI with retry.
+- **CSRF:** session-bound tokens protect authenticated mutations. Anonymous JSON authentication and verified provider webhooks have scoped exemptions. MFA setup uses POST with CSRF validation.
+- **Rate limiting:** global API limit (300/IP/15 min) before JSON parsing; SSO has a stricter IP limit. Password, email OTP and TOTP attempts have account/challenge limits. Upload and provider work have independent concurrency/resource budgets.
+- **2FA:** TOTP (RFC 6238, SHA-1, 30 s, 6 digits), user-bound encrypted seeds, single-use timesteps, persistent throttling and enforced re-entry on login when enabled.
+- **Input:** route schemas, design byte/count/depth limits, bounded multipart parsing and sniffed photo formats (PNG/JPEG/WebP/GIF). Photos allow 25 MiB; workspace files allow 64 MiB; render sources allow 32 MiB. BCF imports use bounded worker inflation. CSP uses Helmet, `frame-ancestors none`, and strict referrer policy.
+- **Offline privacy:** sign-out defaults to keeping unsynchronized copies, offers a plaintext recovery ZIP and requires explicit acknowledgment for removal. Retained browser copies and backups are plaintext. Private render images use `private, no-store`.
 - **Audit log:** signup/login/2FA/export/payment/project events recorded with IP and user agent; visible in the app (Settings → Audit log) including export history and failed-login attempts.
 
 ## Project layout

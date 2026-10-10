@@ -7,6 +7,7 @@ import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { canManageProject, canReadProject, canWriteProject, getProjectAccess } from "../projectAccess.js";
 import { collaborationInstanceId, collaborationItemId, emitProjectEvent, presenceSnapshot, replayProjectEvents, subscribeProject } from "../collaboration.js";
 import { conflictingDesignLock } from "../designLocks.js";
+import { validateDesignComplexity, MAX_DESIGN_BYTES } from "../designValidation.js";
 import syncRouter from "./sync.js";
 import { readRedisProjectEvents, redisPresence, redisTransportConfigured } from "../redisTransport.js";
 
@@ -336,15 +337,18 @@ router.post("/:projectId/operations", asyncHandler(async (req: AuthedRequest, re
   if (project.design_data) design = JSON.parse(decryptProjectText(project.design_data, access.ownerId));
   let next: unknown;
   try {
+    validateDesignComplexity(design);
+    validateDesignComplexity(parsed.data.value);
     next = applyOperation(design, parsed.data.kind, parsed.data.path, parsed.data.value);
+    validateDesignComplexity(next);
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Operation failed" });
     return;
   }
   const serialized = JSON.stringify(next);
+  if (serialized.length > MAX_DESIGN_BYTES || Buffer.byteLength(serialized, "utf8") > MAX_DESIGN_BYTES) { res.status(413).json({ error: "Resulting design is too large" }); return; }
   const lockedObject = conflictingDesignLock(req.params.projectId, req.user!.id, design, next);
   if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
-  if (serialized.length > 4_000_000) { res.status(413).json({ error: "Resulting design is too large" }); return; }
   const nextRevision = project.revision + 1;
   const committed = withTransaction(() => {
   const updated = db.prepare("UPDATE projects SET design_data = ?, revision = ?, updated_at = ? WHERE id = ? AND revision = ?")
@@ -366,4 +370,3 @@ router.post("/:projectId/operations", asyncHandler(async (req: AuthedRequest, re
 }));
 
 export default router;
-

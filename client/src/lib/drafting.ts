@@ -399,4 +399,3 @@ export function duplicateDraftArray(draft: DraftElement, count = 3, spacing = 1)
     x: draft.x + index * spacing,
   }));
 }
-

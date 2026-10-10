@@ -1,4 +1,5 @@
 import { MAX_WORKSPACE_BYTES, type WorkspaceKind } from "./workspaceApi";
+import { captureLocalWrite, localWriteAllowed, subscribeLocalDataFence } from "./localDataFence";
 
 export interface WorkspaceDraft {
   key: string; version: 1; userId: string; projectId: string; kind: WorkspaceKind;
@@ -10,6 +11,7 @@ export const workspaceDraftClientId = crypto.randomUUID();
 export const workspaceDraftKey = (userId: string, projectId: string, kind: WorkspaceKind, clientId = workspaceDraftClientId) => `${userId}:${projectId}:${kind}:${clientId}`;
 const maximumDraftBytes = 256 * 1024 * 1024, maximumDrafts = 16;
 const pending = new Map<string, Promise<unknown>>();
+const memory = new Map<string, WorkspaceDraft>();
 const prefix = (userId: string, projectId: string, kind: WorkspaceKind) => `${userId}:${projectId}:${kind}`;
 const belongs = (key: string, scope: string) => key === scope || key.startsWith(`${scope}:`);
 function queued<T>(key: string, work: () => Promise<T>): Promise<T> {
@@ -72,13 +74,18 @@ export async function listWorkspaceDrafts(userId: string, projectId: string, kin
     };
   });
 }
-export async function writeWorkspaceDraft(draft: WorkspaceDraft): Promise<void> {
+export async function writeWorkspaceDraft(draft: WorkspaceDraft, write: string | null = captureLocalWrite(draft.userId)): Promise<void> {
+  const assertAllowed = () => { if (!localWriteAllowed(draft.userId, write)) throw new Error("Local workspace writes are paused during sign-out."); };
+  assertAllowed();
   const scope = prefix(draft.userId, draft.projectId, draft.kind); validate(draft, scope);
+  memory.set(draft.key, draft);
   return queued(draft.key, () => transaction("readwrite", (store, done, fail) => {
+    assertAllowed();
     let count = 1, bytes = size(draft);
     const request = store.openCursor(IDBKeyRange.bound(scope, `${scope}\uffff`));
     request.onsuccess = () => {
       try {
+        assertAllowed();
         const cursor = request.result;
         if (!cursor) { store.put(draft); done(undefined); return; }
         if (typeof cursor.key === "string" && belongs(cursor.key, scope)) {
@@ -94,6 +101,11 @@ export async function writeWorkspaceDraft(draft: WorkspaceDraft): Promise<void> 
 export async function removeWorkspaceDraft(key: string, expectedUpdatedAt?: number): Promise<void> {
   return queued(key, () => transaction("readwrite", (store, done) => {
     const request = store.get(key);
-    request.onsuccess = () => { const value: unknown = request.result; if (expectedUpdatedAt === undefined || (value && typeof value === "object" && (value as Record<string, unknown>).updatedAt === expectedUpdatedAt)) store.delete(key); done(undefined); };
+    request.onsuccess = () => { const value: unknown = request.result; if (expectedUpdatedAt === undefined || (value && typeof value === "object" && (value as Record<string, unknown>).updatedAt === expectedUpdatedAt)) { store.delete(key); memory.delete(key); } done(undefined); };
   }));
 }
+export async function finishAccountDraftWrites(userId: string): Promise<void> {
+  await Promise.all([...pending.entries()].filter(([key]) => key.startsWith(`${userId}:`)).map(([, operation]) => operation));
+}
+export function exportWorkspaceDraftMemory(userId: string): WorkspaceDraft[] { return [...memory.values()].filter(draft => draft.userId === userId); }
+subscribeLocalDataFence((userId, fence) => { if (fence.remove) for (const [key, draft] of memory) if (draft.userId === userId) memory.delete(key); });

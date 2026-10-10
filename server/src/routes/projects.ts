@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import multer from "multer";
+import { boundedUpload } from "../uploads.js";
 import { logAudit } from "../audit.js";
 import { deriveVaultKey, decryptAesGcm, encryptAesGcm, randomId, randomToken, sha256Hex } from "../crypto.js";
 import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
@@ -8,6 +8,7 @@ import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { z } from "zod";
 import { emitProjectEvent } from "../collaboration.js";
 import { conflictingDesignLock } from "../designLocks.js";
+import { parseDesignInput } from "../designValidation.js";
 import { canManageProject, canReadProject, canWriteProject, getProjectAccess } from "../projectAccess.js";
 import { organizationAudit } from "../organization.js";
 
@@ -17,10 +18,7 @@ const PREVIOUS_VAULT_KEY = PREVIOUS_MASTER_KEY ? deriveVaultKey(PREVIOUS_MASTER_
 const PROJECT_AAD = "groundwork:project";
 const FILE_AAD = "groundwork:file";
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
-});
+const uploadPhoto = boundedUpload("photo", { fileSize: 25 * 1024 * 1024, fields: 0, fieldSize: 0, parts: 1 });
 
 router.use((req: AuthedRequest, res, next) => {
   const session = resolveSession(req);
@@ -272,6 +270,13 @@ router.post("/:id/duplicate", asyncHandler(async (req: AuthedRequest, res) => {
 router.patch(
   "/:id",
   asyncHandler(async (req: AuthedRequest, res) => {
+    // Offline bodies retain their initiating account even if the browser's
+    // shared session cookie changes while a request is in flight.
+    const expectedAccountId = (req.body as Record<string, unknown> | undefined)?.expectedAccountId;
+    if (expectedAccountId !== undefined && expectedAccountId !== req.user!.id) {
+      res.status(409).json({ error: "This queued change belongs to a different signed-in account", code: "ACCOUNT_CHANGED" });
+      return;
+    }
     const access = getProjectAccess(req.params.id, req.user!.id);
     if (!canWriteProject(access)) {
       res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" });
@@ -312,11 +317,12 @@ router.patch(
         res.status(400).json({ error: "Design data is invalid" });
         return;
       }
-      designPayload = encryptForUser(parsed.data.designData, access.ownerId);
+      const nextDesign = parseDesignInput(parsed.data.designData);
       const stored = db.prepare("SELECT design_data FROM projects WHERE id = ?").get(req.params.id) as { design_data: string | null };
       const before: unknown = stored.design_data ? JSON.parse(decryptForUser(stored.design_data, access.ownerId)) : null;
-      const lockedObject = conflictingDesignLock(req.params.id, req.user!.id, before, JSON.parse(parsed.data.designData));
+      const lockedObject = conflictingDesignLock(req.params.id, req.user!.id, before, nextDesign);
       if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
+      designPayload = encryptForUser(parsed.data.designData, access.ownerId);
     }
 
     const fields: string[] = [];
@@ -415,6 +421,7 @@ router.post("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
     id: randomId(), name: parsed.data.name, project_type: project.project_type,
     width_mm: project.width_mm, depth_mm: project.depth_mm, created_at: now(),
   };
+  if (parsed.data.designData) parseDesignInput(parsed.data.designData);
   const snapshotData = parsed.data.designData
     ? encryptForUser(parsed.data.designData, project.ownerId)
     : encryptForUser(
@@ -444,7 +451,7 @@ router.post("/:id/revisions/:revisionId/restore", asyncHandler(async (req: Authe
   }
   // Keep the encrypted payload intact; it remains bound to the project owner's vault AAD.
   const before = project.design_data ? JSON.parse(decryptForUser(project.design_data, project.ownerId)) : null;
-  const restored = JSON.parse(decryptForUser(revision.design_data, project.ownerId)) as unknown;
+  const restored = parseDesignInput(decryptForUser(revision.design_data, project.ownerId));
   const lockedObject = conflictingDesignLock(project.id, req.user!.id, before, restored);
   if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
   db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
@@ -508,7 +515,14 @@ router.delete("/:id/share-links/:linkId", asyncHandler(async (req: AuthedRequest
 /* POST /api/projects/:id/photo */
 router.post(
   "/:id/photo",
-  upload.single("photo"),
+  (req: AuthedRequest, res, next) => {
+    const access = getProjectAccess(req.params.id, req.user!.id);
+    if (!canWriteProject(access)) {
+      res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return;
+    }
+    next();
+  },
+  uploadPhoto,
   (req: AuthedRequest, res) => {
     const access = getProjectAccess(req.params.id, req.user!.id);
     if (!canWriteProject(access)) {
@@ -619,4 +633,3 @@ router.delete(
 // Kept for reference: request typing helper
 export type { Request };
 export default router;
-

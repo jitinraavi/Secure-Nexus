@@ -178,4 +178,3 @@ export function applyTenantReceipt(receipt: VerifiedRazorpayReceipt): { handled:
     return { handled: true };
   });
 }
-

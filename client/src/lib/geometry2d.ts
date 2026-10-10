@@ -145,4 +145,3 @@ export function projectPointToDraftAxis(point: PlanPoint, target: DraftElement):
     z: origin.z + direction.z * distance,
   };
 }
-

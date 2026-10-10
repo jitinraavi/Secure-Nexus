@@ -160,4 +160,3 @@ export function polylineLengthM(points: LatLng[]): number {
   for (let i = 1; i < points.length; i++) sum += haversine(points[i - 1], points[i]);
   return sum;
 }
-

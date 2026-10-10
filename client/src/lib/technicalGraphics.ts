@@ -61,4 +61,3 @@ export function dxfLineweightHundredthsMm(value: number): number {
   const allowed = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211];
   return allowed.reduce((best, candidate) => Math.abs(candidate - value) < Math.abs(best - value) ? candidate : best, 25);
 }
-

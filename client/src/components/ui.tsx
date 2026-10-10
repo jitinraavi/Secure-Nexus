@@ -1,5 +1,9 @@
-import { type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "../lib/cn";
+
+const modalStack: HTMLDivElement[] = [];
+let overflowBeforeModals = "";
 
 export function Button({
   variant = "primary",
@@ -15,27 +19,27 @@ export function Button({
   loading?: boolean;
 }) {
   const variants: Record<string, string> = {
-    primary:
-      "bg-[#d6a84a] text-[#17130b] hover:bg-[#e5bd67] shadow-lg shadow-amber-500/20 focus-visible:ring-amber-300",
-    secondary: "border border-slate-700/80 bg-slate-800/80 text-slate-100 hover:border-slate-600 hover:bg-slate-700 focus-visible:ring-slate-500",
-    outline: "border border-slate-700 text-slate-200 hover:border-emerald-500/50 hover:bg-emerald-500/5 focus-visible:ring-slate-500",
-    ghost: "text-slate-300 hover:bg-white/[0.05] hover:text-white focus-visible:ring-slate-500",
-    danger: "bg-rose-600/90 text-white hover:bg-rose-500 focus-visible:ring-rose-400",
+    primary: "gw-button-primary",
+    secondary: "gw-button-secondary",
+    outline: "gw-button-outline",
+    ghost: "gw-button-ghost",
+    danger: "gw-button-danger",
   };
   const sizes: Record<string, string> = {
-    sm: "px-2.5 py-1.5 text-xs rounded-lg gap-1.5",
+    sm: "gw-button-sm px-2.5 py-1.5 text-xs rounded-lg gap-1.5",
     md: "px-4 py-2 text-sm rounded-xl gap-2",
-    lg: "px-5 py-2.5 text-base rounded-xl gap-2",
+    lg: "gw-button-lg px-5 py-2.5 text-base rounded-xl gap-2",
   };
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center font-semibold transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-60 disabled:cursor-not-allowed",
+        "gw-button inline-flex items-center justify-center font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed",
         variants[variant],
         sizes[size],
         className,
       )}
       disabled={disabled || loading}
+      aria-busy={loading || undefined}
       {...props}
     >
       {loading && <Spinner className="h-4 w-4" />}
@@ -46,7 +50,7 @@ export function Button({
 
 export function Spinner({ className }: { className?: string }) {
   return (
-    <svg className={cn("animate-spin", className)} viewBox="0 0 24 24" fill="none">
+    <svg className={cn("animate-spin", className)} viewBox="0 0 24 24" fill="none" role="status" aria-label="Loading">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
     </svg>
@@ -60,6 +64,7 @@ export function Input({
   className,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & { label?: string; error?: string; icon?: ReactNode }) {
+  const errorId = useId();
   return (
     <label className="block space-y-1.5">
       {label && <span className="text-sm font-medium text-slate-300">{label}</span>}
@@ -67,15 +72,17 @@ export function Input({
         {icon && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">{icon}</span>}
         <input
           className={cn(
-            "w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20",
+            "gw-field w-full px-3.5 py-2.5 text-sm transition",
             icon ? "pl-10" : undefined,
             error && "border-rose-500/70 focus:border-rose-500 focus:ring-rose-500/30",
             className,
           )}
           {...props}
+          aria-invalid={error ? true : props["aria-invalid"]}
+          aria-describedby={[props["aria-describedby"], error ? errorId : undefined].filter(Boolean).join(" ") || undefined}
         />
       </div>
-      {error && <span className="text-xs text-rose-400">{error}</span>}
+      {error && <span id={errorId} role="alert" className="text-xs text-rose-400">{error}</span>}
     </label>
   );
 }
@@ -91,7 +98,7 @@ export function Select({
       {label && <span className="text-sm font-medium text-slate-300">{label}</span>}
       <select
         className={cn(
-          "w-full rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-amber-300 focus:ring-2 focus:ring-amber-300/20",
+          "gw-field w-full px-3.5 py-2.5 text-sm transition",
           className,
         )}
         {...props}
@@ -138,22 +145,70 @@ export function Modal({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const dialog = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  const titleId = useId();
+  useEffect(() => {
+    if (!open) return;
+    const activeDialog = dialog.current;
+    if (!activeDialog) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!modalStack.length) overflowBeforeModals = document.body.style.overflow;
+    modalStack.push(activeDialog);
+    document.body.style.overflow = "hidden";
+    const isTopDialog = () => modalStack[modalStack.length - 1] === activeDialog;
+    const focusable = () => Array.from(activeDialog.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]')).filter(element => element.tabIndex >= 0 && !element.matches(":disabled") && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden" && !element.closest("[inert]"));
+    const frame = requestAnimationFrame(() => {
+      if (!isTopDialog()) return;
+      const elements = focusable();
+      const target = activeDialog.contains(document.activeElement) ? document.activeElement as HTMLElement : elements.find(element => element.matches("input, select, textarea")) ?? elements[0] ?? activeDialog;
+      target?.focus();
+    });
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !isTopDialog()) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close.current(); return; }
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      if (!elements.length) { event.preventDefault(); activeDialog.focus(); return; }
+      const first = elements[0], last = elements[elements.length - 1];
+      const currentIndex = elements.indexOf(document.activeElement as HTMLElement);
+      if (event.shiftKey && currentIndex <= 0) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (currentIndex < 0 || document.activeElement === last)) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handleKey);
+      const wasTopDialog = isTopDialog();
+      const index = modalStack.indexOf(activeDialog);
+      if (index >= 0) modalStack.splice(index, 1);
+      if (!modalStack.length) document.body.style.overflow = overflowBeforeModals;
+      if (wasTopDialog) {
+        const remaining = modalStack[modalStack.length - 1];
+        if (previous?.isConnected && (!remaining || remaining.contains(previous))) previous.focus();
+        else remaining?.focus();
+      }
+    };
+  }, [open]);
   if (!open) return null;
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
       <div
         role="dialog"
+        ref={dialog}
+        tabIndex={-1}
         aria-modal="true"
-        aria-labelledby="gw-modal-title"
+        aria-labelledby={titleId}
         className={cn(
-          "relative w-full rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl",
+          "gw-modal relative w-full rounded-2xl",
           wide ? "max-w-2xl" : "max-w-md",
         )}
       >
         <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-          <h3 id="gw-modal-title" className="text-base font-semibold text-slate-100">{title}</h3>
-          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:text-slate-200" aria-label="Close">
+          <h3 id={titleId} className="text-base font-semibold text-slate-100">{title}</h3>
+          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:text-slate-200" aria-label={`Close ${title}`}>
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
             </svg>
@@ -161,7 +216,7 @@ export function Modal({
         </div>
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
       </div>
-    </div>
+    </div>, document.body
   );
 }
 
@@ -171,7 +226,9 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
       type="button"
       onClick={() => onChange(!checked)}
       className="flex items-center gap-3"
-      aria-pressed={checked}
+      role="switch"
+      aria-checked={checked}
+      aria-label={label || "Toggle setting"}
     >
       <span
         className={cn(
@@ -202,4 +259,3 @@ export function FieldGroup({ label, value, children }: { label: string; value?: 
     </div>
   );
 }
-

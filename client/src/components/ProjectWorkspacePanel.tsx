@@ -6,6 +6,7 @@ import type { Project, ProjectDetail } from "../types";
 import { download, downloadBlob, zipFiles } from "../lib/download";
 import { deleteWorkspaceArtifact, getWorkspace, listWorkspaceArtifacts, MAX_WORKSPACE_BYTES, pruneWorkspaceHistory, readWorkspaceArtifact, saveWorkspace, uploadWorkspaceArtifact, WorkspaceApiError, type WorkspaceArtifact, type WorkspaceKind, type WorkspaceSnapshot, type WorkspaceState } from "../lib/workspaceApi";
 import { listWorkspaceDrafts, removeWorkspaceDraft, workspaceDraftKey, writeWorkspaceDraft, type WorkspaceDraft } from "../lib/workspaceDraft";
+import { captureLocalWrite, localWriteAllowed, registerLocalDraftFlush, subscribeLocalDataFence } from "../lib/localDataFence";
 import type { PrepareWorkspaceSave } from "../lib/workspaceSavePreparation";
 import { Badge, Button, Card, Input, Select } from "./ui";
 
@@ -21,6 +22,7 @@ interface Context {
   ready: boolean; writable: boolean; blocked: boolean; autoDraft: boolean; baseRevision: number;
   text: string; initialText: string; source: number; references: string[]; draft: WorkspaceDraft | null;
   restoredDraft: WorkspaceDraft | null; acknowledged: Set<number>; timer?: number;
+  draftWrites: WeakMap<WorkspaceDraft, string | null>;
 }
 const message = (error: unknown) => error instanceof Error ? error.message : "Workspace operation failed.";
 const MAX_DRAFT_BYTES = 256 * 1024 * 1024;
@@ -79,8 +81,9 @@ export function ProjectWorkspacePanel({ kind, payload, onRestore, onImportProjec
     };
     if (candidate.referencedArtifactIds.length + candidate.files.length > 16) throw new Error("Required artifacts and pending files exceed the 16-reference limit. Remove optional sources before saving.");
     if (new Blob([candidate.content]).size + candidate.files.reduce((total, file) => total + file.blob.size, 0) > MAX_DRAFT_BYTES) throw new Error("Inputs and pending source files exceed the 256 MiB recovery limit.");
-    if (ctx.draft && ctx.draft.baseRevision === candidate.baseRevision && sameDraftInputs(ctx.draft, candidate)) return ctx.draft;
+    if (ctx.draft && ctx.draft.baseRevision === candidate.baseRevision && sameDraftInputs(ctx.draft, candidate) && ctx.draftWrites.get(ctx.draft) === captureLocalWrite(ctx.userId)) return ctx.draft;
     candidate.updatedAt = Math.max(Date.now(), lastTimestamp.current + 1); lastTimestamp.current = candidate.updatedAt;
+    ctx.draftWrites.set(candidate, captureLocalWrite(ctx.userId));
     return candidate;
   }
   function storageFailure(ctx: Context, cause: unknown): void {
@@ -88,7 +91,7 @@ export function ProjectWorkspacePanel({ kind, payload, onRestore, onImportProjec
   }
   async function persist(ctx: Context, draft: WorkspaceDraft): Promise<void> {
     if (ctx.blocked || ctx.acknowledged.has(draft.updatedAt)) return;
-    await writeWorkspaceDraft(draft);
+    await writeWorkspaceDraft(draft, ctx.draftWrites.get(draft) ?? null);
   }
   async function refreshArtifacts(ctx: Context): Promise<void> {
     const result = await listWorkspaceArtifacts(ctx.projectId, ctx.kind);
@@ -107,7 +110,7 @@ export function ProjectWorkspacePanel({ kind, payload, onRestore, onImportProjec
     if (matchesBaseline(draft, ctx)) return;
     if (ctx.blocked) throw new Error("Browser recovery storage is blocked. Export your inputs and attachments before replacing them.");
     const copy = { ...draft, key: workspaceDraftKey(ctx.userId, ctx.projectId, ctx.kind, crypto.randomUUID()) };
-    await writeWorkspaceDraft(copy);
+    await writeWorkspaceDraft(copy, ctx.draftWrites.get(draft) ?? null);
     if (active(ctx)) {
       setRecoveries(current => [copy, ...current.filter(item => item.key !== copy.key)]); setRecoveryKey(copy.key);
       if (!sameDraftInputs(draftFor(ctx), draft)) throw new Error("Inputs changed while their recovery copy was being saved. Replacement was stopped; retry when ready.");
@@ -137,7 +140,7 @@ export function ProjectWorkspacePanel({ kind, payload, onRestore, onImportProjec
     setReady(false); setBusy(Boolean(user && projectId)); setSaveStage(null); setState(null); setArtifacts([]); setReferences([]); setFiles([]); setRecoveries([]); setRecoveryKey(""); setDurable(true); setError(""); setNotice(""); setDirty(false);
     if (!user || !projectId) { context.current = null; setBusy(false); return; }
     let initialText = ""; try { initialText = serialize(latest.current.payload); } catch { /* explicit saves report nonserializable inputs */ }
-    const ctx: Context = { token, userId: user.id, projectId, kind, key: workspaceDraftKey(user.id, projectId, kind, crypto.randomUUID()), ready: false, writable: false, blocked: false, autoDraft: true, baseRevision: 0, text: "", initialText, source: 0, references: [], draft: null, restoredDraft: null, acknowledged: new Set() };
+    const ctx: Context = { token, userId: user.id, projectId, kind, key: workspaceDraftKey(user.id, projectId, kind, crypto.randomUUID()), ready: false, writable: false, blocked: false, autoDraft: true, baseRevision: 0, text: "", initialText, source: 0, references: [], draft: null, restoredDraft: null, acknowledged: new Set(), draftWrites: new WeakMap() };
     context.current = ctx;
     void (async () => {
       try {
@@ -186,6 +189,30 @@ export function ProjectWorkspacePanel({ kind, payload, onRestore, onImportProjec
     return () => { if (ctx.timer !== undefined) window.clearTimeout(ctx.timer); };
   }, [payload, sourceRevision, references, files, ready, projectId, state?.workspace?.revision, canEdit, managedKey]);
   useEffect(() => {
+    if (!user) return;
+    return registerLocalDraftFlush(user.id, async () => {
+      const ctx = context.current;
+      if (!ctx || !active(ctx) || !ctx.ready || !ctx.writable || ctx.userId !== user.id) return;
+      if (ctx.timer !== undefined) { window.clearTimeout(ctx.timer); ctx.timer = undefined; }
+      const draft = draftFor(ctx);
+      if (matchesBaseline(draft, ctx)) return;
+      if (ctx.blocked) throw new Error("Local workspace recovery is blocked. Export the current workspace inputs before signing out.");
+      ctx.draft = draft;
+      await persist(ctx, draft);
+    });
+  }, [user?.id, projectId, kind, ready]);
+  useEffect(() => subscribeLocalDataFence((userId, fence) => {
+    const ctx = context.current;
+    if (!ctx || ctx.userId !== userId || !fence.blocked) return;
+    if (ctx.timer !== undefined) { window.clearTimeout(ctx.timer); ctx.timer = undefined; }
+    saving.current?.controller.abort();
+    if (fence.remove) {
+      ctx.draft = null; ctx.restoredDraft = null; ctx.autoDraft = false;
+      setRecoveries([]); setRecoveryKey("");
+      setNotice("Local recovery copies were removed. Automatic recovery is paused; explicitly save or export current page inputs before leaving.");
+    }
+  }), []);
+  useEffect(() => {
     const ctx = context.current; if (!ctx || !ready) return;
     const timer = window.setInterval(() => {
       void getWorkspace(ctx.projectId, ctx.kind).then(current => {
@@ -204,6 +231,7 @@ export function ProjectWorkspacePanel({ kind, payload, onRestore, onImportProjec
     if (!ctx || !current || !active(ctx) || !ctx.ready || !ctx.writable || busy) return;
     if (saving.current) { setError("The previous save is finishing cancellation. Try again after its uploads are cleaned up."); return; }
     const job = { context: ctx, controller: new AbortController(), committing: false };
+    const write = captureLocalWrite(ctx.userId);
     saving.current = job;
     const uploaded = new Set<string>(); setBusy(true); setSaveStage("preparing"); setError(""); setNotice("");
     try {
@@ -214,6 +242,7 @@ export function ProjectWorkspacePanel({ kind, payload, onRestore, onImportProjec
       const preparationPayload: unknown = preparer ? structuredClone(latest.current.payload) : null;
       const assertActive = () => {
         if (job.controller.signal.aborted) throw new DOMException("Save cancelled. Browser inputs and source files are retained.", "AbortError");
+        if (!localWriteAllowed(ctx.userId, write)) throw new DOMException("Save paused during sign-out.", "AbortError");
         if (!active(ctx) || !ctx.ready || !ctx.writable) throw new Error("Workspace context or access changed. The save was stopped and its draft retained.");
         if (!sameDraftInputs(draftFor(ctx), draft) || !sameReferences(checkedReferences(latest.current.managedReferencedArtifactIds), capturedManaged)) throw new Error("Inputs, source revision, required artifacts or pending files changed during save. Retry with the current inputs.");
         if (capturedFingerprint !== null && preparationFingerprint(latest.current.payload) !== capturedFingerprint) throw new Error("Exact source values changed during preparation. Retry with the current source inputs.");

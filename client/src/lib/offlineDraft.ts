@@ -1,5 +1,6 @@
 import type { Design, ProjectType } from "../types";
 import { PROJECT_TYPE_LABELS } from "../types";
+import { captureLocalWrite, localAccountFence, subscribeLocalDataFence } from "./localDataFence";
 
 export interface PendingDraft {
   design: Design;
@@ -14,6 +15,8 @@ export interface PendingDraft {
   lastSaveError?: string;
   /** Identifies the tab that owns the stored recovery record. */
   storageId?: string;
+  /** Separates post-removal recovery from copies retained by a suspended older page. */
+  removalGeneration?: string;
 }
 export interface DraftStorageResult { stored: boolean; durable: boolean; error?: string; }
 export interface DraftReadResult { draft: PendingDraft | null; source: "durable" | "session" | "memory" | null; error?: string; }
@@ -47,11 +50,13 @@ function parse(text: string, storageId?: string): PendingDraft {
   if (draft.baseProjectType !== undefined && !projectTypeValid(draft.baseProjectType)) throw new Error("The stored merge base project type is invalid");
   if (draft.lastSaveStatus !== undefined && (!Number.isSafeInteger(draft.lastSaveStatus) || draft.lastSaveStatus < 0 || draft.lastSaveStatus > 599)) throw new Error("The stored save status is invalid");
   if (draft.lastSaveError !== undefined && typeof draft.lastSaveError !== "string") throw new Error("The stored save error is invalid");
+  if (draft.removalGeneration !== undefined && (typeof draft.removalGeneration !== "string" || draft.removalGeneration.length > 200)) throw new Error("The stored recovery generation is invalid");
   return { ...draft, storageId };
 }
 
 /** Durable records stay per user, project and tab; a different tab never overwrites them. */
 export function readPendingDraftResult(userId: string, projectId: string): DraftReadResult {
+  localAccountFence(userId);
   const currentKey = key(userId, projectId);
   const errors: string[] = [];
   const candidates: { draft: PendingDraft; source: "durable" | "session"; current: boolean }[] = [];
@@ -96,8 +101,9 @@ export function readPendingDraft(userId: string, projectId: string): PendingDraf
   return readPendingDraftResult(userId, projectId).draft;
 }
 export function persistPendingDraft(userId: string, projectId: string, draft: PendingDraft): DraftStorageResult {
+  if (captureLocalWrite(userId) === null) return { stored: false, durable: false, error: "Local recovery writes are paused during sign-out." };
   const currentKey = key(userId, projectId);
-  const owned = { ...draft, storageId: currentTab() };
+  const owned = { ...draft, storageId: currentTab(), removalGeneration: localAccountFence(userId).lastRemoval };
   memory.set(currentKey, owned);
   let text: string;
   try { text = JSON.stringify(owned); }
@@ -143,3 +149,40 @@ export function clearRecoveredDraft(userId: string, projectId: string, selected:
 export function hasMergeBase(draft: PendingDraft): draft is PendingDraft & { baseDesign: Design; baseName: string; baseProjectType: ProjectType } {
   return designValid(draft.baseDesign) && typeof draft.baseName === "string" && projectTypeValid(draft.baseProjectType);
 }
+
+const belongsToAccount = (storedKey: string, userId: string) => storedKey.startsWith(PREFIX + encodeURIComponent(userId) + ":") || storedKey.startsWith("groundwork:draft:" + userId + ":");
+export interface AccountDraftRecord { storage: "local" | "session" | "memory"; key: string; value: string; }
+export function exportAccountDrafts(userId: string): AccountDraftRecord[] {
+  localAccountFence(userId);
+  const records: AccountDraftRecord[] = [];
+  for (const [key, draft] of memory) if (belongsToAccount(key, userId)) records.push({ storage: "memory", key, value: JSON.stringify(draft) });
+  for (const [storage, label] of [[globalThis.localStorage, "local"], [globalThis.sessionStorage, "session"]] as const) {
+    if (!storage) continue;
+    for (let index = 0; index < storage.length; index++) {
+      const key = storage.key(index);
+      if (key && belongsToAccount(key, userId)) { const value = storage.getItem(key); if (value !== null) records.push({ storage: label, key, value }); }
+    }
+  }
+  return records;
+}
+export function removeAccountDrafts(userId: string, localOnly = false, removalGeneration = localAccountFence(userId).lastRemoval): void {
+  for (const [storedKey, draft] of memory) if (belongsToAccount(storedKey, userId) && (!localOnly || draft.removalGeneration !== removalGeneration)) memory.delete(storedKey);
+  for (const storage of localOnly ? [globalThis.sessionStorage] : [globalThis.localStorage, globalThis.sessionStorage]) {
+    if (!storage) continue;
+    const keys: string[] = [];
+    for (let index = 0; index < storage.length; index++) {
+      const key = storage.key(index);
+      if (!key || !belongsToAccount(key, userId)) continue;
+      if (localOnly) {
+        const text = storage.getItem(key);
+        try { if (text && text.length <= MAX_DRAFT_CHARACTERS && (JSON.parse(text) as PendingDraft | null)?.removalGeneration === removalGeneration) continue; }
+        catch { /* Unreadable copies from a removed account are stale. */ }
+      }
+      keys.push(key);
+    }
+    for (const key of keys) storage.removeItem(key);
+  }
+}
+subscribeLocalDataFence((userId, fence) => {
+  if (fence.remove) { try { removeAccountDrafts(userId, fence.localOnly === true, fence.lastRemoval); } catch { /* Explicit removal reports current-tab errors through the purge operation. */ } }
+}, true);

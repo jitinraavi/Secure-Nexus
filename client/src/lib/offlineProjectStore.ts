@@ -1,4 +1,5 @@
 import type { Design, Project, ProjectType } from "../types";
+import { captureLocalWrite, localWriteAllowed, subscribeLocalDataFence } from "./localDataFence";
 
 export interface CachedProjectRecord {
   userId: string;
@@ -102,9 +103,12 @@ class OfflineProjectStore {
     protectedProjectIds: Set<string> = new Set(),
   ): Promise<void> {
     if (!userId || !project.id) return;
+    const write = captureLocalWrite(userId);
+    if (write === null) return;
 
     const sizeBytes = this.estimateSize({ project, design });
     await this.ensureStorageCapacity(userId, sizeBytes, protectedProjectIds);
+    if (!localWriteAllowed(userId, write)) return;
 
     const now = Date.now();
     const record: CachedProjectRecord = {
@@ -126,6 +130,7 @@ class OfflineProjectStore {
 
     try {
       const db = await this.getDB();
+      if (!localWriteAllowed(userId, write)) return;
       const tx = db.transaction(STORE_PROJECTS, "readwrite");
       tx.objectStore(STORE_PROJECTS).put(record);
       await new Promise<void>((resolve, reject) => {
@@ -144,6 +149,8 @@ class OfflineProjectStore {
    */
   async getCachedProject(userId: string, projectId: string): Promise<CachedProjectRecord | null> {
     if (!userId || !projectId) return null;
+    const write = captureLocalWrite(userId);
+    if (write === null) return null;
 
     const cacheKey = `${userId}:${projectId}`;
     const inMem = this.memoryCache.get(cacheKey);
@@ -163,7 +170,7 @@ class OfflineProjectStore {
         req.onerror = () => reject(req.error);
       });
 
-      if (record && record.userId === userId) {
+      if (record && record.userId === userId && localWriteAllowed(userId, write)) {
         record.lastAccessedAt = Date.now();
         store.put(record);
         this.memoryCache.set(cacheKey, record);
@@ -210,6 +217,8 @@ class OfflineProjectStore {
     projectId: string,
     snapshot: { id: string; revision: number; description?: string; snapshotData: string },
   ): Promise<void> {
+    const write = captureLocalWrite(userId);
+    if (write === null) return;
     if (!userId || !projectId || !snapshot.id) return;
 
     const sizeBytes = this.estimateSize(snapshot);
@@ -227,6 +236,7 @@ class OfflineProjectStore {
 
     try {
       const db = await this.getDB();
+      if (!localWriteAllowed(userId, write)) return;
       const tx = db.transaction(STORE_SNAPSHOTS, "readwrite");
       const store = tx.objectStore(STORE_SNAPSHOTS);
 
@@ -247,6 +257,7 @@ class OfflineProjectStore {
         }
       }
 
+      if (!localWriteAllowed(userId, write)) return;
       store.put(record);
       await new Promise<void>((resolve, reject) => {
         tx.oncomplete = () => resolve();
@@ -392,6 +403,10 @@ class OfflineProjectStore {
     }
   }
 
+  exportUserMemory(userId: string): CachedProjectRecord[] {
+    return Array.from(this.memoryCache.values()).filter(record => record.userId === userId);
+  }
+
   /**
    * Purge all cached data for a user (e.g., explicit privacy cleanup).
    */
@@ -432,3 +447,4 @@ class OfflineProjectStore {
 }
 
 export const offlineProjectStore = new OfflineProjectStore();
+subscribeLocalDataFence((userId, fence) => { if (fence.remove) offlineProjectStore.clearActiveUserSession(userId); });

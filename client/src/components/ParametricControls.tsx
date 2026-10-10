@@ -102,4 +102,3 @@ export function ParametricControls({ family, locks, constraints, targets, onChan
 function ParameterInput({ parameter, value, onChange }: { parameter: FamilyParameter; value: number | string | boolean; onChange: (value: string) => void }) {
   return <Input label={`${parameter.label}${parameter.unit ? ` (${parameter.unit})` : ""}`} type={parameter.type === "number" || parameter.type === "length" ? "number" : "text"} value={String(value)} onChange={(event) => onChange(event.target.value)} />;
 }
-

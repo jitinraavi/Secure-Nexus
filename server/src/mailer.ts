@@ -15,20 +15,20 @@ export interface MailResult {
 function pickTransport():
   | { type: "resend" }
   | { type: "smtp"; transport: SmtpTransport }
-  | { type: "console" } {
+  | { type: "console" }
+  | { type: "unavailable" } {
   const hasSmtpCreds = Boolean(MAIL.host && MAIL.user && MAIL.pass);
   const provider = MAIL.provider || (MAIL.resendKey ? "resend" : hasSmtpCreds ? "smtp" : "console");
   if (provider === "resend" && MAIL.resendKey) return { type: "resend" };
   if (provider === "smtp") {
-    if (!hasSmtpCreds) {
-      console.warn("[groundwork] SMTP configured without MAIL_USER/MAIL_PASS - falling back to console log");
-    } else {
+    if (hasSmtpCreds) {
       return {
         type: "smtp",
         transport: nodemailer.createTransport({
           host: MAIL.host,
           port: MAIL.port,
           secure: MAIL.secure,
+          requireTLS: IS_PROD && !MAIL.secure,
           auth: { user: MAIL.user, pass: MAIL.pass },
           connectionTimeout: 10_000,
           greetingTimeout: 10_000,
@@ -37,7 +37,8 @@ function pickTransport():
       };
     }
   }
-  return { type: "console" };
+  if (!IS_PROD && MAIL.devOtp && (provider === "console" || !MAIL.provider)) return { type: "console" };
+  return { type: "unavailable" };
 }
 
 async function sendResend(to: string, subject: string, html: string): Promise<void> {
@@ -48,9 +49,11 @@ async function sendResend(to: string, subject: string, html: string): Promise<vo
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ from: MAIL.from, to, subject, html }),
+    signal: AbortSignal.timeout(20_000),
   });
+  await res.body?.cancel();
   if (!res.ok) {
-    throw new Error(`Resend failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+    throw new Error("Email provider rejected delivery");
   }
 }
 
@@ -66,24 +69,23 @@ export async function sendMail(to: string, subject: string, text: string): Promi
       try {
         await sendResend(to, subject, html);
         return { delivered: true, via: "resend" };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[groundwork] Resend API failed: ${message}`);
-        return { delivered: false, via: "error", error: message };
+      } catch {
+        console.error("[groundwork] Email provider delivery failed");
+        return { delivered: false, via: "error", error: "Email delivery is unavailable. Please try again later." };
       }
     case "smtp":
       try {
         await t.transport.sendMail({ from: MAIL.from, to, subject, html });
         return { delivered: true, via: "smtp" };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[groundwork] SMTP send failed (${MAIL.host}:${MAIL.port}): ${message}`);
-        return { delivered: false, via: "error", error: message };
+      } catch {
+        console.error("[groundwork] SMTP delivery failed");
+        return { delivered: false, via: "error", error: "Email delivery is unavailable. Please try again later." };
       }
     case "console":
+      return { delivered: false, via: "console", devCode: MAIL.devOtp ? text.match(/\d{6}/)?.[0] : undefined };
+    case "unavailable":
     default:
-      console.log(`[groundwork] Email (${to}): ${subject}\n${text}`);
-      return { delivered: false, via: "console", devCode: !IS_PROD && MAIL.devOtp ? text.match(/\d{6}/)?.[0] : undefined };
+      return { delivered: false, via: "error", error: "Email delivery is not configured. Contact the application administrator." };
   }
 }
 
@@ -97,7 +99,7 @@ export function sendOtpEmail(to: string, code: string): Promise<MailResult> {
 
 export interface MailDiagnosticResult {
   ok: boolean;
-  provider: "resend" | "smtp" | "console";
+  provider: "resend" | "smtp" | "console" | "unavailable";
   details: string;
   config: {
     host?: string;
@@ -137,12 +139,11 @@ export async function testMailConnection(recipientEmail?: string): Promise<MailD
         config: { ...baseConfig, host: MAIL.host, port: MAIL.port, secure: MAIL.secure },
         timestamp,
       };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } catch {
       return {
         ok: false,
         provider: "smtp",
-        details: `SMTP verification failed: ${msg}`,
+        details: "SMTP verification or test delivery failed. Check the server mail configuration.",
         config: { ...baseConfig, host: MAIL.host, port: MAIL.port, secure: MAIL.secure },
         timestamp,
       };
@@ -181,12 +182,11 @@ export async function testMailConnection(recipientEmail?: string): Promise<MailD
         config: baseConfig,
         timestamp,
       };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } catch {
       return {
         ok: false,
         provider: "resend",
-        details: `Resend test failed: ${msg}`,
+        details: "Resend test delivery failed. Check the server mail configuration.",
         config: baseConfig,
         timestamp,
       };
@@ -194,9 +194,11 @@ export async function testMailConnection(recipientEmail?: string): Promise<MailD
   }
 
   return {
-    ok: true,
-    provider: "console",
-    details: "Console provider active (development mode). Verification codes are logged to terminal.",
+    ok: t.type === "console",
+    provider: t.type,
+    details: t.type === "console"
+      ? "Local development code delivery is enabled. No email was sent."
+      : "Email delivery is not configured. Contact the application administrator.",
     config: baseConfig,
     timestamp,
   };

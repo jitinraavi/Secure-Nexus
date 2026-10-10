@@ -1,24 +1,27 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { randomInt } from "node:crypto";
 import qrcode from "qrcode";
 import { logAudit } from "../audit.js";
 import {
   ADMIN_EMAILS,
-  COOKIE_SESSION,
   IS_PROD,
   LOCK_SECONDS,
-  MAIL,
   MAX_FAILED_ATTEMPTS,
   OTP_MAX_ATTEMPTS,
   OTP_RESEND_COOLDOWN_SECONDS,
   OTP_TTL_SECONDS,
   SESSION_TTL_SECONDS,
+  TOTP_MAX_ATTEMPTS,
+  TOTP_LOCK_SECONDS,
+  TOTP_ATTEMPT_WINDOW_SECONDS,
 } from "../config.js";
 import { hashPassword, randomId, randomToken, sha256Hex, verifyPassword } from "../crypto.js";
-import { db, now } from "../db.js";
+import { db, now, withTransaction } from "../db.js";
+import { openTotpSecret, sealTotpSecret } from "../mfa.js";
 import { sendOtpEmail, testMailConnection } from "../mailer.js";
 import {
   asyncHandler,
+  allowDevelopmentOtp,
   AuthedRequest,
   bootstrap,
   clearSessionCookie,
@@ -28,7 +31,7 @@ import {
   setCsrfCookie,
   setSessionCookie,
 } from "../security.js";
-import { generateTotpSecret, totpIssuerUri, verifyTotp } from "../totp.js";
+import { generateTotpSecret, matchingTotpStep, totpIssuerUri } from "../totp.js";
 import {
   changePasswordSchema,
   loginSchema,
@@ -70,6 +73,7 @@ interface UserRow {
   otp_code_hash?: string | null;
   otp_expires_at?: number | null;
   otp_attempts: number;
+  credential_version: number;
 }
 
 /* Resolve a sign-in identifier: an exact email, or a case-insensitive username. */
@@ -82,11 +86,82 @@ function resolveUser(identifier: string): UserRow | undefined {
 }
 
 /** Dev-mode fallback so usable codes are shown even when SMTP is misconfigured. */
-function devLeak(code: string, mail: { via: string; devCode?: string }): string | undefined {
-  if (IS_PROD) return undefined;
+function devLeak(req: Request, code: string, mail: { via: string; devCode?: string }): string | undefined {
+  if (!allowDevelopmentOtp(req)) return undefined;
   if (mail.devCode) return mail.devCode;
-  if (!IS_PROD && MAIL.devOtp && mail.via === "error") return code;
+  if (mail.via === "error") return code;
   return undefined;
+}
+
+type AuthSession = NonNullable<ReturnType<typeof resolveSession>>;
+interface MfaAccount extends UserRow {
+  totp_secret: string | null;
+  totp_failed_attempts: number;
+  totp_attempt_window_start: number | null;
+  totp_locked_until: number | null;
+  totp_last_used_step: number | null;
+}
+type MfaResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string };
+
+/** One transaction binds credential epoch, attempt budgets, single-use code and resulting authorization. */
+function attemptTotp<T>(req: Request, code: string, pending: boolean, enabled: boolean,
+  success: (session: AuthSession, user: MfaAccount) => T): MfaResult<T> {
+  return withTransaction(() => {
+    const session = resolveSession(req);
+    if (!session || session.status !== (pending ? "pending_2fa" : "active")) {
+      return { ok: false, status: 401, error: "Authentication changed. Sign in again." };
+    }
+    const user = db.prepare("SELECT * FROM users WHERE id=?").get(session.user_id) as MfaAccount | undefined;
+    if (!user || Boolean(user.totp_enabled) !== enabled || !user.totp_secret) {
+      return { ok: false, status: 400, error: "Authenticator setup is unavailable for this account." };
+    }
+    const t = now();
+    if (user.totp_locked_until && user.totp_locked_until > t) {
+      return { ok: false, status: 429, error: "Too many authenticator attempts. Try again in 15 minutes." };
+    }
+    if (pending && session.totp_attempts >= TOTP_MAX_ATTEMPTS) {
+      db.prepare("UPDATE sessions SET status='revoked',revoked_at=? WHERE id=?").run(t, session.id);
+      return { ok: false, status: 429, error: "Authenticator challenge closed. Sign in again." };
+    }
+    const freshWindow = !user.totp_attempt_window_start || t - user.totp_attempt_window_start >= TOTP_ATTEMPT_WINDOW_SECONDS;
+    const failedAttempts = freshWindow ? 0 : user.totp_failed_attempts;
+    const windowStart = freshWindow ? t : user.totp_attempt_window_start;
+    let secret: string;
+    try {
+      const opened = openTotpSecret(user.totp_secret, user.id);
+      secret = opened.secret;
+      if (opened.needsReseal) db.prepare("UPDATE users SET totp_secret=? WHERE id=?").run(sealTotpSecret(secret, user.id), user.id);
+    } catch { return { ok: false, status: 503, error: "Authenticator verification is unavailable. Contact support." }; }
+    const step = matchingTotpStep(secret, code);
+    if (step === null || (user.totp_last_used_step !== null && step <= user.totp_last_used_step)) {
+      const failures = failedAttempts + 1;
+      const blocked = failures >= TOTP_MAX_ATTEMPTS;
+      db.prepare("UPDATE users SET totp_failed_attempts=?,totp_attempt_window_start=?,totp_locked_until=? WHERE id=?")
+        .run(failures, windowStart, blocked ? t + TOTP_LOCK_SECONDS : null, user.id);
+      if (pending) {
+        const closed = blocked || session.totp_attempts + 1 >= TOTP_MAX_ATTEMPTS;
+        db.prepare("UPDATE sessions SET totp_attempts=totp_attempts+1,status=?,revoked_at=? WHERE id=?")
+          .run(closed ? "revoked" : "pending_2fa", closed ? t : null, session.id);
+      }
+      logAudit(user.id, "auth.2fa_failed", "Invalid, expired or already used authenticator code", req);
+      return { ok: false, status: blocked ? 429 : 401, error: blocked
+        ? "Too many authenticator attempts. Try again in 15 minutes." : "Invalid, expired or already used code. Wait for a new code." };
+    }
+    db.prepare("UPDATE users SET totp_last_used_step=?,totp_failed_attempts=0,totp_attempt_window_start=NULL,totp_locked_until=NULL WHERE id=?")
+      .run(step, user.id);
+    return { ok: true, value: success(session, user) };
+  });
+}
+
+/** Caller holds the transaction and has revalidated the current session. */
+function invalidateOtherSessions(userId: string, currentSessionId: string): number {
+  db.prepare(`UPDATE users SET credential_version=credential_version+1,
+    otp_code_hash=NULL,otp_expires_at=NULL,otp_attempts=0 WHERE id=?`).run(userId);
+  db.prepare("UPDATE sessions SET credential_version=(SELECT credential_version FROM users WHERE id=?) WHERE id=? AND user_id=?")
+    .run(userId, currentSessionId, userId);
+  const result = db.prepare("UPDATE sessions SET status='revoked',revoked_at=? WHERE user_id=? AND id!=? AND status!='revoked'")
+    .run(now(), userId, currentSessionId);
+  return Number(result.changes);
 }
 
 function publicUser(user: {
@@ -191,10 +266,10 @@ router.post(
         mail.via === "error"
           ? "Account created, but we couldn't send the verification email. Please try the login page's Email code option or contact support."
           : "Account created. A 6-digit verification code was sent to your email.",
-      emailDelivered: mail.via !== "error",
+      emailDelivered: mail.delivered,
       mailError: mail.error,
-      devOtp: devLeak(code, mail),
-      ...(devLeak(code, mail) ? { devOtpNote: "No mail provider configured — code printed to server log." } : {}),
+      devOtp: devLeak(req, code, mail),
+      ...(devLeak(req, code, mail) ? { devOtpNote: "Local development code display is explicitly enabled." } : {}),
     });
   }),
 );
@@ -256,7 +331,7 @@ router.post(
     ).run(now(), now(), user.id);
     logAudit(user.id, "auth.email_verified", "Email address verified via OTP", req);
 
-    const { csrfToken } = createSession(res, user.id);
+    const { csrfToken } = createSession(res, user.id, { credentialVersion: user.credential_version });
     const fresh = { ...user, email_verified: 1, otp_code_hash: null, otp_expires_at: null, otp_attempts: 0 };
     res.json({ user: publicUser(fresh), csrfToken });
     return;
@@ -293,13 +368,13 @@ router.post(
     logAudit(user.id, "auth.otp_resent", "Verification code re-sent", req);
     res.json({
       ok: true,
-      delivered: mail.via !== "error",
+      delivered: mail.delivered,
       mailError: mail.error,
       message:
         mail.via === "error"
           ? "We couldn't send the email. Please try again shortly or contact support."
           : "A new 6-digit code was sent to your email.",
-      devOtp: devLeak(code, mail),
+      devOtp: devLeak(req, code, mail),
     });
   }),
 );
@@ -342,7 +417,7 @@ router.post(
     logAudit(user.id, "auth.otp_login_requested", "Passwordless login code emailed", req);
     res.json({
       ok: true,
-      delivered: mail.via !== "error",
+      delivered: mail.delivered,
       mailError: mail.error,
       message:
         mail.via === "error"
@@ -350,7 +425,7 @@ router.post(
           : mail.via === "console"
             ? "If that email has an account, a 6-digit login code is on its way (dev mode)."
             : "If that email has an account, a 6-digit login code is on its way.",
-      devOtp: devLeak(code, mail),
+      devOtp: devLeak(req, code, mail),
     });
   }),
 );
@@ -401,12 +476,12 @@ router.post(
     logAudit(user.id, "auth.login", "Passwordless OTP login succeeded", req);
 
     if (user.totp_enabled) {
-      const { csrfToken } = createSession(res, user.id, { isPending: true });
+      const { csrfToken } = createSession(res, user.id, { isPending: true, credentialVersion: user.credential_version });
       res.json({ needsTwoFactor: true, csrfToken });
       return;
     }
 
-    const { csrfToken } = createSession(res, user.id);
+    const { csrfToken } = createSession(res, user.id, { credentialVersion: user.credential_version });
     res.json({
       user: publicUser({ ...user, email_verified: 1 } as never),
       csrfToken,
@@ -470,12 +545,12 @@ router.post(
     logAudit(user.id, "auth.login", "Login succeeded", req);
 
     if (user.totp_enabled) {
-      const { csrfToken } = createSession(res, user.id, { isPending: true });
+      const { csrfToken } = createSession(res, user.id, { isPending: true, credentialVersion: user.credential_version });
       res.json({ needsTwoFactor: true, csrfToken });
       return;
     }
 
-    const { csrfToken } = createSession(res, user.id);
+    const { csrfToken } = createSession(res, user.id, { credentialVersion: user.credential_version });
     res.json({
       user: publicUser(user),
       csrfToken,
@@ -493,49 +568,19 @@ router.post(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const session = resolveSession(req);
-    if (!session || session.status !== "pending_2fa") {
-      res.status(401).json({ error: "Two-factor verification required first" });
-      return;
-    }
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(session.user_id) as
-      | {
-          id: string;
-          email: string;
-          totp_secret: string | null;
-          totp_enabled: number;
-          password_changed_at: number;
-          created_at: number;
-          last_login_at: number | null;
-        }
-      | undefined;
-
-    if (!user?.totp_enabled || !user.totp_secret) {
-      res.status(400).json({ error: "Two-factor authentication is not enabled" });
-      return;
-    }
-
-    if (!verifyTotp(user.totp_secret, parsed.data.code)) {
-      logAudit(user.id, "auth.2fa_failed", "Invalid TOTP code", req);
-      res.status(401).json({ error: "Invalid or expired code" });
-      return;
-    }
-
-    db.prepare(
-      "UPDATE sessions SET status = 'active', expires_at = ?, last_seen_at = ? WHERE id = ?",
-    ).run(now() + SESSION_TTL_SECONDS, now(), session.id);
-    logAudit(user.id, "auth.2fa_verified", "Two-factor authentication passed", req);
-
-    const csrf = randomToken(24);
-    db.prepare("UPDATE sessions SET csrf_token = ? WHERE id = ?").run(csrf, session.id);
-    setCsrfCookie(res, csrf);
-    const rawToken = (req.cookies as Record<string, unknown> | undefined)?.[COOKIE_SESSION];
-    if (typeof rawToken === "string") setSessionCookie(res, rawToken, SESSION_TTL_SECONDS);
-
-    res.json({
-      user: publicUser(user),
-      csrfToken: csrf,
+    const result = attemptTotp(req, parsed.data.code, true, true, (session, user) => {
+      const rawToken = randomToken(32), csrf = randomToken(24);
+      const upgraded = db.prepare(`UPDATE sessions SET status='active',expires_at=?,last_seen_at=?,token_hash=?,csrf_token=?
+        WHERE id=? AND status='pending_2fa' AND expires_at>? AND credential_version=?`)
+        .run(now() + SESSION_TTL_SECONDS, now(), sha256Hex(rawToken), csrf, session.id, now(), user.credential_version);
+      if (upgraded.changes !== 1) throw Object.assign(new Error("Authentication changed. Sign in again."), { status: 401 });
+      logAudit(user.id, "auth.2fa_verified", "Two-factor authentication passed", req);
+      return { rawToken, csrf, user };
     });
+    if (!result.ok) { res.status(result.status).json({ error: result.error }); return; }
+    setCsrfCookie(res, result.value.csrf);
+    setSessionCookie(res, result.value.rawToken, SESSION_TTL_SECONDS);
+    res.json({ user: publicUser(result.value.user), csrfToken: result.value.csrf });
   }),
 );
 
@@ -730,13 +775,14 @@ router.post(
       res.status(401).json({ error: "Not authenticated" });
       return;
     }
-    const result = db
-      .prepare(
-        "UPDATE sessions SET status = 'revoked', revoked_at = ? WHERE user_id = ? AND id != ? AND status = 'active'",
-      )
-      .run(now(), session.user_id, session.id);
-    logAudit(session.user_id, "auth.sessions_revoked_others", `Revoked ${result.changes} other session(s)`, req);
-    res.json({ ok: true, revoked: Number(result.changes) });
+    const revoked = withTransaction(() => {
+      const current = resolveSession(req);
+      if (!current || current.status !== "active" || current.id !== session.id) return null;
+      return invalidateOtherSessions(current.user_id, current.id);
+    });
+    if (revoked === null) { res.status(401).json({ error: "Authentication changed. Sign in again." }); return; }
+    logAudit(session.user_id, "auth.sessions_revoked_others", `Revoked ${revoked} other session(s)`, req);
+    res.json({ ok: true, revoked });
   }),
 );
 
@@ -768,19 +814,24 @@ router.post(
       return;
     }
     const { salt, hash } = hashPassword(newPassword);
-    db.prepare(
-      "UPDATE users SET password_salt = ?, password_hash = ?, password_changed_at = ?, updated_at = ? WHERE id = ?",
-    ).run(salt, hash, now(), now(), user.id);
-    db.prepare(
-      "UPDATE sessions SET status = 'revoked', revoked_at = ? WHERE user_id = ? AND id != ? AND status = 'active'",
-    ).run(now(), user.id, session.id);
+    const changed = withTransaction(() => {
+      const current = resolveSession(req);
+      const account = db.prepare("SELECT password_salt,password_hash FROM users WHERE id=?").get(user.id) as { password_salt: string; password_hash: string } | undefined;
+      if (!current || current.status !== "active" || current.id !== session.id || !account ||
+        account.password_salt !== user.password_salt || account.password_hash !== user.password_hash) return false;
+      db.prepare(`UPDATE users SET password_salt=?,password_hash=?,password_changed_at=?,updated_at=?,
+        otp_code_hash=NULL,otp_expires_at=NULL,otp_attempts=0 WHERE id=?`).run(salt, hash, now(), now(), user.id);
+      invalidateOtherSessions(user.id, current.id);
+      return true;
+    });
+    if (!changed) { res.status(401).json({ error: "Authentication changed. Sign in again." }); return; }
     logAudit(user.id, "auth.password_changed", "Password changed, other sessions revoked", req);
     res.json({ ok: true });
   }),
 );
 
-/* GET /api/auth/2fa/setup — generates a fresh TOTP secret (require re-auth = current session) */
-router.get(
+/* POST /api/auth/2fa/setup — CSRF-protected enrollment for a completed authentication flow. */
+router.post(
   "/2fa/setup",
   asyncHandler(async (req: AuthedRequest, res) => {
     const session = resolveSession(req);
@@ -800,7 +851,13 @@ router.get(
       return;
     }
     const secret = generateTotpSecret();
-    db.prepare("UPDATE users SET totp_secret = ?, updated_at = ? WHERE id = ?").run(secret, now(), session.user_id);
+    const saved = withTransaction(() => {
+      const current = resolveSession(req);
+      if (!current || current.status !== "active" || current.id !== session.id) return false;
+      return db.prepare(`UPDATE users SET totp_secret=?,totp_last_used_step=NULL,updated_at=?
+        WHERE id=? AND totp_enabled=0`).run(sealTotpSecret(secret, session.user_id), now(), session.user_id).changes === 1;
+    });
+    if (!saved) { res.status(409).json({ error: "Authenticator enrollment changed. Try again." }); return; }
     const uri = totpIssuerUri("Groundwork", user.email, secret);
     const qrDataUrl = await qrcode.toDataURL(uri, { margin: 1, width: 240 });
     logAudit(session.user_id, "auth.2fa_setup_started", "New TOTP secret issued", req);
@@ -817,29 +874,12 @@ router.post(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const session = resolveSession(req);
-    if (!session) {
-      res.status(401).json({ error: "Not authenticated" });
-      return;
-    }
-    const user = db
-      .prepare("SELECT totp_secret, totp_enabled FROM users WHERE id = ?")
-      .get(session.user_id) as { totp_secret: string | null; totp_enabled: number } | undefined;
-    if (!user) {
-      res.status(401).json({ error: "Not authenticated" });
-      return;
-    }
-    if (user.totp_enabled) {
-      res.status(400).json({ error: "Two-factor authentication is already enabled" });
-      return;
-    }
-    if (!user.totp_secret || !verifyTotp(user.totp_secret, parsed.data.code)) {
-      logAudit(session.user_id, "auth.2fa_enable_failed", "Invalid verification code", req);
-      res.status(400).json({ error: "Invalid code. Check the code and try again." });
-      return;
-    }
-    db.prepare("UPDATE users SET totp_enabled = 1, updated_at = ? WHERE id = ?").run(now(), session.user_id);
-    logAudit(session.user_id, "auth.2fa_enabled", "Two-factor authentication enabled", req);
+    const result = attemptTotp(req, parsed.data.code, false, false, (session, user) => {
+      db.prepare("UPDATE users SET totp_enabled=1,updated_at=? WHERE id=?").run(now(), user.id);
+      invalidateOtherSessions(user.id, session.id);
+      logAudit(user.id, "auth.2fa_enabled", "Two-factor authentication enabled", req);
+    });
+    if (!result.ok) { res.status(result.status).json({ error: result.error }); return; }
     res.json({ ok: true });
   }),
 );
@@ -853,27 +893,12 @@ router.post(
       res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
       return;
     }
-    const session = resolveSession(req);
-    if (!session) {
-      res.status(401).json({ error: "Not authenticated" });
-      return;
-    }
-    const user = db
-      .prepare("SELECT totp_secret, totp_enabled FROM users WHERE id = ?")
-      .get(session.user_id) as { totp_secret: string | null; totp_enabled: number } | undefined;
-    if (!user?.totp_enabled || !user.totp_secret) {
-      res.status(400).json({ error: "Two-factor authentication is not enabled" });
-      return;
-    }
-    if (!verifyTotp(user.totp_secret, parsed.data.code)) {
-      logAudit(session.user_id, "auth.2fa_disable_failed", "Invalid code for disable", req);
-      res.status(400).json({ error: "Invalid code." });
-      return;
-    }
-    db.prepare(
-      "UPDATE users SET totp_enabled = 0, totp_secret = NULL, updated_at = ? WHERE id = ?",
-    ).run(now(), session.user_id);
-    logAudit(session.user_id, "auth.2fa_disabled", "Two-factor authentication disabled", req);
+    const result = attemptTotp(req, parsed.data.code, false, true, (session, user) => {
+      db.prepare("UPDATE users SET totp_enabled=0,totp_secret=NULL,totp_last_used_step=NULL,updated_at=? WHERE id=?").run(now(), user.id);
+      invalidateOtherSessions(user.id, session.id);
+      logAudit(user.id, "auth.2fa_disabled", "Two-factor authentication disabled", req);
+    });
+    if (!result.ok) { res.status(result.status).json({ error: result.error }); return; }
     res.json({ ok: true });
   }),
 );
@@ -895,4 +920,3 @@ router.post(
 );
 
 export default router;
-

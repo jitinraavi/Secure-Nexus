@@ -103,4 +103,3 @@ export function validateDesign(design: Design, profileId?: string): ComplianceRe
   add("review", "documentation", "professional-review", "Professional review remains required for code interpretation, life safety, structure, MEP, accessibility, fire protection, site, and permits.", profile.disclaimer);
   return { profile, issues, generatedAt: new Date().toISOString() };
 }
-

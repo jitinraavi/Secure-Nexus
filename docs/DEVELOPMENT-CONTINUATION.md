@@ -1,12 +1,14 @@
 # Development continuation handoff
 
-Repository: `jitinraavi/Secure-Nexus`. Delivery branch: `upgrade/r1-modeling-core`.
+Repository: `jitinraavi/secure-nexus`. Current security integration branch: `codex/secure-nexus-hardening`. The older delivery history below is retained for context.
+
+The October 10 integration combines the local UI/security work with remote main `130d575` without replacing remote features. See [the audit comparison](SECURITY-AUDIT-COMPARISON.md) for current findings and validation.
 
 The user authorizes implementation and pushing source commits, including coherent incremental modules across usage windows. Preserve existing work and continue phases in order. Never force-push, merge to main or overwrite a newer branch head. No additional permission is needed for authorized source edits and pushes.
 
-## Execution constraint
+## Historical source-only execution constraint
 
-Do not run the application, tests, builds, lint/typecheck, previews, native converters/solvers or any repository code. Inspect/edit source and consult primary documentation. `build` in the user's request means implement. Do not install or deploy runtimes to work around this instruction. Compilation, runtime, numerical benchmarks and integration acceptance stay unverified. Do not edit anything under the synced `sources/` directory.
+The earlier continuation did not run the application, tests, builds, lint/typecheck, previews, native converters/solvers or any repository code. The current security audit/upload request includes local lint, build and security tests, reported separately in the audit comparison. Inspect/edit source and consult primary documentation. `build` in the user's request means implement. Do not install or deploy runtimes to work around this instruction. Compilation, runtime, numerical benchmarks and integration acceptance stay unverified. Do not edit anything under the synced `sources/` directory.
 
 ## Completed source and current position
 
@@ -39,13 +41,13 @@ Phase 3 is **in progress**, not complete. Country/reference metadata is not impl
 5. Phase 7 finite source contract and enterprise authority are delivered and verified: the preserved central gateway is corrected at `b735f7dba3064b45f2c934ff90e64f40b275bd8d`; tenant seats bind to durable verified prepaid Razorpay INR receipts with proof-backed effective capacity and expiry guarding project writes through `projectAccess.ts`. Central multi-host authority proxy (`secondaryHost.ts`, `authorityServer.ts`), gateway security and topology enforcement (`topology.ts`), idempotent transition logging (`billing_transitions`, `tenant_billing_orders`), payment renewals, client billing UI (`OrganizationWorkspace.tsx`), and automated test suite in `server/test/api.test.ts`. See [PHASE-7-ENTERPRISE-AUTHORITY.md](PHASE-7-ENTERPRISE-AUTHORITY.md) and [CENTRAL-API-AUTHORITY.md](CENTRAL-API-AUTHORITY.md).
 6. Phase 8 Real offline & PWA Groundwork is source implemented, verified, and tested: PWA manifest (`manifest.webmanifest`), service worker app shell caching (`sw.js`, `pwa.ts`), account-scoped IndexedDB project/snapshot store with LRU eviction (`offlineProjectStore.ts`), immutable queue with superseding and conflict tracking (`offlineQueue.ts`), reconnect sync manager (`offlineSyncManager.ts`), conflict resolution UI (`OfflineSyncIndicator.tsx`), and automated test suite in `server/test/offline.test.ts`. See [PHASE-8-OFFLINE-PWA.md](PHASE-8-OFFLINE-PWA.md).
 7. Phase 9 AI photorealistic rendering jobs is source implemented, verified, and tested: extensible provider abstraction (`renderProvider.ts`) with Gemini Imagen and pure Node.js demo synthesis, configuration gating with unconfigured states, durable asynchronous job queue in SQLite (`project_render_jobs`), cooperative cancellation via AbortControllers, versioned AES-256-GCM artifact creation (`project_workspace_artifacts`), immutable retry semantics, project revision attribution with stale render detection, interactive studio UI (`RenderStudioModal.tsx`), integration with `GeometryWorkbench.tsx` and `Editor.tsx`, and automated test suite in `server/test/render.test.ts`. See [PHASE-9-AI-RENDERING.md](PHASE-9-AI-RENDERING.md).
-8. Phases 1 through 9 are all source-implemented, compiled, linted, and automated test-verified. The full roadmap is now delivered. Next steps: comprehensive execution and external environment acceptance.
+8. Phases 1 through 9 contain source increments. Executed build and security tests cover the integrated checkout, not complete engineering correctness, browser offline behavior, live providers or deployment acceptance. Remaining security findings are explicitly listed in the audit reports.
 
 Project country is chosen by the project user: India uses Indian references, USA uses US references, and other countries retain their corresponding declared references. Local adoption, actual edition, site hazards, material/system data and amendments are explicit inputs. Preserve that basis in source/report/export/native provenance. A confirmation records a declaration, not certification. Subsequent modules must preserve legacy data and clearly bound their implemented coverage.
 
 ## Local source and push procedure
 
-The local `repository/` directory is a file mirror, not a Git checkout. Remote files absent from the mirror must be preserved. Fetch the current branch ref and Git tree through authorized GitHub tools. Stage only the explicit changed/new file manifest against the remote base tree; do not recreate a tree from every local file or infer deletions. Normalize source CRLF to LF for pushed content. Verify the resulting Git blob SHA for every staged file against the normalized local bytes, then create a commit with the exact current head as parent. Recheck head before updating the ref with `force: false`, and verify the resulting branch head and changed file list. If head advanced, inspect the new work and reconcile before pushing.
+The older continuation used a file mirror. The current local `repository/` directory and isolated integration checkout are Git worktrees. Remote files absent from the mirror must be preserved. Fetch the current branch ref and Git tree through authorized GitHub tools. Stage only the explicit changed/new file manifest against the remote base tree; do not recreate a tree from every local file or infer deletions. Normalize source CRLF to LF for pushed content. Verify the resulting Git blob SHA for every staged file against the normalized local bytes, then create a commit with the exact current head as parent. Recheck head before updating the ref with `force: false`, and verify the resulting branch head and changed file list. If head advanced, inspect the new work and reconcile before pushing.
 
 The previous window reached 100% of the five-hour allowance after the verified `9350dce` push. Sixteen unpublished BIM/provenance files were retained locally. The 4 October continuation found the same branch head and refreshed ordinary allowance, resumed source review, and added the pending EngineeringWorkbench declaration import integration. Never infer that all local files have been pushed.
 
@@ -111,4 +113,3 @@ Next work is Phase 8 repair, in this order: an explicit build-generated complete
 ## Deferred executable acceptance
 
 All compilation and executed behavior remain unverified. The 3D module especially needs closed-form cantilever/UDL/torsion fixtures, rotated-coordinate invariance, mechanism rejection, equilibrium checks, conservative deflection-bound checks and independent solver comparison when execution is authorized. Inspect the published source-only limits in each module document. Do not describe these future checks as already passing.
-

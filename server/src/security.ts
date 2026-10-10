@@ -4,10 +4,12 @@ import {
   COOKIE_CSRF,
   COOKIE_SESSION,
   IS_PROD,
+  MAIL,
+  isLoopbackAddress,
   PENDING_2FA_TTL_SECONDS,
   SESSION_TTL_SECONDS,
 } from "./config.js";
-import { db, now } from "./db.js";
+import { db, now, withTransaction } from "./db.js";
 import { randomToken, sha256Hex } from "./crypto.js";
 
 export interface AuthedRequest extends Request {
@@ -78,27 +80,34 @@ export function clearSessionCookie(res: Response) {
 export function createSession(
   res: Response,
   userId: string,
-  opts: { pending2fa?: boolean; isPending?: boolean } = {},
+  opts: { pending2fa?: boolean; isPending?: boolean; credentialVersion?: number } = {},
 ) {
   const raw = randomToken(32);
   const dbCsrf = randomToken(24);
   const ttl = opts.isPending ? PENDING_2FA_TTL_SECONDS : SESSION_TTL_SECONDS;
   const sessionId = randomToken(16);
-  db.prepare(
-    `INSERT INTO sessions (id, user_id, token_hash, csrf_token, status, user_agent, ip, created_at, last_seen_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    sessionId,
-    userId,
-    sha256Hex(raw),
-    dbCsrf,
-    opts.isPending ? "pending_2fa" : "active",
-    null,
-    null,
-    now(),
-    now(),
-    now() + ttl,
-  );
+  withTransaction(() => {
+    const account = db.prepare("SELECT credential_version FROM users WHERE id=?").get(userId) as { credential_version: number } | undefined;
+    if (!account || (opts.credentialVersion !== undefined && opts.credentialVersion !== account.credential_version)) {
+      throw Object.assign(new Error("Authentication changed. Sign in again."), { status: 401 });
+    }
+    db.prepare(
+      `INSERT INTO sessions (id, user_id, token_hash, csrf_token, status, user_agent, ip, created_at, last_seen_at, expires_at, credential_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      sessionId,
+      userId,
+      sha256Hex(raw),
+      dbCsrf,
+      opts.isPending ? "pending_2fa" : "active",
+      null,
+      null,
+      now(),
+      now(),
+      now() + ttl,
+      account.credential_version,
+    );
+  });
   setSessionCookie(res, raw, ttl);
   setCsrfCookie(res, dbCsrf);
   return { sessionId, csrfToken: dbCsrf, ttl };
@@ -118,18 +127,33 @@ type SessionRow = {
   csrf_token: string;
   status: string;
   expires_at: number;
+  credential_version: number;
+  totp_attempts: number;
 };
 
 export function resolveSession(req: Request): SessionRow | null {
   const raw = (req.cookies as Record<string, string> | undefined)?.[COOKIE_SESSION];
   if (!raw) return null;
   const row = db
-    .prepare("SELECT id, user_id, csrf_token, status, expires_at FROM sessions WHERE token_hash = ?")
+    .prepare(`SELECT s.id,s.user_id,s.csrf_token,s.status,s.expires_at,s.credential_version,s.totp_attempts
+      FROM sessions s JOIN users u ON u.id=s.user_id
+      WHERE s.token_hash=? AND s.credential_version=u.credential_version`)
     .get(sha256Hex(raw)) as SessionRow | undefined;
   if (!row) return null;
   if (row.status === "revoked") return null;
   if (row.expires_at <= now()) return null;
   return row;
+}
+
+/** Development-only code display requires an explicit opt-in and a local browser request. */
+export function allowDevelopmentOtp(req: Request): boolean {
+  if (IS_PROD || !MAIL.devOtp || !isLoopbackAddress(req.socket.remoteAddress) || !isLoopbackAddress(req.ip)) return false;
+  try {
+    const hostname = new URL(`http://${req.get("host") || ""}`).hostname;
+    if (!isLoopbackAddress(hostname)) return false;
+    const origin = req.get("origin");
+    return !origin || isLoopbackAddress(new URL(origin).hostname);
+  } catch { return false; }
 }
 
 export function requireSession(req: Request, res: Response, next: NextFunction) {
@@ -183,10 +207,16 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
   const session = resolveSession(req);
   const sessionToken = session?.csrf_token ?? null;
 
-  const matches =
-    headerToken &&
-    cookieToken &&
-    (headerToken === cookieToken || (sessionToken !== null && headerToken === sessionToken));
+  let matches = false;
+  if (headerToken && cookieToken) {
+    if (sessionToken !== null) {
+      // Authenticated users MUST match their secure session token
+      matches = (headerToken === sessionToken);
+    } else {
+      // Unauthenticated users (who still need CSRF) fallback to double-submit cookie
+      matches = (headerToken === cookieToken);
+    }
+  }
 
   if (!matches) {
     res.status(403).json({ error: "Invalid CSRF token" });
@@ -202,4 +232,3 @@ export function asyncHandler(
     Promise.resolve(fn(req, res)).catch(next);
   };
 }
-

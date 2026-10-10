@@ -1,5 +1,4 @@
 import { Router, type Response } from "express";
-import multer from "multer";
 import { z } from "zod";
 import { logAudit } from "../audit.js";
 import { canWriteProject, getProjectAccess } from "../projectAccess.js";
@@ -13,17 +12,19 @@ import {
   submitRenderJobSchema,
 } from "../renderJobs.js";
 import { getRenderProvider, RENDER_STYLE_PRESETS } from "../renderProvider.js";
+import { ProviderResourceError } from "../providerBudget.js";
+import { boundedUpload } from "../uploads.js";
 import { asyncHandler, requireSession, type AuthedRequest } from "../security.js";
-import { MAX_ARTIFACT_BYTES, WorkspaceError, type WorkspaceActor } from "../workspaces.js";
+import { WorkspaceError, type WorkspaceActor } from "../workspaces.js";
 
 const router = Router({ mergeParams: true });
 const projectIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/);
 const jobIdSchema = z.string().regex(/^[a-f0-9]{32}$/);
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_ARTIFACT_BYTES, files: 1, fields: 10, parts: 15 },
-}).single("sourceImage");
+const upload = boundedUpload("sourceImage", {
+  fileSize: 32 * 1024 * 1024, fields: 4, fieldSize: 8_192, parts: 6, fieldNameSize: 32,
+  allowedFields: ["prompt", "negativePrompt", "stylePreset", "sourceRevision"],
+});
 
 function actor(req: AuthedRequest): WorkspaceActor {
   if (!req.user || !req.session) throw new WorkspaceError(401, "Not authenticated", "SESSION_EXPIRED");
@@ -45,6 +46,8 @@ function handle(work: (req: AuthedRequest, res: Response) => void | Promise<void
     } catch (error) {
       if (error instanceof WorkspaceError) {
         fail(res, error);
+      } else if (error instanceof ProviderResourceError) {
+        res.status(error.status).json({ error: error.message, code: error.code });
       } else {
         throw error;
       }
@@ -96,13 +99,7 @@ router.post(
   (req: AuthedRequest, res, next) => {
     const contentType = req.headers["content-type"] || "";
     if (contentType.includes("multipart/form-data")) {
-      upload(req, res, (err) => {
-        if (err) {
-          res.status(400).json({ error: "Invalid multipart upload", code: "INVALID_MULTIPART" });
-          return;
-        }
-        next();
-      });
+      upload(req, res, next);
     } else {
       next();
     }
@@ -162,7 +159,7 @@ router.get("/:jobId/image", handle((req, res) => {
     "Content-Disposition": `inline; filename="${encodeURIComponent(filename)}"`,
     "X-Content-Type-Options": "nosniff",
     "ETag": `"${sha256}"`,
-    "Cache-Control": "private, max-age=3600",
+    "Cache-Control": "private, no-store",
   });
   res.send(bytes);
 }));

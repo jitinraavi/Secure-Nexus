@@ -26,7 +26,9 @@ export function VisualizationControls({ design, onChange, presentationApi = null
   const report = dependencyTimeline || scheduleOpen ? cachedConstructionSchedule(value) : null;
   const day = report?.valid ? constructionScheduleDayAtTime(report, value.time) : undefined;
   return (
-    <div className="pointer-events-auto max-w-[min(56rem,calc(100vw-1.5rem))] rounded-xl border border-cyan-500/20 bg-slate-950/90 px-3 py-2 text-xs backdrop-blur">
+    <details className="gw-visualization-controls pointer-events-auto max-w-[min(56rem,calc(100vw-1.5rem))] rounded-xl border border-slate-700 bg-slate-950/95 text-xs backdrop-blur">
+      <summary className="flex items-center gap-3 px-3 py-2.5 text-slate-300"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m12 3 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5m-9 5v8" /></svg><span>Scene & timeline</span><span className="text-emerald-300">{playing ? "Playing" : `${Math.round(value.time)}%`}</span></summary>
+      <div className="border-t border-slate-800 px-3 py-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold uppercase tracking-wide text-cyan-300">4D planning</span>
         <Toggle checked={value.enabled} onChange={(enabled) => {
@@ -52,7 +54,7 @@ export function VisualizationControls({ design, onChange, presentationApi = null
       {dependencyTimeline && report && !report.valid && <p role="status" className="mt-2 text-amber-300">The dependency schedule has errors. All model phases remain visible; open the schedule to resolve them.</p>}
       {scheduleOpen && <ConstructionSchedulePanel design={design} value={value} onChange={onChange} />}
       <PresentationControls api={presentationApi} design={design} onChange={onChange} />
-    </div>
+      </div>
+    </details>
   );
 }
-

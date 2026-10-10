@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 const B32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -60,12 +60,19 @@ export function totpCode(secret: string, timeMs: number = Date.now()): string {
   return code.toString().padStart(6, "0");
 }
 
-export function verifyTotp(secret: string, code: string, window = 1): boolean {
-  if (!/^\d{6}$/.test(code)) return false;
+export function matchingTotpStep(secret: string, code: string, timeMs = Date.now(), window = 1): number | null {
+  if (!/^\d{6}$/.test(code)) return null;
+  let matching: number | null = null;
   for (let i = -window; i <= window; i++) {
-    if (totpCode(secret, Date.now() + i * 30_000) === code) return true;
+    const time = timeMs + i * 30_000;
+    if (time < 0) continue;
+    if (timingSafeEqual(Buffer.from(totpCode(secret, time)), Buffer.from(code))) matching = Math.floor(time / 30_000);
   }
-  return false;
+  return matching;
+}
+
+export function verifyTotp(secret: string, code: string, window = 1): boolean {
+  return matchingTotpStep(secret, code, Date.now(), window) !== null;
 }
 
 export function totpIssuerUri(issuer: string, account: string, secret: string): string {
