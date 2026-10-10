@@ -1,71 +1,70 @@
-# Phase 8 — Real Offline & PWA Groundwork
+# Built offline shell source increment
 
-## Overview
-Phase 8 transforms Groundwork into a full-fledged Progressive Web Application (PWA) with offline execution, account-isolated project caching, immutable operation queues, and deterministic conflict resolution on reconnection.
+This increment supplies a bounded public application shell. The source-only
+handoff below is historical. The October 10 security integration also includes
+account storage fences, sign-out recovery and browser security tests; see
+[the current audit comparison](SECURITY-AUDIT-COMPARISON.md) for executed checks.
+Full browser offline lifecycle and external deployment acceptance remain separate.
 
-## Architecture & Implementation
+The existing Vite 6 production build runs the new post-write Rollup plugin after
+the output is written. Its inventory covers every emitted HTML/chunk/asset,
+including lazy JS/CSS, emitted worker bundles and emitted WASM, plus the exact
+public allowlist `logo.svg`, `logo.png` and `manifest.webmanifest`. Runtime external
+services such as maps, API data and uploaded project assets are outside the shell.
+Referenced external bundled imports are rejected. Unsupported bases, SSR/watch/
+in-memory builds, path traversal and reserved names fail explicitly. The full
+checkout must retain the original public logos; the text-only working mirror is
+not a complete deployable asset checkout.
 
-### 1. Service Worker & Application Shell
-- **Manifest** (`client/public/manifest.webmanifest`):
-  - Declares PWA identity, standalone display mode, theme colors, and maskable icons.
-- **Service Worker** (`client/public/sw.js`):
-  - Pre-caches core application shell assets on install (`/`, `/index.html`, `/manifest.webmanifest`, logos).
-  - Implements network-first navigation with offline fallback to cached SPA shell (`index.html`).
-  - Stale-while-revalidate strategy for static application assets (scripts, styles, fonts, images).
-  - Explicit bypass for `/api/*` endpoints to permit dynamic offline queue processing.
-- **Registration** (`client/src/lib/pwa.ts` & `client/src/main.tsx`):
-  - Registers the service worker during page load and monitors background updates.
+The plugin hashes exact bounded output bytes and the worker template, then writes
+`offline-shell.json` and publishes generated `sw.js` last. The version changes with
+any inventoried asset or worker behavior. The raw source worker has a null inventory
+and fails installation; development source never registers it. No dependency was
+added and no generated output was produced in this source-only session.
 
-### 2. Account-Scoped Project & Snapshot Store (`client/src/lib/offlineProjectStore.ts`)
-- **IndexedDB Storage** (`groundwork_offline_projects_v2`):
-  - `cached_projects`: Stores `{ userId, projectId, name, projectType, revision, design, role, cachedAt, lastAccessedAt, sizeBytes }`.
-  - `cached_snapshots`: Stores `{ userId, projectId, snapshotId, revision, description, snapshotData, createdAt, sizeBytes }`.
-- **Bounded Storage & LRU Eviction**:
-  - Maximum account storage quota: 50 MB.
-  - Maximum cached projects per user: 50.
-  - Maximum snapshots per project: 10.
-  - Least Recently Used (LRU) eviction automatically frees capacity when limits are approached.
-  - Projects with pending or conflicted offline operations (`protectedProjectIds`) are strictly shielded from eviction.
-- **Account Isolation & Privacy**:
-  - All read/write operations require authenticated `userId` and filter by account.
-  - Upon logout (`client/src/auth.tsx`), `clearActiveUserSession(userId)` instantly clears in-memory caches and sensitive session references to prevent cross-account exposure.
+Budgets are 256 files, 32 MiB per file and 96 MiB total. Installation uses at most
+three concurrent fetches, 30 seconds per fetch and a 120-second overall deadline.
+Each fetch uses the exact same-origin URL, omitted credentials, rejected redirects
+and no HTTP cache reuse. Streamed bodies cannot exceed their declared build size;
+length and SHA-256 must match before caching. The complete marker is written last
+and every inventory entry is checked afterward. Failure removes only that staged
+version. Deployment must publish the matching entire asset graph and generated
+worker together; partial/rewritten/authenticated asset delivery cannot pass.
 
-### 3. Immutable Offline Queue (`client/src/lib/offlineQueue.ts`)
-- **IndexedDB Store** (`groundwork_offline_queue_v2`):
-  - Primary key: UUID.
-  - Operation types: `project_save`, `snapshot_create`, `native_job_submit`, `render_job_submit`, `artifact_upload`.
-  - Concurrency control: Records `expectedRevision` alongside payload for optimistic concurrency verification.
-- **Deterministic State Machine**:
-  - `queued`: Awaiting network reconnection.
-  - `syncing`: In-flight network synchronization.
-  - `completed`: Successfully reconciled and applied on server.
-  - `conflicted`: Server revision advanced while client was offline; local edits preserved without overwriting.
-  - `failed`: Non-recoverable error (e.g. project deleted or permissions revoked).
-  - `superseded`: When multiple saves are made offline for the same project, earlier un-synced saves are marked `superseded`, preventing redundant writes.
+The worker caches only declared public files. It never caches API, user responses,
+arbitrary runtime assets, cross-origin resources or query-specific HTML. SPA
+navigations use the same cached canonical index from the active worker's version;
+the browser's actual URL remains available to routing. Missing cached assets fall
+back to network without populating another version's cache, and readiness then
+fails. Browser storage eviction can invalidate readiness after a successful check.
 
-### 4. Reconnect Synchronization Manager (`client/src/lib/offlineSyncManager.ts`)
-- **Automated Online Detection**: Listens to `online` and `offline` browser events.
-- **Verification Workflow on Reconnect**:
-  1. *Authentication & Permission Recheck*: Calls `/api/auth/me`. If session is expired or revoked, synchronization halts.
-  2. *FIFO Queue Processing*: Iterates through pending items in chronological order.
-  3. *Revision Conflict Check*:
-     - For `project_save`, inspects server state via `GET /api/projects/:id`.
-     - If `server.revision !== expectedRevision`, the operation transitions to `conflicted` with server revision metadata. No silent overwriting occurs.
-     - If clean, the save is applied via `PATCH /api/projects/:id`, updating the offline cache and marking the queue item `completed`.
+Updates do not call `skipWaiting`, claim in-flight pages or reload editors. A new
+complete worker waits until prior controlled tabs close. Activation deletes only
+its own version-prefix caches and the named legacy Groundwork shell caches;
+unrelated origin caches remain intact. The hub asks users to save, close all app
+tabs and reopen when an update waits. A first installation can be prepared while
+the current page remains uncontrolled; it is shown separately from a ready cache.
 
-### 5. UI Integration & Conflict Management (`client/src/components/OfflineSyncIndicator.tsx`)
-- Status indicator pill embedded in sidebar and mobile navigation header:
-  - Visual status for Online, Offline, Pending Queue, and Conflicted states.
-- Offline Synchronization Hub Modal:
-  - Network state and Account Storage gauge (MB used, cached project count).
-  - Filterable queue viewer (Queued, Conflicted, Failed, Completed, Superseded).
-  - Conflict resolution actions: One-click export of local conflicted drafts as JSON, or manual dismissal.
-  - Manual "Sync Now" trigger.
+The lifecycle module queries the actual worker using MessageChannel. Readiness
+requires the version's complete marker and every cached asset's declared metadata;
+registration success and browser online state alone do not qualify. The hub exposes
+unavailable, preparing, prepared, verified-cache-ready, failed/unverified and waiting
+update states separately. Cache fingerprints are verified during installation;
+the status check does not rehash every body. Same-origin trusted application code
+and browser Cache Storage integrity remain assumptions. Account changes invalidate
+in-flight hub queue/storage reads and clear visible prior-account metadata.
 
-## Verification
-- Unit test suite in `server/test/offline.test.ts` covers:
-  - Enqueueing immutable operations and superseding older un-synced project saves.
-  - FIFO queue ordering and transition to conflicted status.
-  - Multi-user account isolation (user A cannot access user B's projects or queues).
-  - Session clearing upon user logout.
-- Typecheck verification (`npm.cmd run lint`) passes with zero compiler errors across both client and server workspaces.
+The associated bounded queue corrections reject unsupported legacy operations
+instead of falsely marking them complete; project-save replay retains its base
+revision and expected account, while the server rejects a cookie-account mismatch.
+Editor fallback queues only network TypeErrors, never permission/not-found API
+errors. These corrections do not establish complete artifact/job offline replay.
+
+Remaining Phase 8 work includes the full account cache/permissions/conflict review,
+immutable artifact/job dispatch, logout isolation, retention and recovery behavior.
+Actual Vite output ordering/worker coverage, browser lifecycle, storage quota,
+offline lazy loading, account switching and deployment acceptance remain unverified.
+
+Primary references: [Vite 6 plugin hooks](https://v6.vite.dev/guide/api-plugin),
+[Rollup output hooks](https://rollupjs.org/plugin-development/#writebundle),
+[Service Worker lifecycle](https://w3c.github.io/ServiceWorker/).

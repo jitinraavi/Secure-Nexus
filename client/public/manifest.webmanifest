@@ -5,8 +5,8 @@
   "start_url": "/",
   "display": "standalone",
   "orientation": "any",
-  "theme_color": "#0f172a",
-  "background_color": "#0f172a",
+  "theme_color": "#111614",
+  "background_color": "#111614",
   "categories": ["productivity", "utilities", "design"],
   "icons": [
     {

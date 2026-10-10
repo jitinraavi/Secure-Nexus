@@ -1,201 +1,138 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { confirmDemoPayment, getPayment } from "../api";
 import { useAuth } from "../auth";
-import { Button, Card, Spinner } from "../components/ui";
+import { Button, Spinner } from "../components/ui";
 import { useToast } from "../components/Toast";
-import { formatDate, formatMoney } from "../lib/format";
+import { formatDate, formatMoney as moneyWithDigits } from "../lib/format";
+import type { PaymentRecord } from "../types";
+import "./checkout.css";
 
-const UPI_APPS = ["Google Pay", "PhonePe", "Paytm", "BHIM"];
+type CheckoutStep = "details" | "review" | "done";
+type CheckoutState = { id: string; payment: PaymentRecord | null; error: string; loading: boolean };
+const steps: { id: CheckoutStep; label: string }[] = [{ id: "details", label: "Plan details" }, { id: "review", label: "Review" }, { id: "done", label: "Complete" }];
+const methodLabels: Record<string, string> = { upi: "UPI", card: "Card", paypal: "PayPal" };
+const formatMoney = (amount: number, currency: string) => moneyWithDigits(amount, currency, new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits);
 
 export function Checkout() {
-  const { paymentId } = useParams<{ paymentId: string }>();
+  const { paymentId = "" } = useParams<{ paymentId: string }>();
   const navigate = useNavigate();
-  const { refresh } = useAuth();
+  const { refresh, user } = useAuth();
   const toast = useToast();
-
-  const [payment, setPayment] = useState<{ plan: string; amount: number; currency: string; method: string; status: string; created_at: number } | null>(null);
-  const [step, setStep] = useState<"details" | "review" | "done">("details");
-  const [error, setError] = useState("");
-  const [paying, setPaying] = useState(false);
-  const [vpa, setVpa] = useState("");
-  const [card, setCard] = useState({ number: "", name: "", expiry: "", cvv: "" });
+  const [state, setState] = useState<CheckoutState>({ id: "", payment: null, error: "", loading: true });
+  const [stepState, setStepState] = useState<{ id: string; step: CheckoutStep }>({ id: "", step: "details" });
+  const [payingId, setPayingId] = useState<string | null>(null);
+  const [confirmationError, setConfirmationError] = useState("");
+  const requestRef = useRef(0);
+  const mountedRef = useRef(false);
+  const scopeRef = useRef(paymentId);
+  const payingRef = useRef<string | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  scopeRef.current = paymentId;
+  const payment = state.id === paymentId ? state.payment : null;
+  const error = state.id === paymentId ? state.error : "";
+  const loading = state.id !== paymentId || state.loading;
+  const step = stepState.id === paymentId ? stepState.step : "details";
+  const paying = payingId === paymentId;
+  const isDemo = payment?.provider === "demo";
+  const canConfirm = isDemo && payment?.status === "pending";
+  const planActive = user?.plan === payment?.plan && (!user?.planExpiresAt || user.planExpiresAt * 1000 > Date.now());
+  const stepIndex = steps.findIndex((item) => item.id === step);
 
   const load = useCallback(async () => {
+    const request = ++requestRef.current;
+    setState({ id: paymentId, payment: null, error: "", loading: true });
+    setStepState({ id: paymentId, step: "details" });
+    setConfirmationError("");
+    const current = () => mountedRef.current && request === requestRef.current && scopeRef.current === paymentId;
+    if (!paymentId) { setState({ id: paymentId, payment: null, error: "This checkout is missing its payment reference.", loading: false }); return; }
     try {
-      const res = await getPayment(paymentId!);
-      setPayment(res.payment as typeof payment);
-      if (res.payment.status === "paid") setStep("done");
+      const response = await getPayment(paymentId);
+      if (!current()) return;
+      setState({ id: paymentId, payment: response.payment, error: "", loading: false });
+      setStepState({ id: paymentId, step: response.payment.status === "paid" ? "done" : "details" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Payment not found");
+      if (current()) setState({ id: paymentId, payment: null, error: err instanceof Error ? err.message : "This checkout could not be loaded.", loading: false });
     }
   }, [paymentId]);
 
   useEffect(() => {
+    mountedRef.current = true;
+    payingRef.current = null;
+    setPayingId(null);
     void load();
+    return () => { mountedRef.current = false; requestRef.current++; };
   }, [load]);
 
+  const changeStep = (next: CheckoutStep) => {
+    if (paying) return;
+    setConfirmationError("");
+    setStepState({ id: paymentId, step: next });
+    window.requestAnimationFrame(() => headingRef.current?.focus());
+  };
+
   const pay = async () => {
-    setPaying(true);
+    if (!canConfirm || !paymentId || payingRef.current) return;
+    const id = paymentId;
+    const savedPayment = payment;
+    const current = () => mountedRef.current && scopeRef.current === id;
+    payingRef.current = id;
+    setPayingId(id);
+    setConfirmationError("");
     try {
-      await confirmDemoPayment(paymentId!);
+      const result = await confirmDemoPayment(id);
+      if (!result.ok) throw new Error("The demo activation was not confirmed. Please try again.");
+      if (!current()) return;
       await refresh();
-      setStep("done");
-      toast.push({ title: "Payment successful", description: "Your plan is now active.", tone: "success" });
+      if (!current()) return;
+      // A confirmed payment stays complete even if the optional receipt refresh is unavailable.
+      const receipt = await getPayment(id).then((response) => response.payment).catch(() => null);
+      if (!current()) return;
+      setState({ id, payment: receipt?.status === "paid" ? receipt : { ...savedPayment, status: "paid", completed_at: Math.floor(Date.now() / 1000) }, error: "", loading: false });
+      setStepState({ id, step: "done" });
+      toast.push({ title: "Demo plan activated", description: "Your plan is active. No real payment was charged.", tone: "success" });
+      window.requestAnimationFrame(() => headingRef.current?.focus());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Payment failed");
+      if (current()) setConfirmationError(err instanceof Error ? err.message : "The demo could not be completed. Please try again.");
     } finally {
-      setPaying(false);
+      if (current()) { payingRef.current = null; setPayingId(null); }
     }
   };
 
-  if (error && !payment) {
-    return (
-      <div className="mx-auto max-w-md py-16">
-        <Card className="p-8 text-center">
-          <h1 className="text-lg font-bold text-slate-100">Checkout unavailable</h1>
-          <p className="mt-2 text-sm text-slate-400">{error}</p>
-          <Link to="/billing" className="mt-5 inline-block">
-            <Button variant="secondary">Back to billing</Button>
-          </Link>
-        </Card>
-      </div>
-    );
-  }
-
-  if (!payment) {
-    return (
-      <div className="flex h-64 items-center justify-center"><Spinner className="h-7 w-7 text-emerald-400" /></div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-lg space-y-6 py-10">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-50">Checkout</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Simulated payment (demo mode) · <Link to="/billing" className="text-emerald-400 hover:text-emerald-300">Cancel</Link>
-        </p>
-      </div>
-
-      <Card className="p-6">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-          <div>
-            <p className="text-sm text-slate-400">Groundwork <span className="capitalize text-slate-200">{payment.plan}</span> plan</p>
-            <p className="mt-0.5 text-xs text-slate-500">Created {formatDate(payment.created_at)}</p>
-          </div>
-          <p className="text-2xl font-extrabold text-slate-50">
-            {formatMoney(payment.amount, payment.currency)}
-          </p>
+  return <div className="gw-checkout">
+    <Link to="/billing" className="gw-checkout__back"><span aria-hidden="true">←</span> Back to billing</Link>
+    <div className="gw-checkout__intro"><p className="gw-kicker">A little more room to create</p><h1>Make your next move.</h1><p>{payment && !isDemo ? "Review your plan and payment record." : "Review your plan and complete the demo activation."}</p></div>
+    {loading ? <section className="gw-checkout__loading" aria-busy="true"><Spinner className="h-7 w-7" /><p>Preparing your checkout…</p></section>
+      : error || !payment ? <section className="gw-checkout__unavailable"><ReceiptIcon /><h2>Checkout unavailable</h2><p role="alert">{error || "This payment record could not be found."}</p><div><Button variant="secondary" onClick={() => void load()}>Try again</Button><Link to="/billing" className="gw-link-button gw-button-outline">Return to billing</Link></div></section>
+      : <>
+        <ol className="gw-checkout__steps" aria-label="Checkout progress">{steps.map((item, index) => <li key={item.id} className={`${index <= stepIndex ? "is-active" : ""} ${index < stepIndex ? "is-complete" : ""}`} aria-current={item.id === step ? "step" : undefined}><span>{index < stepIndex ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 8 3 3 5-6" /></svg> : index + 1}</span><p>{item.label}</p>{index < steps.length - 1 && <i aria-hidden="true" />}</li>)}</ol>
+        <div className="gw-checkout__layout">
+          <section className="gw-checkout__flow" aria-labelledby="checkout-step-heading" aria-busy={paying || undefined}>
+            <div className="gw-checkout__flow-heading"><p className="gw-kicker">{step === "details" ? "01 / Your workspace" : step === "review" ? "02 / One last look" : "03 / Ready to create"}</p><h2 id="checkout-step-heading" ref={headingRef} tabIndex={-1}>{step === "details" ? "The plan, at a glance." : step === "review" ? "Everything look right?" : isDemo ? "Your next chapter starts here." : "Payment complete."}</h2></div>
+            {isDemo && <div className="gw-checkout__demo"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 7 4v8l-7 4-7-4V6l7-4Zm0 4v5m0 3h.01" /></svg><div><strong>Demo checkout · no real charge</strong><p>No card, UPI, or other payment information is needed.</p></div></div>}
+            {step === "details" && <>
+              <p className="gw-checkout__copy">{canConfirm ? "This demo lets you activate your selected Groundwork plan and explore the workspace. Review the plan details before continuing." : payment.status !== "pending" ? "This payment is no longer awaiting confirmation. Return to billing to view its status or start a new checkout." : "This payment uses an external provider. Complete it through the provider checkout from your billing page."}</p>
+              <dl className="gw-checkout__summary"><div><dt>Selected plan</dt><dd>Groundwork <span className="gw-checkout__capitalize">{payment.plan}</span></dd></div><div><dt>Plan price</dt><dd>{formatMoney(payment.amount, payment.currency)}</dd></div><div><dt>{isDemo ? "Simulated method" : "Payment method"}</dt><dd>{methodLabels[payment.method] ?? payment.method}</dd></div><div><dt>Status</dt><dd className="gw-checkout__capitalize">{payment.status}</dd></div><div><dt>Created</dt><dd>{formatDate(payment.created_at)}</dd></div>{isDemo && <div className="gw-checkout__total"><dt>Amount charged today</dt><dd>{formatMoney(0, payment.currency)}</dd></div>}</dl>
+              {canConfirm ? <Button className="gw-checkout__continue" onClick={() => changeStep("review")}>Continue to review <span aria-hidden="true">↗</span></Button> : <Link to="/billing" className="gw-link-button gw-button-secondary">Return to billing <span aria-hidden="true">↗</span></Link>}
+            </>}
+            {step === "review" && <>
+              <p className="gw-checkout__copy">Confirming will activate the <span className="gw-checkout__capitalize">{payment.plan}</span> plan on your account through the demo payment system.</p>
+              <dl className="gw-checkout__summary"><div><dt>Your plan</dt><dd>Groundwork <span className="gw-checkout__capitalize">{payment.plan}</span></dd></div><div><dt>Listed plan price</dt><dd>{formatMoney(payment.amount, payment.currency)}</dd></div><div><dt>Checkout mode</dt><dd>Demo simulation</dd></div><div className="gw-checkout__total"><dt>Actual amount charged</dt><dd>{formatMoney(0, payment.currency)}</dd></div></dl>
+              {confirmationError && <div className="gw-checkout__error" role="alert"><strong>Activation could not be completed</strong><p>{confirmationError}</p></div>}
+              <div className="gw-checkout__actions"><Button variant="secondary" disabled={paying} onClick={() => changeStep("details")}>Back</Button><Button className="gw-checkout__confirm" loading={paying} disabled={!canConfirm} onClick={() => void pay()}>{confirmationError ? "Try demo activation again" : "Activate demo plan"}<span aria-hidden="true">↗</span></Button></div>
+              <p className="gw-checkout__footnote">{paying ? "Confirming your demo activation…" : "No real payment will be collected."}</p>
+            </>}
+            {step === "done" && <div className="gw-checkout__success" role="status"><div className="gw-checkout__success-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="m9 16 5 5 10-11" /></svg></div><h3>Groundwork <span className="gw-checkout__capitalize">{payment.plan}</span> {planActive ? "is active." : "checkout is complete."}</h3><p>{isDemo ? "Your demo activation is complete. No real payment was charged." : "Your payment has been recorded."} {planActive ? "Your workspace is ready for your next idea." : "View your current plan and payment history in billing."}</p><dl className="gw-checkout__summary"><div><dt>{isDemo ? "Demo status" : "Payment status"}</dt><dd>Complete</dd></div>{payment.completed_at && <div><dt>Completed</dt><dd>{formatDate(payment.completed_at)}</dd></div>}{isDemo && <div><dt>Actual amount charged</dt><dd>{formatMoney(0, payment.currency)}</dd></div>}</dl><Button className="gw-checkout__continue" onClick={() => navigate("/dashboard")}>Go to your workspace <span aria-hidden="true">↗</span></Button><Link to="/billing" className="gw-checkout__receipt-link">View billing history</Link></div>}
+          </section>
+          <aside className={`gw-checkout__order ${step === "done" ? "is-done" : ""}`} aria-label="Order summary">
+            <div className="gw-checkout__art" aria-hidden="true"><div className="gw-checkout__art-grid" /><div className="gw-checkout__floating-card gw-checkout__floating-card--back" /><div className="gw-checkout__floating-card"><div className="gw-checkout__card-logo"><svg viewBox="0 0 24 28"><path d="m12 2 10 6v12l-10 6-10-6V8l10-6Zm0 0v12m10-6L12 14 2 8m10 6v12" /></svg><span>Groundwork.</span></div><div className="gw-checkout__card-chip"><i /><i /><i /></div><p>SPACE FOR WHAT’S NEXT</p><div className="gw-checkout__card-bottom"><span>{payment.plan}</span><svg viewBox="0 0 32 32"><path d={step === "done" ? "m8 16 6 6 11-13" : "M16 3v26M3 16h26"} /></svg></div></div><span className="gw-checkout__art-caption">A WORKSPACE WITH PERSPECTIVE</span></div>
+            <div className="gw-checkout__order-details"><p className="gw-kicker">{step === "done" ? "Activation complete" : "Your selection"}</p><h2>Groundwork <span className="gw-checkout__capitalize">{payment.plan}</span></h2><p className="gw-checkout__order-price">{formatMoney(payment.amount, payment.currency)}<span>listed plan price</span></p><div className="gw-checkout__order-mode"><span>{isDemo ? "Demo mode" : "Provider payment"}</span><span>{step === "done" ? "Complete" : isDemo ? "No real charge" : payment.status}</span></div><p className="gw-checkout__reference">Reference <span>{payment.id}</span></p></div>
+          </aside>
         </div>
+      </>}
+  </div>;
+}
 
-        {step === "details" && (
-          <div className="pt-4">
-            <p className="mb-3 text-sm font-semibold text-slate-200">
-              Paying with <span className="uppercase text-emerald-400">{payment.method}</span>
-            </p>
-            {payment.method === "upi" && (
-              <div className="space-y-2">
-                <input
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2.5 text-sm text-slate-100 outline-none focus:border-emerald-500"
-                  placeholder="yourname@upi"
-                  value={vpa}
-                  onChange={(e) => setVpa(e.target.value)}
-                />
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {UPI_APPS.map((a) => (
-                    <span key={a} className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-400">{a}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {payment.method === "card" && (
-              <div className="space-y-3">
-                <input
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2.5 text-sm tracking-wider text-slate-100 outline-none focus:border-emerald-500"
-                  inputMode="numeric"
-                  placeholder="4444 4444 4444 4444"
-                  value={card.number}
-                  onChange={(e) => setCard({ ...card, number: e.target.value })}
-                />
-                <input
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2.5 text-sm text-slate-100 outline-none focus:border-emerald-500"
-                  placeholder="Name on card"
-                  value={card.name}
-                  onChange={(e) => setCard({ ...card, name: e.target.value })}
-                />
-                <div className="grid grid-cols-2 gap-3">
-                  <input
-                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2.5 text-sm text-slate-100 outline-none focus:border-emerald-500"
-                    placeholder="MM/YY"
-                    value={card.expiry}
-                    onChange={(e) => setCard({ ...card, expiry: e.target.value })}
-                  />
-                  <input
-                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2.5 text-sm text-slate-100 outline-none focus:border-emerald-500"
-                    inputMode="numeric"
-                    type="password"
-                    placeholder="CVV"
-                    maxLength={4}
-                    value={card.cvv}
-                    onChange={(e) => setCard({ ...card, cvv: e.target.value })}
-                  />
-                </div>
-              </div>
-            )}
-            {payment.method === "paypal" && (
-              <div className="flex items-center gap-3 rounded-xl bg-slate-950 p-4">
-                <span className="text-lg font-bold italic text-cyan-300">Pay<span className="text-cyan-500">Pal</span></span>
-                <span className="text-xs text-slate-400">You will be redirected to PayPal to approve the payment.</span>
-              </div>
-            )}
-            <Button className="mt-5 w-full" onClick={() => setStep("review")}>
-              Continue to review
-            </Button>
-            <div className="mt-4 flex items-center justify-center gap-1.5 text-xs text-slate-500">
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0110 0v4" />
-              </svg>
-              Payments are protected with TLS + CSP.
-            </div>
-          </div>
-        )}
-
-        {step === "review" && (
-          <div className="space-y-4 pt-4">
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm">
-              <div className="flex justify-between py-1"><span className="text-slate-400">Plan</span><span className="capitalize text-slate-200">{payment.plan}</span></div>
-              <div className="flex justify-between py-1"><span className="text-slate-400">Payment method</span><span className="uppercase text-slate-200">{payment.method}</span></div>
-              <div className="flex justify-between border-t border-slate-800 py-1 pt-2">
-                <span className="text-slate-400">Total</span>
-                <span className="font-bold text-slate-50">{formatMoney(payment.amount, payment.currency)}</span>
-              </div>
-            </div>
-            {error && <p className="text-sm text-rose-400">{error}</p>}
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => setStep("details")}>Back</Button>
-              <Button className="flex-1" loading={paying} onClick={() => void pay()}>
-                Pay {formatMoney(payment.amount, payment.currency)}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {step === "done" && (
-          <div className="pt-4 text-center">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
-              <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
-            <h2 className="text-lg font-bold text-slate-50">Payment complete</h2>
-            <p className="mt-1 text-sm text-slate-400">
-              Your <span className="capitalize text-slate-200">{payment.plan}</span> plan is now active.
-            </p>
-            <Button className="mt-5" onClick={() => navigate("/dashboard")}>Go to dashboard</Button>
-          </div>
-        )}
-      </Card>
-    </div>
-  );
+function ReceiptIcon() {
+  return <svg viewBox="0 0 40 48" width="40" height="48" fill="none" aria-hidden="true"><path d="M7 3h26v40l-4-3-5 3-4-3-4 3-5-3-4 3V3Zm7 11h12m-12 8h12m-12 8h8" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round" /></svg>;
 }

@@ -239,8 +239,12 @@ export function verifyTwoFactor(code: string) {
   });
 }
 
-export function logout() {
-  return request<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
+export async function logout() {
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(new Error("Sign-out timed out. Check your connection and retry.")), 20_000);
+  try {
+    return await request<{ ok: boolean }>("/api/auth/logout", { method: "POST", signal: controller.signal });
+  } finally { clearTimeout(deadline); }
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
@@ -293,7 +297,7 @@ export async function getCountries(): Promise<CountryOption[]> {
 
 export async function twoFactorSetup() {
   return request<{ secret: string; otpauthUrl: string; qrDataUrl: string }>("/api/auth/2fa/setup", {
-    method: "GET",
+    method: "POST",
   });
 }
 
@@ -337,7 +341,7 @@ export async function getProject(id: string): Promise<ProjectDetail> {
 
 export function patchProject(
   id: string,
-  patch: { name?: string; projectType?: string; widthMm?: number; depthMm?: number; designData?: string; baseRevision?: number; folder?: string; archived?: boolean; isTemplate?: boolean },
+  patch: { name?: string; projectType?: string; widthMm?: number; depthMm?: number; designData?: string; baseRevision?: number; folder?: string; archived?: boolean; isTemplate?: boolean; expectedAccountId?: string },
 ) {
   return request<{ ok: boolean; revision: number }>(`/api/projects/${id}`, {
     method: "PATCH",
@@ -578,4 +582,3 @@ export function confirmDemoPayment(paymentId: string) {
 export function getPayment(id: string): Promise<{ payment: PaymentRecord }> {
   return request<{ payment: PaymentRecord }>(`/api/payments/${id}`, { method: "GET" });
 }
-

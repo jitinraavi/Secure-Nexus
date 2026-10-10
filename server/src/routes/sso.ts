@@ -195,7 +195,7 @@ router.get("/:organizationId/callback", strictLimiter, asyncHandler(async (req, 
       organizationAudit(organizationId, eligible.id, "sso.authenticated", { issuer: config.issuer, pendingTwoFactor: Boolean(eligible.totp_enabled) });
       return eligible;
     });
-    res.set("Cache-Control", "no-store"); res.redirect(user.totp_enabled ? "/verify-2fa" : "/organizations");
+    res.set("Cache-Control", "no-store"); res.redirect(user.totp_enabled ? "/verify-2fa" : "/auth/complete");
   } catch {
     organizationAudit(organizationId, null, "sso.rejected", {});
     res.status(401).json({ error: "SSO sign-in could not be verified. Ask the organization owner to check the provider configuration and subject binding." });

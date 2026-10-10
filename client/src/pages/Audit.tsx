@@ -6,6 +6,7 @@ import { useToast } from "../components/Toast";
 import { ACTION_LABELS, actionTone, formatDate, timeAgo } from "../lib/format";
 import { auditCsv, auditJson, MAX_AUDIT_EXPORT_EVENTS } from "../lib/auditExport";
 import { download } from "../lib/download";
+import { PageIntro } from "../components/PageIntro";
 
 function parseDetail(detail: string | null): string {
   if (!detail) return "—";
@@ -114,14 +115,13 @@ export function Audit() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div><h1 className="text-2xl font-bold text-slate-50">Audit log</h1><p className="mt-1 text-sm text-slate-400">Browse and export security and project events for your account. Date filters use UTC.</p></div>
-        <div className="flex flex-wrap gap-2">
+      <PageIntro eyebrow="A clear record" title="Every step, accounted for." description="Browse security and project activity, narrow your date range, and export the records you need. Date filters use UTC." variant="structure" actions={
+        <>
           <Button variant="secondary" disabled={loading} onClick={() => setReload((value) => value + 1)}>Refresh</Button>
           <Button variant="secondary" disabled={loading || exportBusy || range.invalid || snapshotId === undefined} onClick={() => void exportEvents("csv")}>Export CSV</Button>
           <Button variant="secondary" disabled={loading || exportBusy || range.invalid || snapshotId === undefined} onClick={() => void exportEvents("json")}>Export JSON</Button>
-        </div>
-      </div>
+        </>
+      } />
       <div className="grid gap-3 sm:grid-cols-3">
         <Select label="Event action" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">All events</option>{actions.map((action) => <option key={action} value={action}>{ACTION_LABELS[action] ?? action}</option>)}</Select>
         <Input label="From date (UTC)" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />

@@ -1,4 +1,5 @@
 import { countryInfo, localPriceMinor } from "./pricing.js";
+import { IS_PROD, PAYMENTS_MODE } from "../config.js";
 
 export interface Plan {
   id: string;
@@ -183,7 +184,8 @@ description: `Groundwork ${p.plan.name} plan`,
 /* ------------------------------ Selection -------------------------------- */
 
 function paymentMode(): "demo" | "live" {
-  return process.env.PAYMENTS_MODE === "live" ? "live" : "demo";
+  if (IS_PROD && PAYMENTS_MODE !== "live") throw new Error("Demo payments are disabled in production");
+  return PAYMENTS_MODE === "live" ? "live" : "demo";
 }
 
 export function isDemoMode(): boolean {
@@ -262,4 +264,3 @@ export async function createTenantSeatLink(p: { orderId: string; userId: string;
   if (checkout.protocol !== "https:" || checkout.hostname !== "rzp.io" || checkout.username || checkout.password || checkout.port) throw new Error("Invalid provider checkout URL");
   return { provider: "razorpay", providerOrderId: result.id, checkoutUrl: checkout.href, demo: false, method: "card" };
 }
-

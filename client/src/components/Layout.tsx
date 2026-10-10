@@ -1,106 +1,114 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
+import { useTheme, type ThemeMode } from "../theme";
 import { Logo } from "./Logo";
 import { useToast } from "./Toast";
 import { cn } from "../lib/cn";
 import { OfflineSyncIndicator } from "./OfflineSyncIndicator";
+import { SignOutDialog } from "./SignOutDialog";
+import "./workspace.css";
 
 const NAV = [
-  { to: "/dashboard", label: "Dashboard", icon: "M4 13h6V4H4v9zm0 7h6v-5H4v5zm10 0h6v-9h-6v9zm0-16v5h6V4h-6z" },
-  { to: "/geometry", label: "Geometry & rendering", icon: "M12 2L2 7v10l10 5 10-5V7L12 2zm0 3 7 3-7 3-7-3 7-3zM4 10l6 3v6l-6-3v-6zm16 0v6l-6 3v-6l6-3z" },
-  { to: "/engineering", label: "Engineering", icon: "M3 3h18v3H3V3zm2 5h4v13H5V8zm10 0h4v13h-4V8zm-4 5h2v8h-2v-8z" },
-  { to: "/exchange", label: "BIM & civil exchange", icon: "M3 3h18v18H3V3zm3 3v12h12V6H6zm1 3h4v2H7V9zm6 4h4v2h-4v-2z" },
-  { to: "/organizations", label: "Organizations", icon: "M16 11a4 4 0 10-8 0 4 4 0 008 0zm-4 6c-4 0-7 2-7 4h14c0-2-3-4-7-4zM4 9a3 3 0 013-3v6a3 3 0 01-3-3zm16 0a3 3 0 00-3-3v6a3 3 0 003-3z" },
-  { to: "/billing", label: "Billing", icon: "M20 6H4a1 1 0 00-1 1v10a1 1 0 001 1h16a1 1 0 001-1V7a1 1 0 00-1-1zm-2 8h-3v-2h3v2z" },
-  { to: "/audit", label: "Audit Log", icon: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-3 14l-4-4 1.5-1.5L11 13l4.5-4.5L17 10l-6 6z" },
-  { to: "/settings", label: "Settings", icon: "M12 15a3 3 0 100-6 3 3 0 000 6zm7.4-3a7.4 7.4 0 00-.1-1l2-1.5-2-3.5-2.4 1a7.5 7.5 0 00-1.7-1L14.8 3h-4L10 5.6a7.5 7.5 0 00-1.7 1L5.9 5.5 4 9l2 1.5a7.4 7.4 0 000 1L4 13l1.9 3.4 2.4-1a7.5 7.5 0 001.7 1l.8 2.6h4l.8-2.6a7.5 7.5 0 001.7-1l2.4 1 1.9-3.4-2-1.5c.06-.33.1-.66.1-1z" },
+  { to: "/dashboard", label: "Overview", icon: "M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z" },
+  { to: "/geometry", label: "Geometry & rendering", icon: "m12 3 9 5v8l-9 5-9-5V8zm0 0v10m9-5-9 5-9-5m9 5v8" },
+  { to: "/engineering", label: "Engineering", icon: "M3 4h18M5 4v16m14-16v16M3 20h18M8 8h8M8 12h8M8 16h8" },
+  { to: "/exchange", label: "BIM & civil exchange", icon: "M4 4h16v16H4zM4 9h16M9 4v16m5-6h3m-3 3h3" },
+  { to: "/organizations", label: "Organizations", icon: "M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2M20 5a3 3 0 0 1 0 6M4 5a3 3 0 0 0 0 6" },
+  { to: "/billing", label: "Plan & billing", icon: "M3 5h18v14H3zM3 9h18M7 15h4" },
+  { to: "/audit", label: "Activity & audit", icon: "M14 3H5v18h14V8zm0 0v5h5M8 12h8M8 16h6" },
+  { to: "/settings", label: "Settings", icon: "M4 7h16M4 17h16M8 4v6m8 4v6" },
 ];
 
 function NavIcon({ d }: { d: string }) {
-  return (
-    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-      <path d={d} />
-    </svg>
-  );
+  return <svg className="studio-nav-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>;
 }
 
 export function Layout() {
-  const { user, logout } = useAuth();
+  const { user, signingOut, logoutError } = useAuth();
+  const { mode, setMode } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const toast = useToast();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [signOutOpen, setSignOutOpen] = useState(false);
+  const drawer = useRef<HTMLElement>(null);
+  const shellContent = useRef<HTMLDivElement>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const currentPage = NAV.find((item) => location.pathname.startsWith(item.to))?.label ?? "Design studio";
+  const displayName = user?.username || user?.email.split("@")[0] || "Your workspace";
+  const initials = displayName.replace(/[^a-zA-Z0-9]/g, "").slice(0, 2).toUpperCase() || "GW";
 
-  const handleLogout = async () => {
-    await logout();
-    toast.push({ title: "Signed out", tone: "info" });
-    navigate("/");
-  };
+  useEffect(() => { setDrawerOpen(false); }, [location.pathname, location.search]);
+
+  useLayoutEffect(() => {
+    if (!drawerOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    if (shellContent.current) shellContent.current.inert = true;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : menuButton.current;
+    const panel = drawer.current;
+    const focusFrame = window.requestAnimationFrame(() => panel?.querySelector<HTMLButtonElement>(".studio-drawer-close")?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setDrawerOpen(false); return; }
+      if (event.key !== "Tab" || !panel) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), select, [tabindex="0"]')).filter((element) => element.getClientRects().length > 0);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first) return;
+      if (event.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !panel.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    };
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const onResize = () => { if (desktop.matches) setDrawerOpen(false); };
+    document.addEventListener("keydown", onKeyDown);
+    desktop.addEventListener("change", onResize);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.body.style.overflow = previousOverflow;
+      if (shellContent.current) shellContent.current.inert = false;
+      document.removeEventListener("keydown", onKeyDown);
+      desktop.removeEventListener("change", onResize);
+      previouslyFocused?.focus();
+    };
+  }, [drawerOpen]);
+
+  const handleLogout = () => { if (!signingOut) { setDrawerOpen(false); setSignOutOpen(true); } };
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-slate-800/80 bg-slate-950/75 backdrop-blur-xl lg:flex">
-        <div className="px-5 pb-3 pt-6 flex flex-col gap-3">
-          <Logo />
-          <div className="pt-1">
-            <OfflineSyncIndicator />
-          </div>
-          <p className="px-1 text-[10px] font-bold uppercase tracking-[.2em] text-slate-600">Navigation</p>
+    <div className="studio-shell">
+      <a className="studio-skip-link" href="#main-content">Skip to workspace</a>
+      {drawerOpen && <div className="studio-drawer-backdrop" aria-hidden="true" onClick={() => setDrawerOpen(false)} />}
+      <aside ref={drawer} id="studio-navigation" className={cn("studio-sidebar", drawerOpen && "is-open")} role={drawerOpen ? "dialog" : undefined} aria-modal={drawerOpen ? true : undefined} aria-label="Workspace navigation" onTransitionEnd={(event) => {
+        if (drawerOpen && event.target === event.currentTarget && event.propertyName === "transform" && !event.currentTarget.contains(document.activeElement)) {
+          event.currentTarget.querySelector<HTMLButtonElement>(".studio-drawer-close")?.focus();
+        }
+      }}>
+        <div className="studio-brand-row">
+          <Link to="/dashboard" aria-label="Groundwork overview"><Logo /></Link>
+          <button type="button" className="studio-icon-button studio-drawer-close" onClick={() => setDrawerOpen(false)} aria-label="Close navigation"><NavIcon d="m6 6 12 12M18 6 6 18" /></button>
         </div>
-        <nav className="mt-2 flex-1 space-y-1 px-3">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-emerald-500/10 text-emerald-300"
-                    : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200",
-                )
-              }
-            >
-              <NavIcon d={item.icon} />
-              {item.label}
-            </NavLink>
-          ))}
+        <div className="studio-workspace-label"><span className="studio-workspace-mark"><NavIcon d="m12 3 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5m-9 5v8" /></span><div><strong>My workspace</strong><span>Architecture & design</span></div><span className="studio-workspace-dot" /></div>
+        <nav className="studio-nav" aria-label="Primary navigation">
+          <p className="studio-nav-heading">Design workspaces</p>
+          {NAV.slice(0, 4).map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => cn("studio-nav-link", isActive && "is-active")}><NavIcon d={item.icon} /><span>{item.label}</span>{item.to === "/dashboard" && <span className="studio-nav-shortcut">01</span>}</NavLink>)}
+          <p className="studio-nav-heading studio-nav-heading-manage">Manage</p>
+          {NAV.slice(4).map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => cn("studio-nav-link", isActive && "is-active")}><NavIcon d={item.icon} /><span>{item.label}</span></NavLink>)}
         </nav>
-        <div className="border-t border-slate-800/80 p-3">
-          <div className="rounded-xl bg-slate-900/70 px-3 py-3">
-            <p className="truncate text-sm font-semibold text-slate-200">
-              {user?.username ? `@${user.username}` : user?.email}
-            </p>
-            <p className="mt-0.5 text-xs capitalize text-emerald-400">
-              {user?.plan === "studio" ? "Studio" : user?.plan === "pro" ? "Pro" : "Free"} plan
-            </p>
-            <button
-              onClick={handleLogout}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold text-slate-400 transition hover:bg-slate-800 hover:text-rose-300"
-            >
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              Sign out
-            </button>
-          </div>
+        <div className="studio-sidebar-bottom">
+          <div className="studio-sidebar-note"><div className="studio-mini-model" aria-hidden="true"><i /><i /><i /></div><p>Space for your<br /><strong>next big idea.</strong></p></div>
+          <div className="studio-profile"><span className="studio-avatar">{initials}</span><div className="studio-profile-text"><strong>{displayName}</strong><span>{user?.plan === "studio" ? "Studio" : user?.plan === "pro" ? "Pro" : "Free"} plan</span></div><button type="button" className="studio-icon-button" title="Sign out" aria-label={signingOut ? "Signing out" : "Sign out"} disabled={signingOut} onClick={() => void handleLogout()}><NavIcon d="M9 4H4v16h5m6-12 4 4-4 4m4-4H8" /></button></div>
         </div>
       </aside>
-
-      <div className="flex min-h-screen flex-1 flex-col lg:pl-60">
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-800/80 bg-slate-950/80 px-4 py-3 backdrop-blur lg:hidden">
-          <Logo />
-          <div className="flex items-center gap-2">
-            <OfflineSyncIndicator />
-            <button onClick={handleLogout} className="rounded-lg px-2 py-1 text-sm text-slate-400 hover:text-rose-300">
-              Sign out
-            </button>
-          </div>
+      <div className="studio-shell-content" ref={shellContent}>
+        <header className="studio-topbar">
+          <div className="studio-topbar-location"><button ref={menuButton} type="button" className="studio-icon-button studio-menu-button" aria-label="Open navigation" aria-expanded={drawerOpen} aria-controls="studio-navigation" onClick={() => setDrawerOpen(true)}><NavIcon d="M4 6h16M4 12h16M4 18h16" /></button><span className="studio-topbar-workspace">My workspace</span><span className="studio-breadcrumb-divider" aria-hidden="true">/</span><span className="studio-current-page">{currentPage}</span></div>
+          <div className="studio-topbar-tools"><OfflineSyncIndicator /><label className="studio-theme-control"><NavIcon d={mode === "light" ? "M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17m10-10 1.4-1.4M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0" : "M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5"} /><select aria-label="Workspace appearance" value={mode} onChange={(event) => setMode(event.target.value as ThemeMode)}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select></label><Link to="/settings" className="studio-avatar studio-topbar-avatar" aria-label="Your account settings">{initials}</Link></div>
         </header>
-        <nav aria-label="Mobile navigation" className="flex gap-3 overflow-x-auto border-b border-slate-800 px-4 py-2 lg:hidden">{NAV.map(item => <NavLink key={item.to} to={item.to} className={({ isActive }) => cn("shrink-0 text-xs", isActive ? "text-emerald-300" : "text-slate-400")}>{item.label}</NavLink>)}</nav>
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 lg:px-8">
-          <Outlet />
-        </main>
+        <main id="main-content" tabIndex={-1} className="studio-main">{logoutError && !signOutOpen && <div role="alert" className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-300"><span className="min-w-0 flex-1">{logoutError}</span><button type="button" className="underline" onClick={handleLogout}>Retry sign-out</button></div>}<Outlet /></main>
+        <footer className="studio-shell-footer"><span>GROUNDWORK <span className="studio-footer-separator">/</span> DESIGN STUDIO</span><span>Thoughtfully built for what comes next.</span></footer>
       </div>
+      <SignOutDialog open={signOutOpen} onClose={() => { setSignOutOpen(false); if (window.matchMedia("(max-width: 1023px)").matches) window.setTimeout(() => menuButton.current?.focus(), 0); }} onSignedOut={() => { toast.push({ title: "Signed out", tone: "info" }); navigate("/"); }} />
     </div>
   );
 }
-

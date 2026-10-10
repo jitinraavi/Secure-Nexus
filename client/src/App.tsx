@@ -1,14 +1,16 @@
-import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { lazy, Suspense, useEffect } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth";
-import { Layout } from "./components/Layout";
 import { SplashScreen } from "./components/SplashScreen";
 import { Spinner } from "./components/ui";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
 
 const Landing = lazy(() => import("./pages/Landing").then((m) => ({ default: m.Landing })));
+const Layout = lazy(() => import("./components/Layout").then((m) => ({ default: m.Layout })));
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
 const Signup = lazy(() => import("./pages/Signup").then((m) => ({ default: m.Signup })));
 const VerifyTwoFactor = lazy(() => import("./pages/VerifyTwoFactor").then((m) => ({ default: m.VerifyTwoFactor })));
+const AuthComplete = lazy(() => import("./pages/AuthComplete").then((m) => ({ default: m.AuthComplete })));
 const Dashboard = lazy(() => import("./pages/Dashboard").then((m) => ({ default: m.Dashboard })));
 const Editor = lazy(() => import("./pages/Editor").then((m) => ({ default: m.Editor })));
 const Audit = lazy(() => import("./pages/Audit").then((m) => ({ default: m.Audit })));
@@ -23,8 +25,9 @@ const OrganizationWorkspace = lazy(() => import("./pages/OrganizationWorkspace")
 
 function FullScreenLoading() {
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <Spinner className="h-8 w-8 text-emerald-400" />
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4">
+      <Spinner className="h-7 w-7 text-emerald-400" />
+      <p className="gw-kicker">Opening your workspace</p>
     </div>
   );
 }
@@ -44,15 +47,23 @@ function PublicOnly({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const titles: Record<string, string> = { "/": "A place for your ideas", "/login": "Welcome back", "/signup": "Create your studio", "/verify-2fa": "Verify your account", "/auth/complete": "Completing sign in", "/dashboard": "Your studio", "/geometry": "Geometry & rendering", "/engineering": "Engineering", "/exchange": "BIM & civil exchange", "/organizations": "Your team", "/settings": "Settings", "/billing": "Plans & billing", "/audit": "Activity & audit" };
+    document.title = `${titles[pathname] ?? (pathname.startsWith("/editor/") ? "Design workspace" : pathname.startsWith("/share/") ? "Shared design" : pathname.startsWith("/billing/checkout/") ? "Checkout" : "Design studio")} · Groundwork`;
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [pathname]);
   return (
     <>
       <SplashScreen />
+      <AppErrorBoundary resetKey={pathname}>
       <Suspense fallback={<FullScreenLoading />}>
       <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
       <Route path="/signup" element={<PublicOnly><Signup /></PublicOnly>} />
       <Route path="/verify-2fa" element={<PublicOnly><VerifyTwoFactor /></PublicOnly>} />
+      <Route path="/auth/complete" element={<AuthComplete />} />
       <Route path="/share/:token" element={<SharedProject />} />
 
       <Route element={<Protected><Layout /></Protected>}>
@@ -71,7 +82,7 @@ export default function App() {
       <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       </Suspense>
+      </AppErrorBoundary>
     </>
   );
 }
-

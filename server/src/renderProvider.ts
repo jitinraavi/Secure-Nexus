@@ -1,4 +1,5 @@
 import zlib from "node:zlib";
+import { providerLimits, readProviderBody, renderOutputBytes, withProviderDeadline } from "./providerBudget.js";
 
 export interface RenderProviderParams {
   prompt: string;
@@ -280,6 +281,10 @@ export class GeminiImagenRenderProvider implements RenderProvider {
   }
 
   public async generate(params: RenderProviderParams, signal?: AbortSignal): Promise<RenderProviderResult> {
+    return withProviderDeadline(providerLimits("render").timeoutMs, (deadlineSignal) => this.generateWithinDeadline(params, deadlineSignal), signal);
+  }
+
+  private async generateWithinDeadline(params: RenderProviderParams, signal: AbortSignal): Promise<RenderProviderResult> {
     if (!this.isConfigured()) {
       throw new RenderProviderError(503, this.getUnconfiguredReason() || "Provider not configured", "PROVIDER_UNCONFIGURED");
     }
@@ -318,30 +323,39 @@ export class GeminiImagenRenderProvider implements RenderProvider {
       if ((error as { name?: string }).name === "AbortError") {
         throw error;
       }
-      throw new RenderProviderError(502, `Failed to reach Gemini rendering service: ${(error as Error).message}`, "UPSTREAM_CONNECTION_FAILED");
+      if (signal.aborted) throw signal.reason;
+      throw new RenderProviderError(502, "Failed to reach Gemini rendering service", "UPSTREAM_CONNECTION_FAILED");
     }
 
+    const body = await readProviderBody(response, response.ok ? Math.ceil(renderOutputBytes() * 4 / 3) + 65_536 : 16_384, signal);
     if (!response.ok) {
-      const errText = await response.text().catch(() => "");
       if (response.status === 401 || response.status === 403) {
-        throw new RenderProviderError(401, `Gemini API key authentication failed (${response.status}): ${errText}`, "INVALID_API_KEY");
+        throw new RenderProviderError(502, "Gemini API authentication failed", "INVALID_API_KEY");
       }
       if (response.status === 429) {
-        throw new RenderProviderError(429, `Gemini rendering quota exceeded: ${errText}`, "RATE_LIMITED");
+        throw new RenderProviderError(429, "Gemini rendering quota exceeded", "RATE_LIMITED");
       }
-      throw new RenderProviderError(response.status, `Gemini image generation failed: ${errText}`, "GENERATION_FAILED");
+      throw new RenderProviderError(502, "Gemini image generation failed", "GENERATION_FAILED");
     }
 
-    const json = (await response.json()) as {
+    let json: {
       predictions?: Array<{ bytesBase64Encoded?: string; mimeType?: string }>;
     };
+    try { json = JSON.parse(body) as typeof json; }
+    catch { throw new RenderProviderError(502, "Gemini returned invalid JSON", "INVALID_PREDICTION"); }
 
     const firstPrediction = json.predictions?.[0];
-    if (!firstPrediction?.bytesBase64Encoded) {
+    if (typeof firstPrediction?.bytesBase64Encoded !== "string" || !firstPrediction.bytesBase64Encoded) {
       throw new RenderProviderError(502, "Gemini returned empty image prediction data", "EMPTY_PREDICTION");
+    }
+    if (firstPrediction.bytesBase64Encoded.length > Math.ceil(renderOutputBytes() / 3) * 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(firstPrediction.bytesBase64Encoded)) {
+      throw new RenderProviderError(502, "Gemini image data exceeded the byte limit or is invalid", "PROVIDER_RESPONSE_SIZE");
     }
 
     const buffer = Buffer.from(firstPrediction.bytesBase64Encoded, "base64");
+    if (buffer.length === 0 || buffer.length > renderOutputBytes()) {
+      throw new RenderProviderError(502, "Gemini image exceeded the output byte limit", "PROVIDER_RESPONSE_SIZE");
+    }
     const mime = firstPrediction.mimeType || "image/png";
 
     return {

@@ -1,111 +1,97 @@
+import { useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { Logo } from "../components/Logo";
-import { Button } from "../components/ui";
+import { ArchitecturalScene } from "../components/ArchitecturalScene";
+import "./public-experience.css";
 
-const FEATURES = [
-  {
-    icon: "M16 8a2 2 0 11-4 0 2 2 0 014 0zm-7 0a2 2 0 11-4 0 2 2 0 014 0z",
-    title: "Photo → Interior model",
-    desc: "Capture a room with your camera, or upload a photo — then design furniture, colours and curtains over it.",
-  },
-  {
-    icon: "M20 6H4a1 1 0 00-1 1v10a1 1 0 001 1h16a1 1 0 001-1V7a1 1 0 00-1-1zm-2 8h-3v-2h3v2z",
-    title: "Built-in billing",
-    desc: "UPI, cards and PayPal. Try the full demo checkout flow — works sandbox-ready for live providers too.",
-  },
-  {
-    icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
-    title: "Ship to CAD",
-    desc: "Export DXF for AutoCAD, OBJ for Blender/3ds Max, GLB for any 3D viewer — plus a Bill of Materials CSV.",
-  },
-  {
-    icon: "M12 15a3 3 0 100-6 3 3 0 000 6zM5.6 3.4l1.7 2.9A8 8 0 004 12a8 8 0 003.3 5.7l-1.7 2.9a10 10 0 000-17.2zM18.4 3.4a10 10 0 000 17.2l-1.7-2.9A8 8 0 0020 12a8 8 0 00-3.3-5.7l1.7-2.9z",
-    title: "Security-first",
-    desc: "scrypt hashing, AES-256-GCM at rest, TOTP 2FA, CSRF + rate limiting, audit logging and account lockout.",
-  },
-];
+const STUDIES = [
+  { variant: "pavilion", label: "Architecture", name: "The garden pavilion", detail: "A study in light, form, and landscape.", tag: "01 / ARCHITECTURE", scale: "Building scale" },
+  { variant: "interior", label: "Interiors", name: "A room for possibility", detail: "Bring materials, furniture, and space together.", tag: "02 / INTERIORS", scale: "Room scale" },
+  { variant: "city", label: "Communities", name: "Connected by design", detail: "Explore the relationships between buildings and place.", tag: "03 / COMMUNITIES", scale: "Neighborhood scale" },
+  { variant: "structure", label: "Infrastructure", name: "The shape of connection", detail: "Make complex structural ideas easier to see.", tag: "04 / INFRASTRUCTURE", scale: "Structure scale" },
+] as const;
+
+const CAPABILITIES = [
+  { number: "01", title: "Start with a place.", text: "Locate your site on the map, work from a room photo, or begin with an empty canvas. Every idea has a starting point.", icon: "map" },
+  { number: "02", title: "See what could be.", text: "Place objects, explore geometry, and refine your model in an interactive 3D workspace. Turn a possibility into something you can see.", icon: "cube" },
+  { number: "03", title: "Take the next step.", text: "Export your work as DXF, OBJ, or GLB, and download a bill of materials. Keep your project moving beyond the canvas.", icon: "export" },
+] as const;
+
+function Arrow({ diagonal = false }: { diagonal?: boolean }) {
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d={diagonal ? "M6 18 18 6M6 6h12v12" : "M4 12h16m-6-6 6 6-6 6"} strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
+function FeatureIcon({ kind }: { kind: string }) {
+  return <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+    {kind === "map" ? <><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Z" /><path d="M9 3v16m6-14v16" /></> : kind === "cube" ? <><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z" /><path d="m3 7 9 5 9-5m-9 5v10" /></> : <><path d="M12 3v12m-5-5 5 5 5-5M4 15v6h16v-6" /></>}
+  </svg>;
+}
 
 export function Landing() {
+  const [activeStudy, setActiveStudy] = useState(0);
+  const study = STUDIES[activeStudy];
+
+  function changeStudyWithKeys(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let next = index;
+    if (event.key === "ArrowRight") next = (index + 1) % STUDIES.length;
+    else if (event.key === "ArrowLeft") next = (index + STUDIES.length - 1) % STUDIES.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = STUDIES.length - 1;
+    else return;
+    event.preventDefault();
+    setActiveStudy(next);
+    document.getElementById(`study-tab-${next}`)?.focus();
+  }
+
   return (
-    <div className="min-h-screen">
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-        <Logo />
-        <nav className="flex items-center gap-3">
-          <Link to="/login">
-            <Button variant="ghost">Sign in</Button>
-          </Link>
-          <Link to="/signup">
-            <Button>Get started</Button>
-          </Link>
+    <div className="gw-public">
+      <a className="public-skip-link" href="#main-content">Skip to content</a>
+      <header className="public-header public-container">
+        <Link to="/" aria-label="Groundwork home" className="public-brand"><Logo /></Link>
+        <nav className="public-nav" aria-label="Main navigation">
+          <a href="#possibilities">The possibilities</a>
+          <a href="#process">How it works</a>
         </nav>
+        <div className="public-header-actions"><Link to="/login" className="public-signin">Sign in</Link><Link to="/signup" className="public-button public-button-small">Enter the studio <Arrow diagonal /></Link></div>
       </header>
 
-      <section className="mx-auto grid max-w-6xl items-center gap-14 px-6 pb-8 pt-16 lg:grid-cols-[1.05fr_0.95fr] lg:pt-24">
-        <div>
-          <p className="gw-kicker">A spatial design workspace</p>
-          <h1 className="mt-5 max-w-3xl text-5xl font-black leading-[0.98] tracking-[-0.045em] text-slate-50 sm:text-7xl">
-            From first sketch to
-            <span className="block bg-gradient-to-r from-[#f0cf83] via-[#d6a84a] to-[#a9782d] bg-clip-text text-transparent">buildable intent.</span>
-          </h1>
-          <p className="mt-6 max-w-xl text-base leading-7 text-slate-400 sm:text-lg">
-            Groundwork turns mapped sites, rooms, communities and infrastructure into a calm, visual workspace for making real design decisions.
-          </p>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Link to="/signup"><Button size="lg">Open the studio <span aria-hidden>↗</span></Button></Link>
-            <Link to="/login"><Button size="lg" variant="outline">Sign in</Button></Link>
+      <main id="main-content" tabIndex={-1}>
+        <section className="public-hero public-container" aria-labelledby="hero-title">
+          <div className="public-hero-copy">
+            <p className="public-eyebrow"><span className="public-status-dot" /> SPACE FOR YOUR NEXT IDEA</p>
+            <h1 id="hero-title">Give your ideas<br />a place to <em>grow.</em></h1>
+            <p className="public-hero-description">From a room to a whole community. Bring your vision into focus with a thoughtful workspace for spatial design.</p>
+            <div className="public-hero-actions"><Link to="/signup" className="public-button">Start creating <Arrow diagonal /></Link><a href="#possibilities" className="public-text-link">Explore the possibilities <Arrow /></a></div>
+            <div className="public-hero-note"><span className="public-note-mark" aria-hidden="true">✦</span><span>Your perspective. Your process. Your place.</span></div>
           </div>
-          <div className="mt-9 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500">
-            <span><b className="text-slate-300">01</b> Map the context</span>
-            <span><b className="text-slate-300">02</b> Shape the model</span>
-            <span><b className="text-slate-300">03</b> Ship the output</span>
+          <div className="public-hero-model">
+            <div className="public-model-topline"><span>THE CONCEPT COLLECTION</span><span className="public-model-badge"><span /> LIVE 3D</span></div>
+            <div className="public-model-scene" role="tabpanel" id="study-panel" aria-labelledby={`study-tab-${activeStudy}`}>
+              <ArchitecturalScene variant={study.variant} interactive className="public-scene" />
+              <div className="public-model-coordinate" aria-hidden="true">X / Y / Z<br /><span>Perspective view</span></div>
+              <div className="public-model-orbit"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-25 12 12)" /><circle cx="12" cy="12" r="2" /></svg> Drag to explore</div>
+            </div>
+            <div className="public-model-description" aria-live="polite"><div><p className="public-eyebrow">{study.tag}</p><h2>{study.name}</h2><p>{study.detail}</p></div><span className="public-scale">{study.scale}</span></div>
+            <div className="public-study-tabs" role="tablist" aria-label="Explore design scales">{STUDIES.map((item, index) => <button key={item.variant} type="button" id={`study-tab-${index}`} role="tab" aria-controls="study-panel" aria-selected={activeStudy === index} tabIndex={activeStudy === index ? 0 : -1} onClick={() => setActiveStudy(index)} onKeyDown={event => changeStudyWithKeys(event, index)}><span>{String(index + 1).padStart(2, "0")}</span>{item.label}</button>)}</div>
           </div>
-        </div>
-        <div className="gw-panel relative overflow-hidden rounded-[2rem] p-3 shadow-2xl shadow-cyan-950/20">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_10%,rgba(34,211,238,.18),transparent_35%)]" />
-          <div className="relative aspect-[0.95] overflow-hidden rounded-[1.45rem] border border-slate-700/70 bg-[#0a1119] p-5">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div><p className="text-[10px] uppercase tracking-[.22em] text-slate-500">Live workspace</p><p className="mt-1 text-sm font-semibold text-slate-200">Community / site study</p></div>
-              <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[10px] text-emerald-300">SAVED</span>
-            </div>
-            <div className="relative mt-5 h-[68%] rounded-xl border border-cyan-400/20 bg-[linear-gradient(rgba(34,211,238,.08)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,.08)_1px,transparent_1px)] bg-[size:28px_28px]">
-              <div className="absolute left-[17%] top-[20%] h-28 w-24 rotate-[-8deg] border border-emerald-300/70 bg-emerald-300/10 shadow-[0_0_30px_rgba(52,211,153,.12)]" />
-              <div className="absolute right-[17%] top-[34%] h-36 w-28 rotate-[8deg] border border-sky-300/70 bg-sky-300/10" />
-              <div className="absolute bottom-[15%] left-[28%] h-10 w-44 rounded-full border border-amber-300/60 bg-amber-300/10" />
-              <div className="absolute left-1/2 top-1/2 h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_24px_8px_rgba(52,211,153,.5)]" />
-            </div>
-            <div className="mt-4 grid grid-cols-3 gap-2 text-[10px]">
-              <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-2"><span className="text-slate-500">Site area</span><b className="mt-1 block text-slate-200">12,480 m²</b></div>
-              <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-2"><span className="text-slate-500">Objects</span><b className="mt-1 block text-slate-200">24 placed</b></div>
-              <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-2"><span className="text-slate-500">Export</span><b className="mt-1 block text-emerald-300">CAD ready</b></div>
-            </div>
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <section className="mx-auto max-w-6xl px-6 py-20">
-        <div className="mb-8 max-w-xl"><p className="gw-kicker">One workspace, four scales</p><h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-100">Designed for the way projects actually grow.</h2></div>
-        <div className="grid gap-5 sm:grid-cols-2">
-          {FEATURES.map((f) => (
-            <div
-              key={f.title}
-              className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur transition hover:border-emerald-500/30 hover:bg-slate-900/80"
-            >
-              <div className="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
-                <svg className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
-                  <path d={f.icon} />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold text-slate-100">{f.title}</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-slate-400">{f.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+        <div className="public-discipline-bar public-container" aria-label="Design disciplines"><span>ONE WORKSPACE. EVERY PERSPECTIVE.</span><div><span>Architecture</span><i /><span>Interiors</span><i /><span>Community planning</span><i /><span>Infrastructure</span></div></div>
 
-      <footer className="border-t border-slate-800/60 py-8 text-center text-xs text-slate-500">
-        Groundwork Design Studio · Node 22 · SQLite · React · Three.js · Google Maps
-      </footer>
+        <section id="possibilities" className="public-capabilities public-container" aria-labelledby="possibilities-title">
+          <div className="public-section-heading"><div><p className="public-eyebrow">THE POSSIBILITIES</p><h2 id="possibilities-title">Small details.<br /><span>Bigger possibilities.</span></h2></div><p>Good design starts with a clear view.<br />Make room for exploration, then give your ideas shape.</p></div>
+          <div className="public-feature-grid">{CAPABILITIES.map(feature => <article className="public-feature" key={feature.number}><div className="public-feature-top"><FeatureIcon kind={feature.icon} /><span>{feature.number}</span></div><h3>{feature.title}</h3><p>{feature.text}</p></article>)}</div>
+        </section>
+
+        <section id="process" className="public-process public-container" aria-labelledby="process-title">
+          <div className="public-process-art"><div className="public-process-art-label"><span className="public-eyebrow">FROM CONTEXT TO CONCEPT</span><span>STUDY / 002</span></div><ArchitecturalScene variant="city" compact className="public-process-scene" /><div className="public-process-art-foot"><span>A different scale. The same perspective.</span><svg width="30" height="30" viewBox="0 0 30 30" fill="none" stroke="currentColor" aria-hidden="true"><path d="M15 2v26M2 15h26" /><circle cx="15" cy="15" r="10" /></svg></div></div>
+          <div className="public-process-copy"><p className="public-eyebrow">A CLEARER WAY TO CREATE</p><h2 id="process-title">From the first idea<br />to the next chapter.</h2><div className="public-steps"><div><span>01</span><div><h3>Find your starting point</h3><p>Create a project and choose the scale, site, or space you want to work with.</p></div></div><div><span>02</span><div><h3>Explore in three dimensions</h3><p>Build your composition, adjust the details, and move around your model to see it from every angle.</p></div></div><div><span>03</span><div><h3>Bring your work with you</h3><p>Save your progress and export models, drawings, and material lists for your next step.</p></div></div></div><Link to="/signup" className="public-text-link">Make space for your idea <Arrow /></Link></div>
+        </section>
+
+        <section className="public-invitation public-container" aria-labelledby="invitation-title"><div><p className="public-eyebrow">YOUR NEXT CHAPTER STARTS HERE</p><h2 id="invitation-title">What will you <em>make room for?</em></h2><p>A new space. A better neighborhood. An idea that deserves to be seen.</p></div><Link to="/signup" className="public-button">Create your studio <Arrow diagonal /></Link></section>
+      </main>
+
+      <footer className="public-footer public-container"><div><Link to="/" aria-label="Groundwork home"><Logo /></Link><p>A thoughtful space for spatial design.</p></div><div className="public-footer-links"><a href="#possibilities">The possibilities</a><a href="#process">How it works</a><Link to="/login">Sign in</Link></div><p className="public-copyright">© {new Date().getFullYear()} Groundwork<br /><span>Made for what comes next.</span></p></footer>
     </div>
   );
 }
-

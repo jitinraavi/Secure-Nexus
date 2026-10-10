@@ -37,4 +37,3 @@ export function SectionControls({ value, onChange }: { value?: SectionSettings; 
     </div>
   );
 }
-

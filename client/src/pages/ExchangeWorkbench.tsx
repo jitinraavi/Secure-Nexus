@@ -1,5 +1,7 @@
 import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link } from "react-router-dom";
+import { PageIntro } from "../components/PageIntro";
+import { WorkbenchGuide } from "../components/WorkbenchGuide";
 import { Badge, Button, Card, Input, Select } from "../components/ui";
 import { ProjectWorkspacePanel } from "../components/ProjectWorkspacePanel";
 import { ProjectJobsPanel } from "../components/ProjectJobsPanel";
@@ -168,9 +170,10 @@ export function ExchangeWorkbench() {
   const ifcDeclaration = useMemo(() => ifc ? inspectIfcEngineeringDeclaration(ifc) : null, [ifc]);
   const meshLines: number[][] = []; if (ifc && tab === "bim") outer: for (const p of ifc.products) for (const mesh of p.meshes) for (let i = 0; i < mesh.triangles.length; i += 3) { const indices = mesh.triangles.slice(i, i + 3); indices.push(indices[0]); meshLines.push(indices.flatMap(index => [mesh.vertices[index * 3], mesh.vertices[index * 3 + 1]])); if (meshLines.length >= 2000) break outer; }
   const surfaceLines = surface?.triangles.slice(0, 2000).map(t => [...t, t[0]].flatMap(i => [surface.points[i].x, surface.points[i].z])) ?? [];
-  return <main className="mx-auto max-w-6xl space-y-5 p-4 md:p-8">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">BIM and survey exchange</h1><p className="text-sm text-slate-400">Bounded source geometry, information requirements, survey surfaces and civil alignment studies.</p></div><Link to="/dashboard" className="text-sm text-cyan-300">Projects</Link></div>
+  return <div className="space-y-5">
+    <PageIntro eyebrow="BIM & civil exchange" title="Keep your world connected." description="Exchange building models, inspect information requirements, and work with survey surfaces and civil alignments." variant="city" actions={<Link to="/dashboard" className="text-sm text-emerald-300">Back to projects ↗</Link>} />
     <ProjectWorkspacePanel kind="exchange" payload={workspace} onRestore={applyWorkspace} onImportProject={importProject} />
+    <WorkbenchGuide kind="exchange" />
     <ProjectJobsPanel workspaceKind="exchange" kinds={["dwg-to-dxf", "dxf-to-dwg"]} />
     <div className="flex gap-2">{(["bim", "survey", "civil"] as const).map(value => <Button key={value} variant={tab === value ? "primary" : "secondary"} onClick={() => { setTab(value); setError(""); }}>{value === "bim" ? "IFC / IDS" : value === "survey" ? "Survey / DEM" : "Civil alignment"}</Button>)}</div>
     {error && <p role="alert" className="rounded-xl border border-rose-800 bg-rose-950/40 p-3 text-rose-200">{error}</p>}
@@ -207,5 +210,5 @@ export function ExchangeWorkbench() {
       <Button variant="secondary" disabled={busy} onClick={() => perform(() => download("civil-authored-source.json", serializeAdvancedCivilExchange(captureCivilSource(alignment, surface, survey, surveyDeclarationText, toCrs, surveyProjectFrame, civilReferenceText))))}>Export current authored source without calculation</Button>
       {civilReport && civilAnalysis && <><Plan lines={[civilReport.stations.flatMap(s => [s.x, s.z])]} /><p>{civilReport.lengthM.toFixed(2)} m · {civilReport.stations.length} stations · cut {civilReport.cutM3.toFixed(2)} m³ · fill {civilReport.fillM3.toFixed(2)} m³ · quantified {civilReport.quantifiedLengthM.toFixed(2)} m</p><p className="text-xs text-slate-400">Captured reference: {civilAnalysis.source.reference.crs} · {civilAnalysis.source.reference.verticalDatum} · {civilAnalysis.source.terrain?.triangles.length ?? 0} terrain triangles. Earthworks are sampled study estimates; complete-code design and accuracy remain unassessed.</p><ul className="text-xs text-amber-200">{civilAnalysis.notices.map((warning, i) => <li key={i}>{warning}</li>)}</ul><div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => perform(() => download("civil-authored-source.json", serializeAdvancedCivilExchange(civilAnalysis.source)))}>Export authored source JSON</Button><Button variant="secondary" onClick={() => download("civil-analysis.json", JSON.stringify(civilAnalysis, null, 2))}>Export captured analysis JSON</Button><Button variant="secondary" onClick={() => download("civil-stations.csv", advancedCivilCsv(civilReport), "text/csv")}>Export captured station CSV</Button><Button variant="secondary" onClick={() => perform(() => download("civil-alignment.xml", buildAdvancedCivilLandXml(civilAnalysis.source), "application/xml"))}>Export supported LandXML</Button></div><p className="text-xs text-slate-400">LandXML keeps native supported line/arc/clothoid and parabolic geometry. Unsupported native geometry returns an error while source JSON remains available. If any section is incomplete, all sampled sections are omitted from LandXML with explicit notices. Schema/consumer interoperability remains unverified.</p></>}
     </Card>}
-  </main>;
+  </div>;
 }

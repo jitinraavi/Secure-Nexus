@@ -21,7 +21,7 @@ services:
       - MAIL_PASS=${MAIL_PASS:-}
       - MAIL_FROM=${MAIL_FROM:-Groundwork <noreply@groundwork.design>}
       - RESEND_API_KEY=${RESEND_API_KEY:-}
-      - PAYMENTS_MODE=${PAYMENTS_MODE:-demo}
+      - PAYMENTS_MODE=${PAYMENTS_MODE:-live}
       - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID:-}
       - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET:-}
       - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET:-}
@@ -49,6 +49,7 @@ services:
     environment:
       - NODE_ENV=production
       - GROUNDWORK_DATA_DIR=/data
+      - PAYMENTS_MODE=${PAYMENTS_MODE:-live}
       - MASTER_KEY=${MASTER_KEY}
       - NATIVE_WORKER_ENABLED=true
       - NATIVE_ISOLATION_ACKNOWLEDGED=true
@@ -70,8 +71,6 @@ services:
     profiles:
       - collaboration
     command: redis-server --appendonly yes
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
 

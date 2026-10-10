@@ -5,9 +5,11 @@ import express from "express";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import multer from "multer";
-import { IS_PROD, PORT } from "./config.js";
+import { IS_PROD, NODE_ENV, PORT, BIND_HOST, isLoopbackAddress } from "./config.js";
+import { DesignInputError } from "./designValidation.js";
 import { db, now } from "./db.js";
 import { hashPassword } from "./crypto.js";
+import { passwordSchema } from "./validate.js";
 import { apiLimiter, csrfProtection } from "./security.js";
 import { COUNTRIES } from "./payments/pricing.js";
 import authRoutes from "./routes/auth.js";
@@ -63,6 +65,7 @@ app.use(
 );
 
 app.use("/api", authorityGatewayMiddleware(topology));
+app.use("/api", apiLimiter);
 app.use(cookieParser());
 app.use(express.json({
   limit: "8mb",
@@ -74,7 +77,6 @@ app.use(express.json({
   },
 }));
 
-app.use("/api", apiLimiter);
 app.use("/api", csrfProtection);
 
 app.get("/api/health", (_req, res) => {
@@ -132,6 +134,10 @@ app.use(
       res.status(413).json({ error: "Request is too large for this endpoint" });
       return;
     }
+    if (err && typeof err === "object" && "status" in err && err.status === 401) {
+      res.status(401).json({ error: "Authentication changed. Sign in again." });
+      return;
+    }
     next(err);
   },
 );
@@ -155,18 +161,28 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
-    console.error("[groundwork] Unhandled error:", err);
+    if (err instanceof DesignInputError) {
+      res.status(err.status).json({ error: err.message, code: err.code }); return;
+    }
+    console.error("[groundwork] Unhandled request error", { type: err instanceof Error ? err.name : "UnknownError" });
     res.status(500).json({ error: "Internal server error" });
   },
 );
 
 export function seedDevUserIfEmpty(): void {
-  if (IS_PROD) return;
+  if (process.env.GROUNDWORK_SEED_DEMO !== "1") return;
+  if (NODE_ENV !== "development" || !isLoopbackAddress(BIND_HOST)) {
+    throw new Error("Demo seeding requires development mode and loopback binding");
+  }
+  const password = process.env.GROUNDWORK_DEMO_PASSWORD;
+  if (!password || password.length < 12 || !passwordSchema.safeParse(password).success) {
+    throw new Error("GROUNDWORK_DEMO_PASSWORD must contain at least 12 characters, a letter and a number");
+  }
   const count = (db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
   if (count > 0) return;
 
   const t = now();
-  const { salt, hash } = hashPassword("Groundwork123!");
+  const { salt, hash } = hashPassword(password);
   db.prepare(`
     INSERT INTO users (
       id, email, username, email_verified, password_salt, password_hash,
@@ -176,14 +192,14 @@ export function seedDevUserIfEmpty(): void {
       'IN', 'individual', ?, ?, ?
     )
   `).run(salt, hash, t, t, t);
-  console.log("[groundwork] Seeded default demo account: demo@groundwork.design (password: Groundwork123!)");
+  console.log("[groundwork] Seeded development demo account");
 }
 
 export function startAuthorityServer() {
   reconcileInterruptedRenderJobs();
   seedDevUserIfEmpty();
   const stopDatabaseScheduler = startDatabaseScheduler();
-  const server = app.listen(PORT, () => {
+  const server = app.listen(PORT, BIND_HOST, () => {
     console.log(`[groundwork] API listening on http://localhost:${PORT}`);
     console.log(`[groundwork] Environment: ${IS_PROD ? "production" : "development"}`);
     if (fs.existsSync(path.join(CLIENT_DIST, "index.html"))) {
@@ -192,18 +208,27 @@ export function startAuthorityServer() {
   });
 
   const nativeWorker = startNativeJobWorker();
+  let resourceCleanup: Promise<void> | undefined;
+  function stopResources(): Promise<void> {
+    if (!resourceCleanup) {
+      stopDatabaseScheduler();
+      resourceCleanup = nativeWorker.stop().then(() => {
+        try {
+          checkpointDatabase("TRUNCATE");
+        } catch (err) {
+          console.error("[groundwork] Shutdown checkpoint failed", { type: err instanceof Error ? err.name : "UnknownError" });
+        }
+      });
+    }
+    return resourceCleanup;
+  }
+  server.once("close", () => { void stopResources(); });
   let stopping = false;
   async function stopServer(): Promise<void> {
     if (stopping) return;
     stopping = true;
-    stopDatabaseScheduler();
-    try {
-      checkpointDatabase("TRUNCATE");
-    } catch (err) {
-      console.error("[groundwork] Error checkpointing WAL during shutdown:", err);
-    }
     server.close();
-    await nativeWorker.stop();
+    await stopResources();
     process.exit(0);
   }
   process.once("SIGTERM", () => { void stopServer(); });
@@ -216,4 +241,3 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
 }
 
 export default app;
-

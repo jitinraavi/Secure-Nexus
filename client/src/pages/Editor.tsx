@@ -29,6 +29,7 @@ import { VisualizationControls } from "../components/VisualizationControls";
 import { visualizationSettings } from "../lib/visualization";
 import { useAuth } from "../auth";
 import { clearPendingDraft, clearRecoveredDraft, hasMergeBase, persistPendingDraft, readPendingDraftResult, recoveryFromAnotherTab, type PendingDraft } from "../lib/offlineDraft";
+import { captureLocalWrite, localWriteAllowed, subscribeLocalDataFence } from "../lib/localDataFence";
 import { offlineProjectStore } from "../lib/offlineProjectStore";
 import { offlineQueueStore } from "../lib/offlineQueue";
 import type { MergeDocument } from "../lib/designMerge";
@@ -142,13 +143,14 @@ export function Editor() {
   latestDraft.current = pendingDraft;
 
   const load = useCallback(async () => {
+    const write = user ? captureLocalWrite(user.id) : null;
     const request = ++loadGeneration.current, currentScope = scopeRef.current;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     editGeneration.current++;
     setLoaded(false); setMergeOpen(false); setSaving(false);
     try {
       const project = await getProject(id!);
-      if (request !== loadGeneration.current || currentScope !== scopeRef.current) return;
+      if (request !== loadGeneration.current || currentScope !== scopeRef.current || user && !localWriteAllowed(user.id, write)) return;
       const document = projectDocument(project);
       acknowledged.current = document;
       revisionRef.current = project.revision ?? 0;
@@ -166,7 +168,7 @@ export function Editor() {
       setPhotoUrl(project.hasPhoto ? `/api/projects/${id}/photo?v=${project.updatedAt}` : null);
       setLoaded(true);
     } catch (err) {
-      if (user?.id && id) {
+      if (err instanceof TypeError && user?.id && id) {
         const cached = await offlineProjectStore.getCachedProject(user.id, id);
         if (cached && request === loadGeneration.current && currentScope === scopeRef.current) {
           revisionRef.current = cached.revision;
@@ -192,9 +194,21 @@ export function Editor() {
     };
   }, [load]);
 
+  useEffect(() => subscribeLocalDataFence((userId, fence) => {
+    if (userId !== user?.id || !fence.blocked) return;
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    editGeneration.current++; loadGeneration.current++;
+    if (fence.remove) {
+      latestDraft.current = null; recoveryOrigin.current = null; pendingBaseRevision.current = null;
+      setPendingDraft(null); setRecoveryWarning("Local recovery copies were removed. Export the current page or explicitly save further edits before leaving.");
+    }
+  }), [user?.id]);
+
   const scheduleSave = useCallback(
     (d: Design, recovery?: PendingDraft): void => {
       if (projectRole === "viewer" || !id || !user) return;
+      const write = captureLocalWrite(user.id);
+      if (write === null) return;
       const currentScope = scopeRef.current;
       const generation = ++editGeneration.current;
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
@@ -206,13 +220,14 @@ export function Editor() {
         baseDesign: previous?.baseDesign ?? base?.design, baseName: previous?.baseName ?? base?.name, baseProjectType: previous?.baseProjectType ?? base?.projectType,
         lastSaveStatus: blockedSaveStatus.current, lastSaveError: previous?.lastSaveError };
       const store = (next: PendingDraft) => {
+        if (!localWriteAllowed(user.id, write)) return;
         const result = persistPendingDraft(user.id, id, next);
         latestDraft.current = next; setPendingDraft(next); setRecoveryWarning(result.error ?? "");
       };
       store(draft);
       if (!recovery && [401, 409, 403, 423].includes(blockedSaveStatus.current ?? 0)) return;
       const attempt = async (): Promise<void> => {
-        if (generation !== editGeneration.current || currentScope !== scopeRef.current) return;
+        if (generation !== editGeneration.current || currentScope !== scopeRef.current || !localWriteAllowed(user.id, write)) return;
         if (!recovery && [401, 409, 403, 423].includes(blockedSaveStatus.current ?? 0)) return;
         saveTimer.current = null;
         if (saveInFlight.current) { saveTimer.current = window.setTimeout(() => void attempt(), 200); return; }
@@ -228,8 +243,8 @@ export function Editor() {
           if (typeof navigator !== "undefined" && !navigator.onLine) {
             throw new TypeError("Offline: Network disconnected");
           }
-          const saved = await patchProject(id, { name: draft.name, projectType: draft.projectType, widthMm: d.room.widthMm, depthMm: d.room.depthMm, designData: JSON.stringify(d), baseRevision: draft.baseRevision });
-          if (currentScope !== scopeRef.current || loadAtSave !== loadGeneration.current) return;
+          const saved = await patchProject(id, { name: draft.name, projectType: draft.projectType, widthMm: d.room.widthMm, depthMm: d.room.depthMm, designData: JSON.stringify(d), baseRevision: draft.baseRevision, expectedAccountId: user.id });
+          if (currentScope !== scopeRef.current || loadAtSave !== loadGeneration.current || !localWriteAllowed(user.id, write)) return;
           revisionRef.current = saved.revision; pendingBaseRevision.current = null; blockedSaveStatus.current = undefined;
           acknowledged.current = { design: d, name: draft.name, projectType: draft.projectType };
           if (user?.id) {
@@ -247,12 +262,12 @@ export function Editor() {
           }
           setRemoteRevision(null); setLastSaved(Date.now());
         } catch (err) {
-          if (currentScope !== scopeRef.current || loadAtSave !== loadGeneration.current) return;
+          if (currentScope !== scopeRef.current || loadAtSave !== loadGeneration.current || !localWriteAllowed(user.id, write)) return;
           pendingBaseRevision.current = draft.baseRevision;
           const status = err instanceof ApiError ? err.status : undefined;
           blockedSaveStatus.current = status;
 
-          const isNetworkOffline = !status || (typeof navigator !== "undefined" && !navigator.onLine) || err instanceof TypeError;
+          const isNetworkOffline = err instanceof TypeError;
           if (isNetworkOffline && user?.id) {
             void offlineQueueStore.enqueue(
               user.id,
@@ -502,11 +517,13 @@ export function Editor() {
 
   const panelContent = (
     <>
-      <div className="mb-3 flex gap-1 rounded-xl bg-slate-950 p-1">
+      <div className="mb-3 flex gap-1 rounded-xl bg-slate-950 p-1" role="group" aria-label="Room inspector sections">
         {([["items", "Place"], ["room", "Room"], ["curtains", "Curtains"], ["mep", "MEP"]] as const).map(([key, label]) => (
           <button
             key={key}
-            onClick={() => setPanelTab(key)}
+            type="button"
+            aria-pressed={panelTab === key}
+            onClick={() => { setPanelTab(key); if (mobilePanel && mobilePanel !== "catalog") setMobilePanel(key); }}
             className={cn("flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition", panelTab === key ? "bg-slate-800 text-slate-100" : "text-slate-500 hover:text-slate-300")}
           >
             {label}
@@ -528,17 +545,17 @@ export function Editor() {
               <div className="space-y-1.5">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Finish colour</p>
                 <div className="flex items-center gap-2">
-                  <input type="color" value={selected.color} onChange={(e) => updateSelected({ color: e.target.value })} className="h-9 w-12 cursor-pointer rounded-lg border border-slate-700 bg-transparent" />
+                  <input type="color" aria-label="Furniture finish colour" value={selected.color} onChange={(e) => updateSelected({ color: e.target.value })} className="h-9 w-12 cursor-pointer rounded-lg border border-slate-700 bg-transparent" />
                   <div className="flex flex-wrap gap-1.5">
                     {SWATCHES.map((s) => (
-                      <button key={s} onClick={() => updateSelected({ color: s })} className={cn("h-6 w-6 rounded-md border transition", selected.color === s ? "border-emerald-400 ring-2 ring-emerald-400/40" : "border-slate-700")} style={{ backgroundColor: s }} />
+                      <button key={s} aria-label={`Use finish colour ${s}`} aria-pressed={selected.color === s} onClick={() => updateSelected({ color: s })} className={cn("h-6 w-6 rounded-md border transition", selected.color === s ? "border-emerald-400 ring-2 ring-emerald-400/40" : "border-slate-700")} style={{ backgroundColor: s }} />
                     ))}
                   </div>
                 </div>
               </div>
               <div className="space-y-1.5">
                 <div className="flex justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scale</p><p className="text-xs text-slate-400">{Math.round(selected.scale * 100)}%</p></div>
-                <input type="range" min={0.5} max={1.5} step={0.05} value={selected.scale} onChange={(e) => updateSelected({ scale: Number(e.target.value) })} className="w-full accent-emerald-500" />
+                <input type="range" aria-label="Furniture scale" min={0.5} max={1.5} step={0.05} value={selected.scale} onChange={(e) => updateSelected({ scale: Number(e.target.value) })} className="w-full accent-emerald-500" />
               </div>
               <Select label="Construction phase" value={selected.phaseId ?? ""} onChange={(e) => updateSelected({ phaseId: e.target.value || undefined })}>
                 <option value="">Unassigned / always visible</option>
@@ -637,7 +654,7 @@ export function Editor() {
 
   if (communityActive && community) {
     return (
-      <div className="relative flex h-[calc(100vh-6rem)] flex-col lg:h-[calc(100vh-3rem)]">
+      <div className="gw-editor-workspace relative flex flex-col">
         <SheetHeader
           eyebrow="Project sheet"
           title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />}
@@ -679,7 +696,7 @@ export function Editor() {
 
   if (infraActive && infraKind && design.infra) {
     return (
-      <div className="relative flex h-[calc(100vh-6rem)] flex-col lg:h-[calc(100vh-3rem)]">
+      <div className="gw-editor-workspace relative flex flex-col">
          <SheetHeader eyebrow="Project sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={<>{INFRA_LABELS[infraKind]} · {saving ? "Saving" : lastSaved ? "Saved" : "Draft"} · <CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} />{remoteRevision ? " · Remote update available" : ""}</>} tone="amber" />
         <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
           <input
@@ -723,7 +740,7 @@ export function Editor() {
   }
 
   return (
-    <div className="relative flex h-[calc(100vh-6rem)] flex-col lg:h-[calc(100vh-3rem)]">
+    <div className="gw-editor-workspace relative flex flex-col">
         <SheetHeader eyebrow="Interior sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={<>{PROJECT_TYPE_LABELS[projectType] ?? projectType} · {saving ? "Saving" : lastSaved ? "Saved" : "Draft"} · <CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} />{remoteRevision ? " · Remote update available" : ""}</>} />
        <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
          <div className="min-w-0 flex-1">
@@ -859,6 +876,9 @@ export function Editor() {
         {([["catalog", "Library"], ["items", "Place"], ["room", "Room"], ["curtains", "Curtains"], ["mep", "MEP"]] as const).map(([p, label]) => (
           <button
             key={p}
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={mobilePanel === p}
             onClick={() => {
               if (p !== "catalog") setPanelTab(p);
               setMobilePanel(mobilePanel === p ? null : p);
@@ -875,25 +895,19 @@ export function Editor() {
         ))}
       </div>
 
-      {/* Mobile panel drawer */}
-      {mobilePanel && (
-        <div className="absolute inset-0 z-40 flex flex-col bg-slate-950/98 backdrop-blur-sm lg:hidden">
-          <div className="flex shrink-0 items-center justify-between border-b border-slate-800 px-4 py-3">
-            <p className="text-sm font-semibold text-slate-100">
-              {mobilePanel === "catalog" ? "Furniture library"
-                : mobilePanel === "items" ? "Place & edit items"
-                : mobilePanel === "room" ? "Room settings"
-                 : mobilePanel === "curtains" ? "Curtains" : "MEP coordination"}
-            </p>
-            <button onClick={() => setMobilePanel(null)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100">
-              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M6 18L18 6" strokeLinecap="round" /></svg>
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 pb-20">
-            {mobilePanel === "catalog" ? catalogContent : panelContent}
-          </div>
+      {/* The shared modal keeps the mobile inspector above the canvas and traps keyboard focus. */}
+      <Modal
+        open={mobilePanel !== null}
+        onClose={() => setMobilePanel(null)}
+        title={mobilePanel === "catalog" ? "Furniture library"
+          : mobilePanel === "items" ? "Place & edit items"
+          : mobilePanel === "room" ? "Room settings"
+          : mobilePanel === "curtains" ? "Curtains" : "MEP coordination"}
+      >
+        <div className="flex min-h-0 flex-col">
+          {mobilePanel === "catalog" ? catalogContent : panelContent}
         </div>
-      )}
+      </Modal>
 
       {/* Export / connectors modal */}
       <Modal open={exportOpen} onClose={() => setExportOpen(false)} title="Export & CAD connectors" wide>
@@ -1028,6 +1042,7 @@ function RoomNum({
       </div>
       <input
         type="number"
+        aria-label={`${label} (${unit.trim()})`}
         min={min}
         step={step}
         value={draft}
@@ -1067,6 +1082,8 @@ function SliderField({
       </div>
       <input
         type="range"
+        aria-label={label}
+        aria-valuetext={display}
         min={min}
         max={max}
         step={step}
@@ -1085,6 +1102,7 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
       <div className="flex items-center gap-2">
         <input
           type="color"
+          aria-label={label}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           className="h-9 w-12 cursor-pointer rounded-lg border border-slate-700 bg-transparent"
@@ -1227,4 +1245,3 @@ function CameraModal({
     </Modal>
   );
 }
-

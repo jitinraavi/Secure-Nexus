@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { AI } from "../config.js";
-import { asyncHandler, requireSession } from "../security.js";
+import { asyncHandler, requireSession, type AuthedRequest } from "../security.js";
+import {
+  admitProviderRequest, assistantOutputTokens, isBoundedProviderJson, ProviderResourceError,
+  readProviderBody, releaseProviderPermit, withProviderDeadline,
+} from "../providerBudget.js";
 
 const finiteNumber = z.number().finite();
 const point = z.object({ x: finiteNumber, y: finiteNumber, z: finiteNumber }).strict();
@@ -44,7 +48,7 @@ const planSchema = z.object({
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
-  context: z.record(z.unknown()).refine((value) => JSON.stringify(value).length <= 200_000, "Context is too large"),
+  context: z.record(z.unknown()).refine((value) => isBoundedProviderJson(value, 200_000), "Context exceeds the supported byte or complexity limits"),
 }).strict();
 
 const SAFETY = "Structural and MEP suggestions are preliminary coordination concepts only and require review by qualified licensed professionals before use.";
@@ -73,7 +77,8 @@ function parsePlan(text: string) {
 
 const router = Router();
 router.use(requireSession);
-router.post("/plan", asyncHandler(async (req, res) => {
+router.post("/plan", asyncHandler(async (req: AuthedRequest, res) => {
+  res.set("Cache-Control", "private, no-store");
   const input = requestSchema.safeParse(req.body);
   if (!input.success) {
     res.status(400).json({ error: input.error.issues[0]?.message || "Invalid assistant request" });
@@ -85,39 +90,48 @@ router.post("/plan", asyncHandler(async (req, res) => {
   }
   const endpoint = endpointUrl();
   const requestContent = JSON.stringify({ request: input.data.message, currentProjectContext: input.data.context });
-  const provider = await fetch(endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${AI.apiKey}` },
-    body: JSON.stringify(endpoint.endsWith("/responses")
-      ? { model: AI.model || "default", temperature: 0.1, input: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: requestContent }], text: { format: { type: "json_object" } } }
-      : { model: AI.model || "default", temperature: 0.1, response_format: { type: "json_object" }, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: requestContent }] }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!provider.ok) {
-    const providerBody = await provider.text().catch(() => "");
-    let providerMessage = "";
-    try {
-      const parsed = JSON.parse(providerBody) as { error?: { message?: string } | string };
-      providerMessage = typeof parsed.error === "string" ? parsed.error : parsed.error?.message || "";
-    } catch {
-      providerMessage = providerBody.slice(0, 240);
-    }
-    console.error(`[groundwork] Assistant provider failed (${provider.status}) at ${endpoint}: ${providerMessage}`);
-    res.status(502).json({
-      error: `Assistant provider request failed (${provider.status})${providerMessage ? `: ${providerMessage}` : ""}`,
-    });
+  const maximumOutput = assistantOutputTokens();
+  let permit;
+  try {
+    permit = admitProviderRequest({ userId: req.user!.id, kind: "assistant", tokenBudget: Buffer.byteLength(SYSTEM_PROMPT + requestContent, "utf8") + maximumOutput });
+  } catch (error) {
+    if (!(error instanceof ProviderResourceError)) throw error;
+    res.status(error.status).json({ error: error.message, code: error.code });
     return;
   }
-  let body: unknown;
-  try { body = await provider.json(); } catch { res.status(502).json({ error: "Assistant provider returned invalid JSON" }); return; }
+  const disconnected = new AbortController();
+  const abort = () => { if (!res.writableFinished) disconnected.abort(); };
+  req.once("aborted", abort);
+  res.once("close", abort);
   try {
+    const body = await withProviderDeadline(permit.timeoutMs, async (signal) => {
+      const provider = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${AI.apiKey}` },
+        body: JSON.stringify(endpoint.endsWith("/responses")
+          ? { model: AI.model || "default", max_output_tokens: maximumOutput, temperature: 0.1, input: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: requestContent }], text: { format: { type: "json_object" } } }
+          : { model: AI.model || "default", max_tokens: maximumOutput, temperature: 0.1, response_format: { type: "json_object" }, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: requestContent }] }),
+        signal,
+      });
+      const text = await readProviderBody(provider, provider.ok ? 256 * 1024 : 16 * 1024, signal);
+      if (!provider.ok) throw new ProviderResourceError(502, `Assistant provider request failed (${provider.status})`, "PROVIDER_REQUEST_FAILED");
+      try { return JSON.parse(text) as unknown; }
+      catch { throw new ProviderResourceError(502, "Assistant provider returned invalid JSON", "PROVIDER_RESPONSE_INVALID"); }
+    }, disconnected.signal);
     const plan = parsePlan(responseText(body));
     res.json({ source: "ai", model: AI.model || "default", assistantMessage: plan.summary, plan: { ...plan, warnings: [...new Set([...plan.warnings, SAFETY])] } });
   } catch (error) {
-    console.error("[groundwork] Assistant plan validation failed:", error);
-    res.status(502).json({ error: "Assistant returned an invalid action plan" });
+    if (!res.destroyed) {
+      res.status(error instanceof ProviderResourceError ? error.status : 502).json({
+        error: error instanceof ProviderResourceError ? error.message : "Assistant request failed or returned an invalid action plan",
+        code: error instanceof ProviderResourceError ? error.code : "PROVIDER_RESPONSE_INVALID",
+      });
+    }
+  } finally {
+    releaseProviderPermit(permit);
+    req.removeListener("aborted", abort);
+    res.removeListener("close", abort);
   }
 }));
 
 export default router;
-

@@ -30,4 +30,3 @@ export function resolveModelType(t: ProjectType | string | undefined | null): Pr
   const mapped = LEGACY_MODEL_MAP[t] ?? t;
   return (KEPT_TYPES as string[]).includes(mapped) ? (mapped as ProjectType) : "house";
 }
-

@@ -96,4 +96,3 @@ export function DesignAssistantPanel({ messages, onCommand, plan, busy, onPrevie
     </aside>
   );
 }
-

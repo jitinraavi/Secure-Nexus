@@ -1,10 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { DB_PATH } from "./config.js";
+import { migrateTotpSeeds } from "./mfa.js";
 
 const raw = new DatabaseSync(DB_PATH);
 
 raw.exec("PRAGMA journal_mode = WAL;");
 raw.exec("PRAGMA foreign_keys = ON;");
+raw.exec("PRAGMA secure_delete = ON;");
 raw.exec("PRAGMA busy_timeout = 5000;");
 
 raw.exec(`
@@ -492,6 +494,33 @@ CREATE TABLE IF NOT EXISTS payment_receipts (
 
 /* Lightweight migrations for pre-existing databases */
 const userCols = (raw.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((c) => c.name);
+const authUserMigrations: [string, string][] = [
+  ["credential_version", "INTEGER NOT NULL DEFAULT 0"],
+  ["totp_failed_attempts", "INTEGER NOT NULL DEFAULT 0"],
+  ["totp_attempt_window_start", "INTEGER"],
+  ["totp_locked_until", "INTEGER"],
+  ["totp_last_used_step", "INTEGER"],
+];
+const sessionCols = (raw.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]).map((c) => c.name);
+raw.exec("BEGIN IMMEDIATE");
+try {
+  for (const [name, definition] of authUserMigrations) {
+    if (!userCols.includes(name)) raw.exec(`ALTER TABLE users ADD COLUMN ${name} ${definition}`);
+  }
+  if (!sessionCols.includes("credential_version")) {
+    raw.exec("ALTER TABLE sessions ADD COLUMN credential_version INTEGER NOT NULL DEFAULT 0");
+    // Legacy pending challenges have no reliable credential epoch and must be restarted.
+    raw.prepare("UPDATE sessions SET status='revoked',revoked_at=? WHERE status='pending_2fa'").run(Math.floor(Date.now() / 1000));
+  }
+  if (!sessionCols.includes("totp_attempts")) raw.exec("ALTER TABLE sessions ADD COLUMN totp_attempts INTEGER NOT NULL DEFAULT 0");
+  migrateTotpSeeds(raw);
+  raw.exec("COMMIT");
+} catch (error) {
+  raw.exec("ROLLBACK");
+  raw.close();
+  throw error;
+}
+raw.exec("PRAGMA wal_checkpoint(TRUNCATE)");
 if (!userCols.includes("plan")) {
   raw.exec("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free';");
 }
@@ -590,5 +619,3 @@ export function withTransaction<T>(work: () => T): T {
 export function now(): number {
   return Math.floor(Date.now() / 1000);
 }
-
-

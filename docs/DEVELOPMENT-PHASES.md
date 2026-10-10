@@ -185,7 +185,3 @@ Renders are executed through an extensible provider abstraction (`renderProvider
 Both the source design snapshot and each generated output image are stored as AES-256-GCM encrypted versioned workspace artifacts with SHA-256 verification, protected against deletion while referenced. Each render records its exact source project revision; the UI and API explicitly detect revision mismatches ("Stale: Rev X, Now Rev Y") to prevent historical renders from masquerading as current geometry. Retrying a job creates a brand-new job record with its own ID, guaranteeing earlier outputs are never corrupted or overwritten.
 
 The feature is fully integrated into the client via `RenderStudioModal.tsx`, embedded in `GeometryWorkbench.tsx`, and accessible directly from the 3D presentation toolbar and CAD export menu in `Editor.tsx`.
-
-
-
-

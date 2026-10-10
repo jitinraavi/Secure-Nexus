@@ -18,6 +18,8 @@ import { assertGeometrySource, geometryProductionReferences, inspectSavedGeometr
 import { deleteWorkspaceArtifact, MAX_WORKSPACE_BYTES } from "../lib/workspaceApi";
 import type { PrepareWorkspaceSave } from "../lib/workspaceSavePreparation";
 import { RenderStudioModal } from "../components/RenderStudioModal";
+import { PageIntro } from "../components/PageIntro";
+import { WorkbenchGuide } from "../components/WorkbenchGuide";
 
 interface RenderReport { kind: "path-trace"; verification: "unverified"; settings: PathTraceSettings; camera: GeometryScene["camera"]; meshes: number; triangles: number; elapsedMs: number; note: string }
 interface Reports { clashes: MeshClashReport | null; benchmark: GeometryBenchmark | null; render: RenderReport | null }
@@ -262,8 +264,8 @@ export function GeometryWorkbench() {
     } catch (cause) { for (const id of uploaded.uploadedArtifactIds) await deleteWorkspaceArtifact(context.projectId, id).catch(() => undefined); throw cause; }
   };
   return <div className="space-y-5">
-    <h1 className="text-2xl font-semibold">Geometry and rendering</h1>
-    <p className="text-sm text-slate-400">Import visible editor meshes for triangle clashes and path tracing, or convert the linked editor model to declared IFC proxy envelopes. Streaming manifests select chunk levels by screen error.</p>
+    <PageIntro eyebrow="Geometry & rendering" title="See the whole picture." description="Bring in your model, inspect geometry, find intersections, and explore rendering. Connect a project to save your work." />
+    {!scene && !manifest && <WorkbenchGuide kind="geometry" />}
     <ProjectWorkspacePanel kind="geometry" payload={payload} onRestore={restoreWorkspace} onImportProject={importProject} managedReferencedArtifactIds={managedReferences} prepareSave={prepared || production ? prepareSave : undefined} onPreparedSaved={value => { restoreWorkspace(value); setVerified(true); setProductionNotice("Exact geometry package saved with protected source, chunk and provenance references."); }} />
     <Card className="space-y-3 p-4"><Input label="Geometry scene or streaming manifest (JSON)" type="file" accept=".json,application/json" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; void load(file); }} />
       <p className="text-sm">{scene ? `${scene.meshes.length.toLocaleString()} meshes · ${scene.meshes.reduce((sum, m) => sum + m.indices.length / 3, 0).toLocaleString()} triangles` : manifest ? `${manifest.chunks.length.toLocaleString()} streaming chunks` : "No geometry loaded."}</p>
@@ -285,11 +287,10 @@ export function GeometryWorkbench() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="font-semibold text-slate-100 flex items-center gap-2">
-            <span>AI Photorealistic Rendering Jobs</span>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono">Phase 9</span>
+            <span>Architectural render studio</span>
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Submit durable asynchronous architectural render jobs with style presets, non-destructive outputs, and revision attribution.
+            Create styled images from a saved project revision and keep every result alongside your design.
           </p>
         </div>
         <Button

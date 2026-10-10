@@ -9,4 +9,3 @@ export function sectionClippingPlanes(section?: SectionSettings): THREE.Plane[] 
   const end = start + Math.max(Number.isFinite(section.depth) ? section.depth : 0.1, 0.1);
   return [new THREE.Plane(axis, -start), new THREE.Plane(axis.clone().negate(), end)];
 }
-

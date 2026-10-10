@@ -28,10 +28,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed right-4 top-4 z-[90] flex w-80 flex-col gap-2">
+      <div className="gw-toast-stack pointer-events-none fixed right-4 top-4 z-[90] flex w-80 flex-col gap-2" aria-live="polite" aria-atomic="false">
         {toasts.map((t) => (
           <div
             key={t.id}
+            role={t.tone === "error" ? "alert" : "status"}
             className={cn(
               "pointer-events-auto rounded-xl border px-4 py-3 shadow-2xl backdrop-blur animate-[slideIn_.2s_ease]",
               t.tone === "success" && "border-emerald-500/40 bg-slate-900/95 text-emerald-200",

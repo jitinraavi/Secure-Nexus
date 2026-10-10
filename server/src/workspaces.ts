@@ -3,6 +3,7 @@ import { z } from "zod";
 import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "./config.js";
 import { deriveVaultKey, randomId, sha256Hex } from "./crypto.js";
 import { db, now, withTransaction } from "./db.js";
+import { getReservedArtifactCapacity } from "./providerBudget.js";
 import { organizationAudit } from "./organization.js";
 import { canWriteProject, getProjectAccess, type ProjectAccess, type ProjectRole } from "./projectAccess.js";
 
@@ -175,7 +176,8 @@ export function createWorkspaceArtifact(projectId: string, kind: WorkspaceKind, 
   return withTransaction(() => {
     const { access } = authorize(projectId, actor, true);
     const totals = db.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS bytes FROM project_workspace_artifacts WHERE project_id=?").get(projectId) as { count: number; bytes: number };
-    if (totals.count >= MAX_PROJECT_ARTIFACTS || totals.bytes + bytes.length > MAX_PROJECT_BYTES) {
+    const reserved = getReservedArtifactCapacity(projectId);
+    if (totals.count + reserved.count >= MAX_PROJECT_ARTIFACTS || totals.bytes + reserved.bytes + bytes.length > MAX_PROJECT_BYTES) {
       throw new WorkspaceError(409, "Project artifact capacity reached. Delete unreferenced artifacts before uploading.", "ARTIFACT_CAPACITY");
     }
     const id = randomId();

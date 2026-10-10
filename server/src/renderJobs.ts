@@ -4,6 +4,10 @@ import { db, now, withTransaction } from "./db.js";
 import { organizationAudit } from "./organization.js";
 import { canWriteProject, getProjectAccess, type ProjectAccess, type ProjectRole } from "./projectAccess.js";
 import {
+  admitProviderRequest, isBoundedProviderJson, releaseProviderPermit, renderOutputBytes, withProviderDeadline,
+  ProviderResourceError, type ProviderPermit,
+} from "./providerBudget.js";
+import {
   getRenderProvider,
   RENDER_STYLE_PRESETS,
   type RenderPreset,
@@ -26,15 +30,18 @@ export const submitRenderJobSchema = z.object({
   negativePrompt: z.string().trim().max(1000).optional(),
   stylePreset: z.string().trim().max(100).optional(),
   sourceRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  sourceImageBase64: z.string().max(32_000_000).optional(),
+  sourceImageBase64: z.string().max(Math.ceil(32 * 1024 * 1024 / 3) * 4 + 128).optional(),
   sourceImageArtifactId: artifactIdSchema.optional(),
-  parameters: z.record(z.unknown()).optional(),
+  parameters: z.record(z.unknown()).refine((value) => isBoundedProviderJson(value, 16_384), "Parameters exceed the supported byte or complexity limits").optional(),
 }).strict().superRefine((val, ctx) => {
   if (!val.sourceImageBase64 && !val.sourceImageArtifactId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Either sourceImageBase64 or sourceImageArtifactId is required",
     });
+  }
+  if (val.sourceImageBase64 && val.sourceImageArtifactId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Supply exactly one source image" });
   }
 });
 
@@ -170,6 +177,7 @@ async function executeRenderJob(
   projectId: string,
   actor: WorkspaceActor,
   provider: RenderProvider,
+  permit: ProviderPermit,
 ): Promise<void> {
   const controller = new AbortController();
   activeRenderJobs.set(jobId, controller);
@@ -177,6 +185,7 @@ async function executeRenderJob(
   try {
     // 1. Mark running
     withTransaction(() => {
+      authorizeProject(projectId, actor, true);
       db.prepare("UPDATE project_render_jobs SET status='running', updated_at=? WHERE id=? AND status='queued'").run(
         now(),
         jobId,
@@ -190,32 +199,28 @@ async function executeRenderJob(
     const { bytes: sourceImageBuffer } = readWorkspaceArtifact(projectId, job.source_image_artifact_id, actor);
 
     // 3. Call AI provider
-    const result: RenderProviderResult = await provider.generate(
-      {
-        prompt: job.prompt,
-        negativePrompt: job.negative_prompt || undefined,
-        stylePreset: job.style_preset || undefined,
-        sourceImageBuffer,
-        parameters: parseParameters(job.parameters_json),
-      },
-      controller.signal,
-    );
+    const result: RenderProviderResult = await withProviderDeadline(permit.timeoutMs, (signal) => provider.generate({
+      prompt: job.prompt, negativePrompt: job.negative_prompt || undefined,
+      stylePreset: job.style_preset || undefined, sourceImageBuffer,
+      parameters: parseParameters(job.parameters_json),
+    }, signal), controller.signal);
+    controller.signal.throwIfAborted();
+    if (!Buffer.isBuffer(result.imageBuffer) || result.imageBuffer.length === 0 || result.imageBuffer.length > renderOutputBytes()) {
+      throw new ProviderResourceError(502, "Rendered image exceeded the output byte limit", "PROVIDER_RESPONSE_SIZE");
+    }
 
     // 4. Save rendered output as a brand-new versioned artifact
     const outputArtifactName = `render-output-rev${job.source_revision}-${jobId.slice(0, 8)}.png`;
-    const outputArtifact = createWorkspaceArtifact(
-      projectId,
-      "geometry",
-      actor,
-      outputArtifactName,
-      result.imageBuffer,
-    );
-
-    // 5. Mark succeeded
-    const timestamp = now();
     withTransaction(() => {
+      authorizeProject(projectId, actor, true);
+      const current = db.prepare("SELECT status FROM project_render_jobs WHERE id=? AND project_id=?").get(jobId, projectId) as { status: string } | undefined;
+      if (current?.status !== "running" || controller.signal.aborted) return;
+      // Consume this reservation in the same transaction as the artifact write.
+      releaseProviderPermit(permit);
+      const outputArtifact = createWorkspaceArtifact(projectId, "geometry", actor, outputArtifactName, result.imageBuffer);
+      const timestamp = now();
       db.prepare(
-        "UPDATE project_render_jobs SET status='succeeded', output_artifact_id=?, output_sha256=?, updated_at=?, completed_at=? WHERE id=?",
+        "UPDATE project_render_jobs SET status='succeeded', output_artifact_id=?, output_sha256=?, updated_at=?, completed_at=? WHERE id=? AND status='running'",
       ).run(outputArtifact.id, outputArtifact.sha256, timestamp, timestamp, jobId);
     });
   } catch (err: unknown) {
@@ -228,11 +233,12 @@ async function executeRenderJob(
 
     withTransaction(() => {
       db.prepare(
-        "UPDATE project_render_jobs SET status=?, error_code=?, error_message=?, updated_at=?, completed_at=? WHERE id=?",
+        "UPDATE project_render_jobs SET status=?, error_code=?, error_message=?, updated_at=?, completed_at=? WHERE id=? AND status IN ('queued','running')",
       ).run(status, errorCode, errorMessage, timestamp, timestamp, jobId);
     });
   } finally {
     activeRenderJobs.delete(jobId);
+    releaseProviderPermit(permit);
   }
 }
 
@@ -296,43 +302,36 @@ export function submitRenderJob(
   actor: WorkspaceActor,
   input: SubmitRenderJobInput,
 ): RenderJobSummary {
-  let sourceArtifactId = input.sourceImageArtifactId;
-  let sourceSha256 = "";
-
-  // 1. Prepare source image artifact
-  if (input.sourceImageBase64) {
-    const rawBase64 = input.sourceImageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const imageBytes = Buffer.from(rawBase64, "base64");
-    if (imageBytes.length < 100 || imageBytes.length > 32 * 1024 * 1024) {
-      throw new WorkspaceError(400, "Source image must be between 100 bytes and 32 MiB", "INVALID_IMAGE_SIZE");
-    }
-    sourceSha256 = sha256Hex(imageBytes);
-    const artifactName = `render-source-rev${input.sourceRevision}-${now()}.png`;
-    const sourceArtifact = createWorkspaceArtifact(projectId, "geometry", actor, artifactName, imageBytes);
-    sourceArtifactId = sourceArtifact.id;
-  } else if (sourceArtifactId) {
-    const existing = db
-      .prepare("SELECT id,sha256 FROM project_workspace_artifacts WHERE id=? AND project_id=?")
-      .get(sourceArtifactId, projectId) as { id: string; sha256: string } | undefined;
-    if (!existing) {
-      throw new WorkspaceError(400, "Specified source image artifact was not found", "ARTIFACT_NOT_FOUND");
-    }
-    sourceSha256 = existing.sha256;
-  } else {
-    throw new WorkspaceError(400, "A valid source image is required", "MISSING_SOURCE_IMAGE");
-  }
-
-  // 2. Validate revision & provider status
   const provider = getRenderProvider();
   const configured = provider.isConfigured();
   const jobId = randomId();
   const timestamp = now();
+  let permit: ProviderPermit | undefined;
 
-  return withTransaction(() => {
+  const summary = withTransaction(() => {
     const { access, project } = authorizeProject(projectId, actor, true);
-
+    ensureRenderHistoryCapacity(projectId);
     if (input.sourceRevision > project.revision) {
       throw new WorkspaceError(409, "Source revision is ahead of current project revision", "SOURCE_REVISION_AHEAD");
+    }
+    if (configured) permit = admitRender(projectId, actor, input);
+    let sourceArtifactId = input.sourceImageArtifactId;
+    let sourceSha256 = "";
+    if (input.sourceImageBase64) {
+      const rawBase64 = input.sourceImageBase64.replace(/^data:image\/\w+;base64,/, "");
+      const imageBytes = Buffer.from(rawBase64, "base64");
+      if (imageBytes.length < 100 || imageBytes.length > 32 * 1024 * 1024) {
+        throw new WorkspaceError(400, "Source image must be between 100 bytes and 32 MiB", "INVALID_IMAGE_SIZE");
+      }
+      sourceSha256 = sha256Hex(imageBytes);
+      sourceArtifactId = createWorkspaceArtifact(projectId, "geometry", actor, `render-source-rev${input.sourceRevision}-${jobId.slice(0, 8)}.png`, imageBytes).id;
+    } else if (sourceArtifactId) {
+      const existing = db.prepare("SELECT id,sha256,size FROM project_workspace_artifacts WHERE id=? AND project_id=?").get(sourceArtifactId, projectId) as { id: string; sha256: string; size: number } | undefined;
+      if (!existing) throw new WorkspaceError(400, "Specified source image artifact was not found", "ARTIFACT_NOT_FOUND");
+      if (existing.size > 32 * 1024 * 1024) throw new WorkspaceError(400, "Source image cannot exceed 32 MiB", "INVALID_IMAGE_SIZE");
+      sourceSha256 = existing.sha256;
+    } else {
+      throw new WorkspaceError(400, "A valid source image is required", "MISSING_SOURCE_IMAGE");
     }
 
     const initialStatus: RenderJobState = configured ? "queued" : "unconfigured";
@@ -379,14 +378,23 @@ export function submitRenderJob(
     });
 
     const row = db.prepare("SELECT * FROM project_render_jobs WHERE id=?").get(jobId) as unknown as RenderJobRow;
-    const summary = formatJobSummary(row, project.revision);
+    return formatJobSummary(row, project.revision);
+  });
+  if (permit) void executeRenderJob(jobId, projectId, actor, provider, permit);
+  return summary;
+}
 
-    if (configured) {
-      // Dispatch background async task
-      void executeRenderJob(jobId, projectId, actor, provider);
-    }
+function ensureRenderHistoryCapacity(projectId: string): void {
+  const row = db.prepare("SELECT COUNT(*) AS count FROM project_render_jobs WHERE project_id=?").get(projectId) as { count: number };
+  if (row.count >= 200) throw new WorkspaceError(409, "Project render history capacity reached", "RENDER_HISTORY_CAPACITY");
+}
 
-    return summary;
+function admitRender(projectId: string, actor: WorkspaceActor, input: { prompt: string; negativePrompt?: string | null; parameters?: Record<string, unknown> }): ProviderPermit {
+  // Image generation uses a fixed request charge proxy plus bounded prompt bytes.
+  return admitProviderRequest({
+    userId: actor.userId, kind: "render", projectId,
+    tokenBudget: 4_096 + Buffer.byteLength(input.prompt + (input.negativePrompt ?? "") + JSON.stringify(input.parameters ?? {}), "utf8"),
+    reservedBytes: renderOutputBytes(), reservedArtifacts: 1,
   });
 }
 
@@ -399,16 +407,24 @@ export function retryRenderJob(projectId: string, jobId: string, actor: Workspac
   const configured = provider.isConfigured();
   const newJobId = randomId();
   const timestamp = now();
+  let permit: ProviderPermit | undefined;
 
-  return withTransaction(() => {
+  const summary = withTransaction(() => {
     const { access, project } = authorizeProject(projectId, actor, true);
     const original = db
       .prepare("SELECT * FROM project_render_jobs WHERE id=? AND project_id=?")
       .get(jobId, projectId) as unknown as RenderJobRow | undefined;
     if (!original) throw new WorkspaceError(404, "Original render job not found", "JOB_NOT_FOUND");
+    if (original.status === "queued" || original.status === "running") {
+      throw new WorkspaceError(409, "An active render cannot be retried", "INVALID_STATE");
+    }
+    ensureRenderHistoryCapacity(projectId);
 
     const originalParams = parseParameters(original.parameters_json);
     const newParams = { ...originalParams, retriedFromJobId: jobId };
+    const source = db.prepare("SELECT size FROM project_workspace_artifacts WHERE id=? AND project_id=?").get(original.source_image_artifact_id, projectId) as { size: number } | undefined;
+    if (!source || source.size > 32 * 1024 * 1024) throw new WorkspaceError(400, "The original source image is unavailable or too large", "ARTIFACT_NOT_FOUND");
+    if (configured) permit = admitRender(projectId, actor, { prompt: original.prompt, negativePrompt: original.negative_prompt, parameters: newParams });
 
     const initialStatus: RenderJobState = configured ? "queued" : "unconfigured";
     const errorCode = configured ? null : "PROVIDER_UNCONFIGURED";
@@ -453,14 +469,10 @@ export function retryRenderJob(projectId: string, jobId: string, actor: Workspac
     });
 
     const row = db.prepare("SELECT * FROM project_render_jobs WHERE id=?").get(newJobId) as unknown as RenderJobRow;
-    const summary = formatJobSummary(row, project.revision);
-
-    if (configured) {
-      void executeRenderJob(newJobId, projectId, actor, provider);
-    }
-
-    return summary;
+    return formatJobSummary(row, project.revision);
   });
+  if (permit) void executeRenderJob(newJobId, projectId, actor, provider, permit);
+  return summary;
 }
 
 /**

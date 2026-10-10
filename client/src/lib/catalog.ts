@@ -520,4 +520,3 @@ export function buildFurniture(item: { type: string; color: string; scale: numbe
   });
   return group;
 }
-

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { verifyTwoFactor } from "../api";
 import { Button, Card, Input } from "../components/ui";
-import { Logo } from "../components/Logo";
+import { AuthShell } from "./AuthShell";
 
 export function VerifyTwoFactor() {
   const navigate = useNavigate();
@@ -18,7 +18,7 @@ export function VerifyTwoFactor() {
     setLoading(true);
     try {
       await verifyTwoFactor(code.trim());
-      await refresh();
+      await refresh({ afterSignIn: true });
       navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
@@ -28,13 +28,9 @@ export function VerifyTwoFactor() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <div className="mb-8 flex justify-center">
-          <Logo />
-        </div>
-        <Card className="p-8">
-          <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+    <AuthShell stage="verify">
+        <Card className="auth-card">
+          <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[#b5c7ab]/10 text-[#b5c7ab]">
             <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="3" y="11" width="18" height="11" rx="2" />
               <path d="M7 11V7a5 5 0 0110 0v4" />
@@ -56,13 +52,12 @@ export function VerifyTwoFactor() {
               required
               className="text-center text-xl tracking-[0.5em]"
             />
-            {error && <p className="text-sm text-rose-400">{error}</p>}
+            {error && <p role="alert" className="text-sm text-rose-400">{error}</p>}
             <Button type="submit" loading={loading} className="w-full" size="lg">
               Verify & continue
             </Button>
           </form>
         </Card>
-      </div>
-    </div>
+    </AuthShell>
   );
 }

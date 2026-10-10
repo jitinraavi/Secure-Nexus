@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { PageIntro } from "../components/PageIntro";
+import { WorkbenchGuide } from "../components/WorkbenchGuide";
 import type { ProjectDetail } from "../types";
 import { ProjectWorkspacePanel } from "../components/ProjectWorkspacePanel";
 import { ProjectJobsPanel } from "../components/ProjectJobsPanel";
@@ -549,12 +551,10 @@ export default function EngineeringWorkbench() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to export solver deck."); }
     finally { setExporting(false); }
   };
-  return <main className="mx-auto max-w-7xl space-y-5 px-4 py-8 text-slate-100">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h1 className="text-2xl font-semibold">Engineering workbench</h1><p className="mt-2 max-w-3xl text-sm text-slate-400">Edit or import an explicit SI engineering dataset, calculate bounded analysis, and export its source/report or native solver input.</p></div>
-      <div className="flex items-center gap-3"><Badge tone="amber">Independent verification required</Badge><Link to="/dashboard" className="text-sm text-amber-300">Projects</Link></div>
-    </div>
+  return <div className="space-y-5 text-slate-100">
+    <PageIntro eyebrow="Engineering workbench" title="Design with a stronger foundation." description="Explore structural, water, air, and electrical systems. Import engineering data, run analysis, and keep your results connected to your project." variant="structure" actions={<><Badge tone="amber">Independent verification required</Badge><Link to="/dashboard" className="text-sm text-emerald-300">Back to projects ↗</Link></>} />
     <ProjectWorkspacePanel kind="engineering" payload={payload} onRestore={restoreWorkspace} onImportProject={importProject} />
+    <WorkbenchGuide kind="engineering" />
     <EngineeringBasisPanel value={designBasis} onChange={value => { importGeneration.current++; setDesignBasis(value); setError(null); }} />
     <ProjectJobsPanel workspaceKind="engineering" kinds={["opensees-static"]} preparedInputLabel="Queuing captures the planar structural frame JSON, selected combination and current design basis, even when another browser module is selected. Edit supports, loads and section properties before submission." prepareInput={() => {
       const model = parseFrameModel(parseInput(inputs.frame)), selectedCombination = combinationId.trim() || undefined;
@@ -651,5 +651,5 @@ export default function EngineeringWorkbench() {
         {storedResult && !activeResult && <div className="space-y-2 border-t border-slate-800 pt-3"><p className="text-xs text-amber-200">A previous unverified report remains in this workspace. {storedResult.designBasis === null ? "It predates design-basis declarations." : "Its source input or basis differs from the current draft."}</p><Button variant="ghost" size="sm" onClick={() => download(`engineering-${module}-previous-report.json`, JSON.stringify({ module, sourceInput: parseInput(storedResult.source), designBasis: storedResult.designBasis, compliance: "not-assessed", currentDraft: false, report: storedResult.data }, null, 2), "application/json")}>Export previous report</Button></div>}
       </Card>
     </div>
-  </main>;
+  </div>;
 }

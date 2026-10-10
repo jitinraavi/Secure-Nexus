@@ -286,4 +286,3 @@ export const DOOR_FACING_LABELS: Record<string, string> = {
   south: "South",
   west: "West",
 };
-

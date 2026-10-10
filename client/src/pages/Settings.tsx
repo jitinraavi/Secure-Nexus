@@ -18,6 +18,7 @@ import { useToast } from "../components/Toast";
 import { formatDate } from "../lib/format";
 import { cn } from "../lib/cn";
 import { useTheme, type ThemeMode } from "../theme";
+import { PageIntro } from "../components/PageIntro";
 
 export function Settings() {
   const { user, refresh } = useAuth();
@@ -26,6 +27,7 @@ export function Settings() {
 
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState("");
 
   const [countries, setCountries] = useState<CountryOption[]>([]);
   const [profile, setProfile] = useState({ username: "", country: "IN", phone: "", accountType: "individual" as "individual" | "business", gstin: "" });
@@ -43,8 +45,11 @@ export function Settings() {
 
   const loadSessions = useCallback(async () => {
     setSessionLoading(true);
+    setSessionError("");
     try {
       setSessions(await listSessions());
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : "Could not load your active sessions.");
     } finally {
       setSessionLoading(false);
     }
@@ -161,10 +166,7 @@ export function Settings() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-50">Settings</h1>
-        <p className="mt-1 text-sm text-slate-400">Security, sessions and preferences for your account.</p>
-      </div>
+      <PageIntro eyebrow="Make yourself at home" title="Your studio, your way." description="Manage your profile, personalize your workspace, and keep your account protected." variant="interior" />
 
       <Card className="p-6">
         <div>
@@ -173,7 +175,7 @@ export function Settings() {
         </div>
         <div className="mt-4 grid grid-cols-3 gap-2">
           {(["light", "dark", "system"] as ThemeMode[]).map((option) => (
-            <button key={option} type="button" onClick={() => setMode(option)} className={cn("rounded-xl border px-3 py-3 text-sm font-semibold capitalize transition", mode === option ? "border-[#d6a84a] bg-[#d6a84a]/10 text-[#e5bd67]" : "border-slate-700 bg-slate-900/60 text-slate-400 hover:border-slate-500")}>{option}</button>
+            <button key={option} type="button" onClick={() => setMode(option)} aria-pressed={mode === option} className={cn("rounded-xl border px-3 py-3 text-sm font-semibold capitalize transition", mode === option ? "border-emerald-400 bg-emerald-400/10 text-emerald-300" : "border-slate-700 bg-slate-900/60 text-slate-400 hover:border-slate-500")}>{option}</button>
           ))}
         </div>
       </Card>
@@ -358,10 +360,11 @@ export function Settings() {
             <h2 className="font-semibold text-slate-100">Active sessions</h2>
             <p className="mt-1 text-sm text-slate-400">Devices currently signed in to your account.</p>
           </div>
-          <Button variant="secondary" size="sm" onClick={() => void revokeOthers().then(loadSessions)}>
+          <Button variant="secondary" size="sm" onClick={() => void revokeOthers().then(loadSessions).catch(error => toast.push({ title: "Could not sign out other devices", description: error instanceof Error ? error.message : undefined, tone: "error" }))}>
             Sign out all other devices
           </Button>
         </div>
+        {sessionError && <div className="mt-4"><p role="alert" className="text-sm text-rose-300">{sessionError}</p><Button variant="secondary" size="sm" className="mt-2" onClick={() => void loadSessions()}>Retry loading sessions</Button></div>}
         {sessionLoading ? (
           <div className="mt-4 flex items-center justify-center py-8"><Spinner className="h-5 w-5 text-emerald-400" /></div>
         ) : (
@@ -379,7 +382,7 @@ export function Settings() {
                 </div>
                 {!s.current && (
                   <button
-                    onClick={() => void revokeSession(s.id).then(loadSessions)}
+                    onClick={() => void revokeSession(s.id).then(loadSessions).catch(error => toast.push({ title: "Could not revoke session", description: error instanceof Error ? error.message : undefined, tone: "error" }))}
                     className="rounded-lg px-2 py-1 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
                   >
                     Revoke
@@ -394,4 +397,3 @@ export function Settings() {
     </div>
   );
 }
-

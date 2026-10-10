@@ -177,8 +177,8 @@ export function Canvas3D({
     const height = container.clientHeight;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#10141c");
-    scene.fog = new THREE.Fog("#10141c", 14, 30);
+    scene.background = new THREE.Color("#151c17");
+    scene.fog = new THREE.Fog("#151c17", 14, 30);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 200);
@@ -207,7 +207,10 @@ export function Canvas3D({
     xrToolbar.setAttribute("aria-label", "Immersive presentation modes");
     Object.assign(xrToolbar.style, { position: "absolute", bottom: "12px", left: "12px", display: "flex", gap: "8px", zIndex: "5" });
     for (const button of [vrButton, arButton]) Object.assign(button.style, { position: "static", margin: "0", left: "auto", bottom: "auto" });
-    xrToolbar.append(vrButton, arButton);
+    if (navigator.xr) {
+      void navigator.xr.isSessionSupported("immersive-vr").then(supported => { if (supported && container.isConnected && rendererRef.current === renderer) xrToolbar.append(vrButton); }).catch(() => undefined);
+      void navigator.xr.isSessionSupported("immersive-ar").then(supported => { if (supported && container.isConnected && rendererRef.current === renderer) xrToolbar.append(arButton); }).catch(() => undefined);
+    }
     container.appendChild(xrToolbar);
     rendererRef.current = renderer;
 
@@ -217,7 +220,7 @@ export function Canvas3D({
     pmrem.dispose();
 
     const restoreBackground = () => {
-      scene.background = new THREE.Color("#10141c");
+      scene.background = new THREE.Color("#151c17");
       renderer.setClearAlpha(1);
     };
     const onXrSessionStart = () => {
@@ -825,4 +828,3 @@ function disposeGroup(group: THREE.Object3D) {
     ma.dispose();
   }
 }
-

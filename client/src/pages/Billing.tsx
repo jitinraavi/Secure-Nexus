@@ -7,6 +7,7 @@ import { Badge, Button, Card, Spinner } from "../components/ui";
 import { useToast } from "../components/Toast";
 import { formatDate, formatMoney } from "../lib/format";
 import { cn } from "../lib/cn";
+import { PageIntro } from "../components/PageIntro";
 
 const METHOD_ICONS: Record<string, string> = {
   upi: "M11 2h2v5h-2V2zm0 15h2v5h-2v-5zM3 6h4v12H3zM17 6h4v12h-4z",
@@ -32,8 +33,11 @@ export function Billing() {
   const [selectedMethod, setSelectedMethod] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
     try {
       const [p, recs] = await Promise.all([getPlans(), listPayments()]);
       setPlans(p.plans);
@@ -41,6 +45,7 @@ export function Billing() {
       setIsDemo(p.isDemo);
       setPayments(recs);
     } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Could not load billing.");
       toast.push({ title: "Could not load billing", description: err instanceof Error ? err.message : undefined, tone: "error" });
     } finally {
       setLoading(false);
@@ -78,19 +83,16 @@ export function Billing() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-50">Billing & plans</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            Upgrade your workspace. Pay by UPI, card or PayPal.
-            {isDemo && <span className="ml-2 text-xs text-amber-300/90">Demo mode — payments are simulated, no real charge.</span>}
-          </p>
-        </div>
+      <PageIntro eyebrow="Room to grow" title="A plan for your next chapter." description="Choose the workspace that fits your practice. Manage your subscription and payment history in one place." actions={
+        <>
         <Badge tone={currentPlan === "free" ? "slate" : currentPlan === "pro" ? "cyan" : "emerald"}>
           Current: {currentPlan}
         </Badge>
-      </div>
+        {isDemo && <Badge tone="amber">Demo payments · no real charge</Badge>}
+        </>
+      } />
 
+      {loadError && <Card className="p-5"><p role="alert" className="text-sm text-rose-300">{loadError}</p><Button variant="secondary" className="mt-3" onClick={() => void load()}>Try again</Button></Card>}
       {loading ? (
         <div className="flex h-40 items-center justify-center"><Spinner className="h-6 w-6 text-emerald-400" /></div>
       ) : (
