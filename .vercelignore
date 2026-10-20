@@ -10,7 +10,7 @@ server/.env.*
 client/.env
 client/.env.*
 server/data/
-data/
+/data/
 backups/
 artifacts/
 server/supabase/.temp/
