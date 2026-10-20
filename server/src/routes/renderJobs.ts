@@ -16,6 +16,7 @@ import { ProviderResourceError } from "../providerBudget.js";
 import { boundedUpload } from "../uploads.js";
 import { asyncHandler, requireSession, type AuthedRequest } from "../security.js";
 import { WorkspaceError, type WorkspaceActor } from "../workspaces.js";
+import { SERVERLESS } from "../config.js";
 
 const router = Router({ mergeParams: true });
 const projectIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/);
@@ -78,11 +79,11 @@ router.use(asyncHandler(async (req: AuthedRequest, res, next) => {
 router.get("/capabilities", (_req, res) => {
   const provider = getRenderProvider();
   res.json({
-    configured: provider.isConfigured(),
+    configured: !SERVERLESS && provider.isConfigured(),
     provider: provider.id,
     model: provider.model,
     version: provider.version,
-    unconfiguredReason: provider.getUnconfiguredReason(),
+    unconfiguredReason: SERVERLESS ? "Background image generation is unavailable in this serverless demo." : provider.getUnconfiguredReason(),
     presets: RENDER_STYLE_PRESETS,
   });
 });
@@ -97,6 +98,7 @@ router.get("/", handle(async (req, res) => {
 router.post(
   "/",
   (req: AuthedRequest, res, next) => {
+    if (SERVERLESS) { res.status(503).json({ error: "Background image generation requires a persistent worker and is unavailable in this demo.", code: "SERVERLESS_BACKGROUND_UNAVAILABLE" }); return; }
     const contentType = req.headers["content-type"] || "";
     if (contentType.includes("multipart/form-data")) {
       upload(req, res, next);
@@ -166,6 +168,7 @@ router.get("/:jobId/image", handle(async (req, res) => {
 
 // POST /api/projects/:projectId/renders/:jobId/retry
 router.post("/:jobId/retry", handle(async (req, res) => {
+  if (SERVERLESS) throw new WorkspaceError(503, "Background image generation requires a persistent worker and is unavailable in this demo.", "SERVERLESS_BACKGROUND_UNAVAILABLE");
   if (!jobIdSchema.safeParse(req.params.jobId).success) {
     throw new WorkspaceError(400, "Invalid render job ID", "INVALID_JOB_ID");
   }

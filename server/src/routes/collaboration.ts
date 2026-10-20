@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
+import { MASTER_KEY, PREVIOUS_MASTER_KEY, SERVERLESS } from "../config.js";
 import { decryptAesGcm, deriveVaultKey, encryptAesGcm, randomId } from "../crypto.js";
 import { db, now, withTransaction } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
@@ -10,6 +10,7 @@ import { conflictingDesignLock } from "../designLocks.js";
 import { validateDesignComplexity, MAX_DESIGN_BYTES } from "../designValidation.js";
 import syncRouter from "./sync.js";
 import { readRedisProjectEvents, redisPresence, redisTransportConfigured } from "../redisTransport.js";
+import { serverlessStreamDeadline } from "../serverlessRuntime.js";
 
 const router = Router();
 const vaultKey = deriveVaultKey(MASTER_KEY);
@@ -113,7 +114,18 @@ router.get("/:projectId/events", asyncHandler(async (req: AuthedRequest, res) =>
   const replay = setInterval(() => {
     void replayOnce().catch(() => { res.end(); });
   }, 2000);
-  res.on("close", () => { clearInterval(heartbeat); clearInterval(replay); void Promise.resolve(unsubscribe()).catch(() => {}); });
+  const stopDeadline = SERVERLESS ? serverlessStreamDeadline(res) : () => {};
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    clearInterval(heartbeat);
+    clearInterval(replay);
+    stopDeadline();
+    void Promise.resolve(unsubscribe()).catch(() => {});
+  };
+  res.once("close", cleanup);
+  res.once("finish", cleanup);
 }));
 
 router.get("/:projectId/presence", asyncHandler(async (req: AuthedRequest, res) => {

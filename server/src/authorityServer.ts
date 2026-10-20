@@ -5,7 +5,7 @@ import express from "express";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import multer from "multer";
-import { IS_PROD, NODE_ENV, PORT, BIND_HOST, isLoopbackAddress } from "./config.js";
+import { IS_PROD, NODE_ENV, PORT, BIND_HOST, SERVERLESS, isLoopbackAddress } from "./config.js";
 import { DesignInputError } from "./designValidation.js";
 import { db, now } from "./db.js";
 import { hashPassword } from "./crypto.js";
@@ -32,6 +32,7 @@ import { reconcileInterruptedRenderJobs } from "./renderJobs.js";
 import { startDatabaseScheduler, checkpointDatabase } from "./databaseBackup.js";
 import { authorityGatewayMiddleware, normalizeIp, requireAuthorityConfiguration } from "./topology.js";
 import { mountPublicSite } from "./publicSite.js";
+import { vercelRequestContext } from "./serverlessRuntime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(__dirname, "../../client/dist");
@@ -65,11 +66,12 @@ app.use(
   }),
 );
 
+if (SERVERLESS) app.use("/api", vercelRequestContext(process.env));
 app.use("/api", authorityGatewayMiddleware(topology));
 app.use("/api", apiLimiter);
 app.use(cookieParser());
 app.use(express.json({
-  limit: "8mb",
+  limit: SERVERLESS ? "4mb" : "8mb",
   verify: (req, _res, buffer) => {
     if ((req.url ?? "").split("?")[0] === "/api/payments/webhook") {
       if (buffer.length > 256 * 1024) throw Object.assign(new Error("Webhook body too large"), { status: 413 });
@@ -188,6 +190,7 @@ export async function seedDevUserIfEmpty(): Promise<void> {
 }
 
 export async function startAuthorityServer() {
+  if (SERVERLESS) throw new Error("Vercel must invoke the exported request handler; background authority startup is disabled");
   await reconcileInterruptedRenderJobs();
   await seedDevUserIfEmpty();
   const stopDatabaseScheduler = startDatabaseScheduler();

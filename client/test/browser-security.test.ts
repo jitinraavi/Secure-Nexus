@@ -10,7 +10,34 @@ import { offlineProjectStore } from "../src/lib/offlineProjectStore.ts";
 import { writeWorkspaceDraft, type WorkspaceDraft } from "../src/lib/workspaceDraft.ts";
 import { offlineSyncManager } from "../src/lib/offlineSyncManager.ts";
 import { removeLocalAccountData } from "../src/lib/accountLocalData.ts";
-import { logout as requestLogout, setCsrfToken } from "../src/api.ts";
+import { ApiError, assertHostedRequestSize, logout as requestLogout, setCsrfToken } from "../src/api.ts";
+
+test("hosted request limits count UTF-8 bytes rather than characters", () => {
+  assert.doesNotThrow(() => assertHostedRequestSize("a".repeat(4_000_000), "POST", "vercel"));
+  assert.throws(() => assertHostedRequestSize("é".repeat(2_000_001), "PATCH", "vercel"), (error) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.status, 413);
+    assert.match(error.message, /4 MB.*smaller file or design/);
+    return true;
+  });
+});
+
+test("hosted multipart limits combine file and field bytes with overhead", () => {
+  const body = new FormData();
+  body.append("artifact", new Blob([new Uint8Array(3_900_000)]), "model.glb");
+  body.append("description", "é".repeat(50_000));
+  assert.throws(() => assertHostedRequestSize(body, "PUT", "vercel"), { status: 413 });
+  body.set("description", "small model");
+  assert.doesNotThrow(() => assertHostedRequestSize(body, "PUT", "vercel"));
+});
+
+test("hosted limits handle binary bodies and preserve ordinary deployments", () => {
+  const body = new Blob([new Uint8Array(4_000_001)]);
+  assert.throws(() => assertHostedRequestSize(body, "post", "vercel"), { status: 413 });
+  assert.throws(() => assertHostedRequestSize(new Uint8Array(4_000_001), "PUT", "vercel"), { status: 413 });
+  assert.doesNotThrow(() => assertHostedRequestSize(body, "POST", undefined));
+  assert.doesNotThrow(() => assertHostedRequestSize(body, "GET", "vercel"));
+});
 
 class TestStorage {
   values = new Map<string, string>();

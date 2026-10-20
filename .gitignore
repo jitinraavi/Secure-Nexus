@@ -19,6 +19,9 @@ backups/
 # Supabase CLI local cache
 server/supabase/.temp/
 
+# Vercel local project link and pulled environment files
+.vercel/
+
 # Environment and secrets (NEVER commit credentials)
 .env
 .env.*

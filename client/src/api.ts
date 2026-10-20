@@ -30,6 +30,31 @@ export class ApiError extends Error {
   }
 }
 
+const HOSTED_REQUEST_MAX_BYTES = 4_000_000;
+
+/** Leave room beneath the hosting platform limit for multipart boundaries and headers. */
+export function assertHostedRequestSize(
+  body: BodyInit | null | undefined,
+  method: string,
+  hostingMode: string | undefined,
+): void {
+  if (hostingMode !== "vercel" || !["POST", "PUT", "PATCH"].includes(method.toUpperCase()) || body == null) return;
+  const encodedBytes = (value: string) => new TextEncoder().encode(value).byteLength;
+  let bytes = 0;
+  if (body instanceof FormData) {
+    bytes = 8 * 1024;
+    for (const [name, value] of body.entries()) {
+      bytes += encodedBytes(name) + (typeof value === "string" ? encodedBytes(value) : value.size);
+    }
+  } else if (typeof body === "string") bytes = encodedBytes(body);
+  else if (body instanceof Blob) bytes = body.size;
+  else if (body instanceof URLSearchParams) bytes = encodedBytes(body.toString());
+  else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) bytes = body.byteLength;
+  if (bytes > HOSTED_REQUEST_MAX_BYTES) {
+    throw new ApiError(413, "This hosted demo accepts requests up to 4 MB. Use a smaller file or design and try again.");
+  }
+}
+
 export interface CadProviderStatus {
   providerName: string;
   licenseStatus: "licensed" | "unlicensed" | "unknown";
@@ -93,6 +118,7 @@ async function request<T>(
   init: RequestInit = {},
   opts: { skipCsrf?: boolean } = {},
 ): Promise<T> {
+  assertHostedRequestSize(init.body, init.method || "GET", import.meta.env?.VITE_HOSTING_MODE);
   const headers: Record<string, string> = {
     ...((init.headers as Record<string, string>) || {}),
   };

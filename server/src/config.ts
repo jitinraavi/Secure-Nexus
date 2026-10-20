@@ -5,6 +5,7 @@ import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { readMailConfiguration } from "./mailConfig.js";
+import { readServerlessMode } from "./serverlessRuntime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = path.resolve(__dirname, "..");
@@ -21,6 +22,7 @@ if (!["development", "test", "production"].includes(NODE_ENV)) {
   throw new Error("NODE_ENV must be development, test or production");
 }
 export const IS_PROD = NODE_ENV === "production";
+export const SERVERLESS = readServerlessMode(process.env);
 
 export function isLoopbackAddress(address: string | undefined): boolean {
   if (!address) return false;
