@@ -8,7 +8,7 @@ personal non-commercial demo. Vercel Hobby does not permit commercial use; see
 ## Runtime and project configuration
 
 Import the repository root, select Node 22 and use the checked-in `vercel.json`.
-The install command is `npm ci`, the build command is `npm run build`, and the
+The install command is `npm ci --include=dev`, the build command is `npm run build`, and the
 output directory is `client/dist`. The function runs in `iad1`, close to the
 existing North Virginia Supabase database. It exports the Express handler without
 starting a port listener, native worker, database backup scheduler or periodic
