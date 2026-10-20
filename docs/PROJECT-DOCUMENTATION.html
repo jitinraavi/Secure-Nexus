@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Groundwork product overview, competitor positioning and verified technical stack.">
+  <meta name="color-scheme" content="light">
+  <title>Groundwork Project Documentation</title>
+  <style>
+    :root { --paper:#fffdf8; --ink:#20211f; --muted:#5d5d56; --line:#d9d9d9; --copper:#804c31; --wash:#f5f3ee; --rail:252px; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; scroll-padding-top:32px; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.7 Arial, Helvetica, sans-serif; }
+    a { color:var(--copper); text-underline-offset:3px; overflow-wrap:anywhere; }
+    a:hover { color:#542d1b; }
+    a:focus-visible, button:focus-visible, .table-scroll:focus-visible { outline:2px solid var(--copper); outline-offset:5px; }
+    .skip { position:absolute; left:16px; top:-80px; z-index:3; background:white; padding:10px 16px; }
+    .skip:focus { top:16px; }
+    .rail { width:var(--rail); height:100vh; position:fixed; inset:0 auto 0 0; padding:40px 24px 24px 30px; border-right:1px solid var(--line); background:var(--wash); overflow-y:auto; }
+    .brand { font-size:13px; letter-spacing:2.7px; font-weight:700; color:#000; }
+    .rail-label { margin:12px 0 28px; color:var(--muted); font-size:12px; line-height:1.6; }
+    nav { display:grid; gap:7px; }
+    nav a { color:var(--muted); text-decoration:none; font-size:13px; line-height:1.5; padding:8px 0; }
+    nav a:hover { color:#000; }
+    .tools { display:grid; gap:12px; margin-top:30px; font-size:12px; }
+    button { border:1px solid var(--line); padding:10px 14px; font:inherit; color:var(--ink); background:var(--paper); cursor:pointer; text-align:left; border-radius:2px; }
+    .rail-footer { margin-top:26px; font-size:11px; color:var(--muted); line-height:1.6; }
+    main { margin-left:var(--rail); padding:64px max(40px, calc((100vw - var(--rail) - 900px) / 2)) 100px; max-width:1600px; }
+    article { max-width:900px; margin:0 auto; }
+    h1,h2,h3 { color:#000; font-weight:400; }
+    h1 { font:400 clamp(38px, 4.3vw, 62px)/1.08 Georgia, 'Times New Roman', serif; max-width:760px; margin:0 0 24px; letter-spacing:-1.7px; }
+    h2 { font:400 34px/1.2 Georgia, 'Times New Roman', serif; margin:70px 0 26px; letter-spacing:-0.6px; }
+    h3 { font-size:19px; line-height:1.35; margin:32px 0 12px; font-weight:600; }
+    h1 + p { color:#000; font-size:19px; line-height:1.5; max-width:640px; margin-bottom:12px; }
+    h1 + p + p { color:var(--muted); font-size:12px; margin:0 0 30px; letter-spacing:.2px; }
+    h1 + p + p strong { font-weight:400; }
+    p { margin:0 0 18px; }
+    p,li { overflow-wrap:break-word; }
+    ol,ul { padding-left:24px; margin:16px 0 24px; }
+    li { margin:0 0 9px; padding-left:5px; }
+    strong { font-weight:600; }
+    code { font:0.88em/1.5 'Courier New', monospace; overflow-wrap:anywhere; }
+    pre { background:var(--wash); border:1px solid var(--line); padding:20px 22px; line-height:1.7; overflow:auto; margin:24px 0; font-size:13px; }
+    pre code { font-size:inherit; overflow-wrap:normal; white-space:pre; }
+    .table-scroll { margin:20px 0 28px; overflow:auto; border:1px solid var(--line); border-radius:2px; }
+    table { width:100%; border-collapse:collapse; font-size:14px; line-height:1.6; }
+    th,td { border-right:1px solid var(--line); border-bottom:1px solid var(--line); padding:13px 15px; vertical-align:middle; text-align:left; overflow-wrap:anywhere; }
+    th { font-weight:600; color:#fff; background:#353934; }
+    td:first-child { min-width:150px; width:23%; }
+    th:last-child,td:last-child { border-right:0; }
+    tbody tr:last-child td { border-bottom:0; }
+    tbody tr:nth-child(even) { background:#f5f4ef; }
+    th:first-child:nth-last-child(3), th:first-child:nth-last-child(3) ~ th { width:33.333%; }
+    th:first-child:nth-last-child(3):not(:only-child) { width:24%; }
+    tbody td:nth-child(2):nth-last-child(2) { min-width:100px; }
+    .stack th:first-child { width:28% !important; }
+    .stack th:nth-child(2) { width:18% !important; }
+    .stack th:nth-child(3) { width:54% !important; }
+    .end { margin-top:60px; color:var(--muted); font-size:12px; }
+    @media(max-width:1100px) { :root { --rail:218px; } .rail { padding:30px 20px; } main { padding:44px 34px 80px; } }
+    @media(max-width:780px) {
+      .rail { position:static; width:auto; height:auto; padding:24px; border-right:0; border-bottom:1px solid var(--line); }
+      .rail-label { margin:6px 0 18px; }
+      nav { grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px 18px; }
+      nav a { font-size:12px; padding:5px 0; }
+      .tools { display:flex; flex-wrap:wrap; align-items:center; gap:18px; margin-top:20px; }
+      .rail-footer { display:none; }
+      main { margin:0; padding:40px 24px 64px; }
+      h1 { font-size:42px; letter-spacing:-1px; }
+      h2 { font-size:29px; margin-top:52px; }
+      h3 { font-size:18px; }
+      h1 + p { font-size:18px; }
+      body { font-size:15px; }
+      table { min-width:610px; }
+      pre { font-size:11px; padding:16px; }
+    }
+    @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+    @media print {
+      @page { size:letter; margin:.7in .7in .75in; }
+      body { background:white; font-size:10.5pt; line-height:1.48; color:#000; }
+      .rail,.skip,.end { display:none; }
+      main { margin:0; padding:0; max-width:none; }
+      article { max-width:none; }
+      h1 { font-size:32pt; letter-spacing:-.7pt; margin-bottom:16pt; }
+      h1 + p { font-size:14pt; }
+      h1 + p + p { font-size:9pt; margin-bottom:20pt; }
+      h2 { font-size:21pt; margin:26pt 0 13pt; break-after:avoid; }
+      h3 { font-size:13pt; margin:18pt 0 8pt; break-after:avoid; }
+      p { margin-bottom:10pt; orphans:3; widows:3; }
+      li { margin-bottom:5pt; }
+      a { color:#000; }
+      .table-scroll { overflow:visible; border:0; margin:12pt 0 18pt; }
+      table { min-width:0; font-size:9pt; line-height:1.4; }
+      td,th { padding:8pt 9pt; border:1px solid #d9d9d9; }
+      td:first-child { min-width:0; }
+      tbody td:nth-child(2):nth-last-child(2) { min-width:0; }
+      th { color:#000; background:#ecece8; }
+      tr { break-inside:avoid; }
+      thead { display:table-header-group; }
+      pre { font-size:8.5pt; line-height:1.5; padding:12pt; white-space:pre-wrap; break-inside:avoid; }
+      pre code { white-space:pre-wrap; }
+      * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#document">Skip to documentation</a>
+  <aside class="rail" aria-label="Document navigation">
+    <div class="brand">GROUNDWORK</div>
+    <p class="rail-label">Project documentation<br>Version 1.0 · October 2026</p>
+    <nav aria-label="Contents"><a href="#section-1-what-groundwork-is">1 What Groundwork is</a>
+<a href="#section-2-what-differentiates-groundwork">2 What differentiates Groundwork</a>
+<a href="#section-3-technical-architecture">3 Technical architecture</a>
+<a href="#section-4-frontend-and-visualization-stack">4 Frontend and visualization stack</a>
+<a href="#section-5-backend-and-security-stack">5 Backend and security stack</a>
+<a href="#section-6-integrations-and-custom-modules">6 Integrations and custom modules</a>
+<a href="#section-7-development-testing-and-deployment-tools">7 Development testing and deployment tools</a>
+<a href="#section-8-current-environment-and-source-guide">8 Current environment and source guide</a></nav>
+    <div class="tools"><button id="print-document" type="button">Print or save as PDF</button><a href="PROJECT-DOCUMENTATION.md" download>Markdown source</a></div>
+    <p class="rail-footer">Product overview<br>Competitive positioning<br>Technical architecture</p>
+  </aside>
+  <main id="document"><article><h1 id="section-groundwork-project-documentation">Groundwork Project Documentation</h1>
+<p>Product overview, competitive positioning and technical stack</p>
+<p><strong>Version 1.0 · 20 October 2026</strong></p>
+<p>Groundwork is a browser based design and project workspace for interior designers, architects and site engineers. It combines a public architecture studio website with a private application for creating spatial designs, reviewing technical studies and managing project information. This document gives product stakeholders and developers a shared explanation of what the application does, how it is positioned and how it is built.</p>
+<h2 id="section-1-what-groundwork-is">1 What Groundwork is</h2>
+<h3 id="section-purpose-and-intended-users">Purpose and intended users</h3>
+<p>Groundwork helps a design team move from an initial room or site concept to a saved, reviewable project. Users can work with dimensions, furniture, finishes and site layouts in a 3D browser interface, then retain revisions, exchange files and coordinate with other people who have permission to access the project.</p>
+<p>Interior designers can explore room layouts and material choices. Architects can develop spatial and community concepts and prepare model handoffs. Site engineers can organize site context, review bounded infrastructure and engineering studies, and retain the inputs and outputs behind those studies. Project owners and reviewers can inspect shared designs without receiving unrestricted editing rights.</p>
+<p>Groundwork has two connected experiences. The <strong>public studio</strong> presents the brand, services, illustrative projects and design process. The <strong>authenticated workspace</strong> holds account and project tools. Both are built together and served from the same application origin.</p>
+<h3 id="section-main-capabilities">Main capabilities</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Area, What users can do table"><table class="comparison"><thead><tr><th scope="col">Area</th><th scope="col">What users can do</th></tr></thead><tbody><tr><td>Studio website</td><td>Explore a scroll driven Three.js point-scan city, services layouts, an eight-item project carousel and a staged 3D process scene. Motion controls, reduced motion and WebGL fallbacks support different devices and preferences.</td></tr>
+<tr><td>Account access</td><td>Register, sign in, use email login codes, enable authenticator based TOTP MFA, manage settings and review account activity.</td></tr>
+<tr><td>Project library</td><td>Create and organize projects, use templates, duplicate or archive work, and reopen saved designs and revisions.</td></tr>
+<tr><td>Interior workspace</td><td>Model rooms, place and transform furniture, change finishes and colors, work with walls and floors, and inspect orbit or walkthrough views. An imported room photograph can serve as a modeling backdrop.</td></tr>
+<tr><td>Site planning</td><td>Develop community and infrastructure concepts, use optional Google Maps site context and review planning geometry and quantities.</td></tr>
+<tr><td>Technical workspaces</td><td>Save geometry, engineering and exchange studies alongside project records, with source revisions and related artifacts.</td></tr>
+<tr><td>Coordination</td><td>Assign project access, exchange comments and issues, inspect snapshots, receive change notifications and create expiring read-only share links.</td></tr>
+<tr><td>Handoff</td><td>Export DXF drawings, OBJ and MTL scenes, GLB models and CSV quantities. Additional workbenches cover declared IFC, IDS, BCF, survey and civil exchange subsets.</td></tr></tbody></table></div>
+<h3 id="section-typical-project-workflow">Typical project workflow</h3>
+<ol>
+<li>Open the studio and enter the application through sign-in or registration.</li>
+<li>Create a room, community or infrastructure project and establish dimensions and site context.</li>
+<li>Develop the design in the browser, then save it to the project record.</li>
+<li>Review geometry, exchange or engineering studies where they apply. Retain the study inputs, source revision and output artifacts.</li>
+<li>Invite permitted collaborators or issue a read-only share link. Resolve stale save conflicts before replacing newer work.</li>
+<li>Export models, drawings or quantities for review and further work in specialist tools.</li>
+</ol>
+<h3 id="section-scope-and-product-boundaries">Scope and product boundaries</h3>
+<p>The core product is an integrated planning and coordination environment. Engineering modules implement bounded structural and MEP calculations, including selected India and US standards checks. Their applicability and input limits matter; they do not establish complete code compliance or independently certified engineering results. IFC and civil tools support stated subsets rather than unrestricted round trips through every authoring system.</p>
+<p>A room photograph is a backdrop for modeling, rather than an automatic, dimensionally accurate 3D reconstruction. The public portfolio contains illustrative concept content with credited third-party photography; it should be replaced with verified studio projects before commercial publication. The newsletter requires a real subscription backend before it can accept signups.</p>
+<h2 id="section-2-what-differentiates-groundwork">2 What differentiates Groundwork</h2>
+<h3 id="section-a-shared-workspace-across-related-design-tasks">A shared workspace across related design tasks</h3>
+<p>Groundwork brings room interiors, community and infrastructure concepts, geometry review and bounded technical studies into one application. Shared account and project records let a team move between these tasks without creating a separate project identity for each tool. This integration is the central product emphasis.</p>
+<h3 id="section-technical-results-retain-their-project-context">Technical results retain their project context</h3>
+<p>Engineering, geometry and exchange workspaces can retain saved revisions, original artifacts and links to source design revisions. Users can distinguish a result generated for an older design from one linked to the current project state. This makes the relationship between a design and its supporting study visible during review.</p>
+<h3 id="section-file-handoff-is-part-of-the-workflow">File handoff is part of the workflow</h3>
+<p>DXF, OBJ and MTL, GLB and CSV outputs help users continue work outside Groundwork. Bounded IFC, IDS, BCF and civil exchange tools extend that handoff. Unsupported representations and approximation limits must remain visible so a downstream specialist can decide what to reuse or rebuild.</p>
+<h3 id="section-collaboration-includes-conflict-and-recovery-decisions">Collaboration includes conflict and recovery decisions</h3>
+<p>The server checks access and revision numbers before accepting project changes. A stale write returns a conflict instead of silently replacing newer work. Server-Sent Events distribute project metadata updates, while comments, issues and shares support review. Browser drafts and recovery exports help preserve interrupted work; this is bounded recovery and synchronization, rather than unrestricted simultaneous editing of every model element.</p>
+<h3 id="section-the-studio-identity-continues-into-the-application">The studio identity continues into the application</h3>
+<p>The public site and authentication pages share an architectural point-scan visual language, an ivory, ink and copper palette, and locally hosted typography. The public scroll narrative introduces the studio; the private workspace supports practical design work. Both use a common build and deployment structure.</p>
+<h3 id="section-position-relative-to-representative-competitors">Position relative to representative competitors</h3>
+<p>These distinctions describe Groundwork&#39;s implementation and intended workflow. They are positioning judgments, not proof that its individual features are exclusive or that it outperforms competitors. The comparison covers representative product roles rather than every feature or subscription plan.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Product, Officially documented focus, Groundwork positioning table"><table class="comparison"><thead><tr><th scope="col">Product</th><th scope="col">Officially documented focus</th><th scope="col">Groundwork positioning</th></tr></thead><tbody><tr><td>SketchUp for Web</td><td>Browser 3D modeling, Trimble Connect file management and collaboration tools.</td><td>Groundwork emphasizes shared project records spanning interiors, site concepts and bounded technical workspaces. Browser modeling and collaboration alone are not exclusive advantages.</td></tr>
+<tr><td>Autodesk Revit</td><td>BIM design and documentation with model relationships, drawings and schedules.</td><td>Groundwork emphasizes browser access and concept-to-study coordination. Its bounded BIM and engineering modules should be assessed alongside specialist authoring tools; equivalence to Revit is not established.</td></tr>
+<tr><td>Foyr Neo</td><td>Interior space planning, furniture placement, 3D visualization and cloud rendering.</td><td>Groundwork combines interior design with broader site and technical workspaces. Its optional AI image adapter is prompt based; faithful geometry-preserving rendering and parity with Foyr&#39;s catalog are not established.</td></tr></tbody></table></div>
+<p>Sources: <a href="https://help.sketchup.com/en/sketchup-web/sketchup-web">SketchUp for Web documentation</a>, <a href="https://help.autodesk.com/cloudhelp/2026/ENU/Revit-GetStarted/files/GUID-03565843-BB48-4707-B54C-39D6E8E51880.htm">Revit Fundamentals</a>, and <a href="https://foyr.com/neo-interior-design-software/">Foyr Neo product documentation</a>, accessed 20 October 2026.</p>
+<p>The strongest defensible description is <strong>a browser design workspace that keeps spatial concepts, technical studies and project coordination together</strong>. Claims about lower cost, superior numerical accuracy, faster performance or stronger security require separate evidence.</p>
+<h2 id="section-3-technical-architecture">3 Technical architecture</h2>
+<h3 id="section-application-structure">Application structure</h3>
+<p>The repository is an npm workspace monorepo with a <code>client</code> and a <code>server</code>. Vite produces two HTML entry points. <code>/</code> serves the vanilla JavaScript studio document; application routes such as <code>/login</code>, <code>/dashboard</code> and <code>/editor/:id</code> serve the React document. React Router manages navigation inside the authenticated application.</p>
+<p>The Express backend exposes <code>/api</code> endpoints and serves the built frontend in the production recipe. During development, Vite proxies API requests to the backend. The browser communicates with the backend rather than connecting directly to the project database.</p>
+<pre><code class="language-text">Browser
+  Public studio       HTML + modular CSS + JavaScript + Three.js
+  Private workspace   React + TypeScript + Three.js
+          |
+          | same-origin HTTP API and Server-Sent Events
+          v
+Node.js and Express authority
+  Authentication, permissions, validation, encryption and project services
+          |
+          | pg connection pool with certificate-validated TLS
+          v
+Supabase PostgreSQL
+  Private groundwork schema and restricted backend runtime role
+
+Local browser storage   IndexedDB drafts and bounded public shell cache
+Optional services       Maps, mail, payments, AI, OIDC and Redis REST
+</code></pre>
+<h3 id="section-database-and-storage-design">Database and storage design</h3>
+<p>The current cloud database is <strong>Supabase PostgreSQL 17</strong>, in the US East North Virginia region. It contains a private <code>groundwork</code> schema with 37 application tables plus a migration ledger. Connections use the IPv4 session pooler with certificate validation. A restricted runtime role performs application operations; migrations use a separate elevated process.</p>
+<p>Row Level Security is enabled, and the private tables are not exposed to anonymous or ordinary Supabase browser roles. The backend runtime is trusted to access application records, so Express authorization checks remain responsible for user and organization isolation. This is a server mediated database design, rather than browser access through per-user Supabase Auth policies.</p>
+<p>SQLite remains an explicit local and test fallback through Node&#39;s built-in <code>node:sqlite</code> module. The shared asynchronous adapter exposes prepared queries, transactions and savepoints. PostgreSQL uses a connection pool, transaction ownership and commit hooks so notifications follow committed changes. Current write serialization favors correctness; large-scale write throughput still requires measurement and tuning.</p>
+<p>Project payloads and supported private artifacts are encrypted by the server before persistence. Browser drafts and recovery ZIP files can contain plaintext user data. The server encryption claim therefore does not extend to every copy of a design or to all database metadata.</p>
+<h2 id="section-4-frontend-and-visualization-stack">4 Frontend and visualization stack</h2>
+<p>Versions below are the resolved versions in <code>package-lock.json</code> for the relevant workspace on 20 October 2026. They describe this application, not the newest available releases. Transitive dependencies are retained in the lockfile rather than repeated here.</p>
+<h3 id="section-languages-and-production-dependencies">Languages and production dependencies</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Technology, Version, Role table"><table class="stack"><thead><tr><th scope="col">Technology</th><th scope="col">Version</th><th scope="col">Role</th></tr></thead><tbody><tr><td>HTML5 and modern CSS</td><td>Web platform</td><td>Studio markup, responsive layout, custom properties, fluid sizing, component styles and motion preferences.</td></tr>
+<tr><td>JavaScript ES modules</td><td>Web platform</td><td>Public studio behavior, scroll stages, gallery and Three.js scene lifecycle.</td></tr>
+<tr><td>TypeScript</td><td>5.7.3</td><td>Typed application, backend, shared data contracts and technical modules.</td></tr>
+<tr><td>React</td><td>18.3.1</td><td>Authenticated application components and stateful user interfaces.</td></tr>
+<tr><td>React DOM</td><td>18.3.1</td><td>React rendering in the browser.</td></tr>
+<tr><td>React Router DOM</td><td>7.18.4</td><td>Application routes, protected screens and share-link navigation.</td></tr>
+<tr><td>Three.js</td><td>0.172.0</td><td>WebGL scenes, cameras, geometry, materials, interaction and model export support.</td></tr>
+<tr><td>JSZip</td><td>3.10.2</td><td>ZIP packages for model handoff and recovery workflows.</td></tr></tbody></table></div>
+<h3 id="section-styling-and-frontend-build-tools">Styling and frontend build tools</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Tool, Version, Role table"><table class="stack"><thead><tr><th scope="col">Tool</th><th scope="col">Version</th><th scope="col">Role</th></tr></thead><tbody><tr><td>Vite</td><td>8.3.4</td><td>Development server and production build with separate studio and workspace entries.</td></tr>
+<tr><td>React Vite plugin</td><td>6.1.2</td><td>React build integration and development refresh.</td></tr>
+<tr><td>Tailwind CSS</td><td>4.3.3</td><td>Utility styling in the authenticated application.</td></tr>
+<tr><td>Tailwind Vite plugin</td><td>4.3.3</td><td>Tailwind build integration.</td></tr>
+<tr><td>Modular studio CSS</td><td>In repository</td><td>Tokens and styles divided by page area. Central tokens live in <code>client/studio/styles/tokens.css</code>.</td></tr>
+<tr><td>DM Sans and Instrument Serif</td><td>Local font assets</td><td>Studio and authentication typography, with font licenses recorded alongside assets.</td></tr></tbody></table></div>
+<p>The application invokes Three.js directly; it does not depend on React Three Fiber. Studio animation is implemented in repository code rather than an installed GSAP or smooth-scroll package. The client workspace resolves Vite 8.3.4 even though the lockfile also retains a root-level Vite 6 dependency for another tool.</p>
+<h3 id="section-browser-platform-features">Browser platform features</h3>
+<p>WebGL supports the 3D viewports. Animation frames, intersection and resize observers coordinate rendering and layout. Web Workers isolate selected parsing and computational tasks. IndexedDB stores local drafts and recovery state. Service Workers and Cache Storage provide a bounded, build-fingerprinted public application shell; they do not cache private API responses as a general offline database.</p>
+<p>Fetch handles HTTP requests and streaming HTTP supports event delivery. File and Blob APIs support imports and downloads. Camera and media APIs support permitted capture and presentation features where available. Browser and device support still determine availability; WebXR controls do not establish verified compatibility with every headset or phone.</p>
+<h2 id="section-5-backend-and-security-stack">5 Backend and security stack</h2>
+<h3 id="section-runtime-and-production-dependencies">Runtime and production dependencies</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Technology, Version, Role table"><table class="stack"><thead><tr><th scope="col">Technology</th><th scope="col">Version</th><th scope="col">Role</th></tr></thead><tbody><tr><td>Node.js</td><td>Minimum 22.12.0</td><td>Server runtime; Node 22 is selected in deployment recipes. Supplies crypto, HTTP fetch, file, stream, worker and SQLite APIs.</td></tr>
+<tr><td>Express</td><td>4.22.3</td><td>HTTP application, routes, middleware and frontend serving.</td></tr>
+<tr><td>pg</td><td>8.23.1</td><td>PostgreSQL connection pooling, parameterized queries and transactions.</td></tr>
+<tr><td>Zod</td><td>3.25.76</td><td>Validation of API input and structured provider output.</td></tr>
+<tr><td>cookie-parser</td><td>1.4.7</td><td>Cookie parsing for server session flows.</td></tr>
+<tr><td>express-rate-limit</td><td>7.5.1</td><td>Request throttling in addition to persistent account and provider limits.</td></tr>
+<tr><td>Helmet</td><td>8.3.0</td><td>Security response headers and Content Security Policy configuration.</td></tr>
+<tr><td>Multer</td><td>2.4.0</td><td>Bounded multipart upload parsing with application validation.</td></tr>
+<tr><td>Nodemailer</td><td>10.0.16</td><td>SMTP mail transport, including Gmail with a Google app password.</td></tr>
+<tr><td>qrcode</td><td>1.5.4</td><td>Authenticator enrollment QR images.</td></tr>
+<tr><td>dotenv</td><td>16.6.1</td><td>Private server environment configuration in local workflows.</td></tr></tbody></table></div>
+<h3 id="section-authentication-and-data-protection">Authentication and data protection</h3>
+<p>Authentication belongs to the Express application. It uses random opaque session tokens stored as hashes in the database; this is not a browser JWT session design. Production session cookies use HttpOnly, Secure and SameSite settings. Credential changes and revocation invalidate affected sessions. Email login codes and optional authenticator based TOTP are implemented with expiry, attempt limits and replay controls.</p>
+<p>Node&#39;s built-in crypto module supplies scrypt password hashing with random per-user salts, AES-256-GCM encryption and HKDF key derivation. The server holds the master key, so this is application-layer encryption at rest rather than end-to-end encryption against the server operator. The matching key must be preserved with backups and releases.</p>
+<p>Server middleware and services enforce CSRF protection, permission checks, upload and payload limits, account lockout controls and provider resource budgets. Audit records track supported account and project activity. These controls are implemented in code; they are not a security certification or a guarantee that no vulnerability can exist. Operational alerting, retention and incident response need deployment configuration.</p>
+<h2 id="section-6-integrations-and-custom-modules">6 Integrations and custom modules</h2>
+<h3 id="section-external-service-integrations">External service integrations</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Service, Implementation and current role table"><table class="comparison"><thead><tr><th scope="col">Service</th><th scope="col">Implementation and current role</th></tr></thead><tbody><tr><td>Supabase</td><td>Active hosted PostgreSQL database. Access uses <code>pg</code>; Supabase Auth, Storage, Realtime and Edge Functions are not the application&#39;s replacement services.</td></tr>
+<tr><td>Gmail SMTP</td><td>Current outgoing mail configuration. SMTP authentication was verified; successful connection alone does not prove inbox delivery. Other SMTP providers and a Resend HTTP adapter are also supported in code.</td></tr>
+<tr><td>Google Maps JavaScript API</td><td>Optional site lookup and map context. Requires an owner-provided browser key with suitable restrictions.</td></tr>
+<tr><td>OpenAI compatible API</td><td>Optional server-side design assistant. Returns a validated proposal for supported actions; the plan endpoint does not directly mutate the project. Requires provider configuration.</td></tr>
+<tr><td>Google Gemini and Imagen</td><td>Optional prompt-based image-generation adapter with project revision and source artifact provenance. The current adapter sends the prompt rather than the source image to the provider. Live API compatibility requires provider testing.</td></tr>
+<tr><td>Razorpay</td><td>Optional live payment-link and verification flow, including supported organization seat terms. Requires merchant credentials and signed webhook configuration.</td></tr>
+<tr><td>PayPal</td><td>Optional personal checkout and capture flow. Requires merchant configuration; it is not the organization seat billing provider.</td></tr>
+<tr><td>Redis REST</td><td>Optional shared coordination events and presence transport for configured deployments. It is accessed through HTTP rather than an installed Redis client library.</td></tr>
+<tr><td>OIDC identity providers</td><td>Optional organization sign-in integration with an allowlisted provider configuration. SAML requires an OIDC broker rather than a native SAML adapter.</td></tr>
+<tr><td>External native tools</td><td>Fixed conversion and analysis adapters. Execution is disabled by default and unavailable in the current Windows runtime; compatible tools and isolated Linux operation require separate provisioning and acceptance.</td></tr></tbody></table></div>
+<p>Provider integrations use existing HTTP or SMTP facilities; the presence of an adapter does not mean a paid service is provisioned or active. Demo render output is a procedural test image and should not be presented as an AI render.</p>
+<h3 id="section-modules-developed-inside-the-repository">Modules developed inside the repository</h3>
+<p>Groundwork includes its own TypeScript modules for room and site geometry, catalog data, design merging, revision handling, quantities, DXF and OBJ output, BIM and IFC subsets, IDS validation, BCF coordination, survey import, terrain and civil alignments. Geometry streaming, triangle clash checks and progressive path tracing also live in repository code.</p>
+<p>Engineering workbenches contain bounded structural, electrical, hydraulic and HVAC calculations, including linear frame models and selected standards checks. These are application modules, not installed commercial solvers. Full IFC coverage, comprehensive national-code design, validated production drawing scale and arbitrary proprietary model conversion are outside the established capability. Native tool contracts do not establish a working native execution service.</p>
+<h2 id="section-7-development-testing-and-deployment-tools">7 Development testing and deployment tools</h2>
+<h3 id="section-development-dependency-inventory">Development dependency inventory</h3>
+<p>All directly declared development dependencies are accounted for below, including type packages that do not ship as browser or server features.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Dependency, Resolved version, Role table"><table class="stack"><thead><tr><th scope="col">Dependency</th><th scope="col">Resolved version</th><th scope="col">Role</th></tr></thead><tbody><tr><td>TypeScript</td><td>5.7.3</td><td>Client and server compilation and type checks.</td></tr>
+<tr><td>tsx</td><td>4.23.15</td><td>TypeScript development and test execution.</td></tr>
+<tr><td>concurrently</td><td>9.2.5</td><td>Starts the client and server development commands together.</td></tr>
+<tr><td>Supabase CLI</td><td>2.121.0</td><td>Supabase development and database tooling.</td></tr>
+<tr><td>PGlite</td><td>0.5.10</td><td>Local PostgreSQL integration test environment.</td></tr>
+<tr><td>Vite and React plugin</td><td>8.3.4 and 6.1.2</td><td>Frontend build tools described in Section 4.</td></tr>
+<tr><td>Tailwind and Vite plugin</td><td>4.3.3 and 4.3.3</td><td>Frontend CSS build tools described in Section 4.</td></tr>
+<tr><td>React and React DOM types</td><td>18.3.31 and 18.3.7</td><td>Type definitions for UI components and rendering.</td></tr>
+<tr><td>Three.js types</td><td>0.172.0</td><td>Type definitions for Three.js.</td></tr>
+<tr><td>Google Maps types</td><td>3.66.5</td><td>Browser map API type definitions.</td></tr>
+<tr><td>Node.js types</td><td>22.20.5</td><td>Runtime type definitions.</td></tr>
+<tr><td>Express types</td><td>4.17.25</td><td>HTTP framework type definitions.</td></tr>
+<tr><td>Cookie parser types</td><td>1.4.10</td><td>Cookie middleware type definitions.</td></tr>
+<tr><td>Multer types</td><td>2.3.0</td><td>Upload middleware type definitions.</td></tr>
+<tr><td>Nodemailer types</td><td>8.0.2</td><td>Mail transport type definitions.</td></tr>
+<tr><td>pg types</td><td>8.23.1</td><td>PostgreSQL client type definitions.</td></tr>
+<tr><td>QR code types</td><td>1.5.6</td><td>QR generation type definitions.</td></tr></tbody></table></div>
+<h3 id="section-verification-and-delivery">Verification and delivery</h3>
+<p>The Node built-in test runner executes server, browser-storage security and studio unit checks. PGlite supports PostgreSQL flow checks without a hosted test database. Browser smoke checks have also used Playwright as a QA tool; Playwright is not a declared application dependency. Passing tests verify the exercised behavior, rather than proving every engineering calculation, provider integration or production load scenario.</p>
+<p>GitHub Actions runs repository CI. Docker uses a multi-stage Node 22 Debian Bookworm slim image, compiles both workspaces and runs the final application as an unprivileged user. Docker Compose and a Render blueprint provide deployment recipes. Production preflight scripts check required configuration and built entry points. Production frontend source maps are disabled.</p>
+<p>The complete application requires a running backend. A static host can serve frontend assets only when API routing and the authoritative backend are separately provided. HTTPS, stable encryption keys, private database and provider credentials, persistent scratch storage where needed, backup restoration and monitoring remain deployment responsibilities.</p>
+<h3 id="section-local-commands">Local commands</h3>
+<p>From the repository root, use Node 22.12.0 or newer and the checked-in lockfile. Configure private environment files from the examples before using account, mail or database workflows.</p>
+<pre><code class="language-sh">npm ci
+npm run dev
+</code></pre>
+<p>Useful verification and production commands are:</p>
+<pre><code class="language-sh">npm run lint
+npm test
+npm run test:postgres-flow
+npm run build
+npm run check:build
+npm start
+</code></pre>
+<p>Database migrations and imports are explicit operations. Follow the Supabase runbook rather than running them against an existing database without checking the target and backup. See the <a href="DEPLOYMENT.md">deployment guide</a>, <a href="SUPABASE.md">Supabase guide</a> and <a href="GMAIL-OTP.md">Gmail OTP guide</a> for environment-specific instructions. Never put secrets in browser-visible <code>VITE_</code> variables or in documentation.</p>
+<h2 id="section-8-current-environment-and-source-guide">8 Current environment and source guide</h2>
+<h3 id="section-environment-status-on-20-october-2026">Environment status on 20 October 2026</h3>
+<p>The local application has been connected to Supabase PostgreSQL and existing records migrated with their identifiers and encrypted values preserved. A SQLite backup was retained. The latest database cutover verification covered login, encrypted project save and reload, session use and logout, with temporary test data removed afterward. The associated backend suite passed 105 tests and the production build passed.</p>
+<p>The frontend and API remain local development services; a public application deployment has not been completed. Automatic cloud backups still need configuration. Provider-specific live acceptance, full numerical engineering validation and disabled native execution remain separate work. These status statements describe the recorded environment and checks on this date, rather than a continuing uptime or security guarantee.</p>
+<h3 id="section-where-the-implementation-lives">Where the implementation lives</h3>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Repository area, Responsibility table"><table class="comparison"><thead><tr><th scope="col">Repository area</th><th scope="col">Responsibility</th></tr></thead><tbody><tr><td><code>client/studio.html</code> and <code>client/studio/</code></td><td>Public site content, scenes, tokens, interactions and component styles.</td></tr>
+<tr><td><code>client/src/App.tsx</code> and <code>client/src/pages/</code></td><td>React routes, dashboard, editors, technical workbenches and account screens.</td></tr>
+<tr><td><code>client/src/editor/</code> and <code>client/src/lib/</code></td><td>Three.js editing, domain modules, exchange, computation and browser persistence.</td></tr>
+<tr><td><code>client/build/</code> and <code>client/public/sw.js</code></td><td>Build inventory and offline shell behavior.</td></tr>
+<tr><td><code>server/src/routes/</code></td><td>HTTP endpoints for authentication, projects, collaboration, workspaces and integrations.</td></tr>
+<tr><td><code>server/src/security.ts</code> and <code>server/src/crypto.ts</code></td><td>Sessions, CSRF, throttling and encryption primitives.</td></tr>
+<tr><td><code>server/src/db.ts</code> and database adapters</td><td>Database abstraction, transaction ownership and PostgreSQL or SQLite selection.</td></tr>
+<tr><td><code>server/supabase/migrations/</code> and <code>server/certs/</code></td><td>Explicit schema migrations and the public certificate trust material.</td></tr>
+<tr><td><code>server/test/</code>, <code>client/test/</code> and <code>scripts/</code></td><td>Automated tests, mail setup, deployment checks and database verification tooling.</td></tr>
+<tr><td><code>Dockerfile</code>, <code>docker-compose.yml</code>, <code>render.yaml</code> and <code>.github/workflows/</code></td><td>Container, local orchestration, hosting blueprint and CI configuration.</td></tr>
+<tr><td>Workspace manifests and <code>package-lock.json</code></td><td>Authoritative direct dependency declarations and resolved dependency graph.</td></tr></tbody></table></div>
+<p>Further detail is available in the <a href="STUDIO.md">studio guide</a>, <a href="PHASE-1-PROJECT-WORKSPACES.md">technical workspace guide</a>, <a href="ADVANCED-ENGINEERING.md">engineering guide</a>, <a href="FRAME-3D-ANALYSIS.md">3D frame scope</a>, <a href="ADVANCED-BIM-CIVIL.md">BIM and civil guide</a>, <a href="PHASE-8-OFFLINE-PWA.md">offline shell guide</a> and <a href="PHASE-2-NATIVE-CONTRACTS.md">native execution boundaries</a>. Older specifications describe earlier plans and should be read alongside current code and manifests.</p>
+<p class="end">Groundwork project documentation · Version 1.0 · 20 October 2026</p></article></main>
+  <script>document.getElementById('print-document').addEventListener('click', function () { window.print(); });</script>
+</body>
+</html>

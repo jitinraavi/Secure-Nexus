@@ -3,7 +3,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { db } from "./db.js";
-import { DATA_DIR } from "./config.js";
+import { DATA_DIR, DATABASE } from "./config.js";
 
 export const BACKUP_DIR = path.join(DATA_DIR, "backups");
 
@@ -27,13 +27,14 @@ export interface BackupMetadata {
 }
 
 /** Checkpoint pending WAL frames back into the main database page pool. */
-export function checkpointDatabase(mode: "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE" = "TRUNCATE"): {
+export async function checkpointDatabase(mode: "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE" = "TRUNCATE"): Promise<{
   busy: number;
   log: number;
   checkpointed: number;
-} {
+}> {
+  if (DATABASE.provider === "supabase") return { busy: 0, log: 0, checkpointed: 0 };
   const statement = db.prepare(`PRAGMA wal_checkpoint(${mode});`);
-  const row = statement.get() as { busy?: number; log?: number; checkpointed?: number } | undefined;
+  const row = await statement.get() as { busy?: number; log?: number; checkpointed?: number } | undefined;
   return {
     busy: row?.busy ?? 0,
     log: row?.log ?? 0,
@@ -59,8 +60,9 @@ export async function performDatabaseBackup(options?: {
   label?: string;
   pruneCount?: number;
 }): Promise<BackupResult> {
+  if (DATABASE.provider === "supabase") throw new Error("Use Supabase backup management for the hosted database");
   // Step 1: Flush WAL so changes are captured cleanly
-  checkpointDatabase("TRUNCATE");
+  await checkpointDatabase("TRUNCATE");
 
   const now = Date.now();
   const dateStr = new Date(now).toISOString().replace(/[:.]/g, "-");
@@ -70,7 +72,7 @@ export async function performDatabaseBackup(options?: {
 
   // Step 2: Atomic transactional VACUUM INTO
   const escapedPath = backupPath.replace(/'/g, "''");
-  db.exec(`VACUUM INTO '${escapedPath}';`);
+  await db.exec(`VACUUM INTO '${escapedPath}';`);
 
   // Step 3: Integrity verification
   const stat = await fsp.stat(backupPath);
@@ -139,16 +141,20 @@ export function startDatabaseScheduler(options?: {
   backupIntervalMs?: number;
   maxRetained?: number;
 }): () => void {
+  if (DATABASE.provider === "supabase") return () => {};
   const checkpointMs = options?.checkpointIntervalMs ?? 30 * 60 * 1000; // 30 minutes
   const backupMs = options?.backupIntervalMs ?? 12 * 60 * 60 * 1000; // 12 hours
   const maxRetained = options?.maxRetained ?? 14; // keep 14 backups (1 week of 12h backups)
 
   let lastBackup = Date.now();
+  let running = false;
 
   const timer = setInterval(async () => {
+    if (running) return;
+    running = true;
     try {
       // Periodic WAL truncate
-      checkpointDatabase("TRUNCATE");
+      await checkpointDatabase("TRUNCATE");
 
       // Check if scheduled backup is due
       if (Date.now() - lastBackup >= backupMs) {
@@ -157,8 +163,8 @@ export function startDatabaseScheduler(options?: {
         console.log(`[groundwork] Automated backup completed: ${result.backupFile} (${(result.sizeBytes / 1024).toFixed(1)} KB)`);
       }
     } catch (err) {
-      console.error("[groundwork] Scheduled database maintenance error:", err);
-    }
+      console.error("[groundwork] Scheduled database maintenance error", { type: err instanceof Error ? err.name : "UnknownError" });
+    } finally { running = false; }
   }, checkpointMs);
 
   if (typeof timer.unref === "function") {

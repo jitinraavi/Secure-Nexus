@@ -53,55 +53,55 @@ async function discovery(issuer: string): Promise<Discovery> {
   return { issuer, authorization_endpoint: authorization, token_endpoint: token, jwks_uri: jwks, authMethods };
 }
 const configSchema = z.object({ issuer: z.string().min(8).max(500), clientId: z.string().min(1).max(200), clientSecret: z.string().max(2000).optional(), enabled: z.boolean() }).strict();
-router.get("/:organizationId/config", requireSession, (req: AuthedRequest, res) => {
-  if (!organizationAdmin(req.params.organizationId, req.user!.id)) { res.status(403).json({ error: "Organization administrator access required" }); return; }
-  const row = db.prepare("SELECT issuer,client_id,redirect_uri,enabled,secret_encrypted FROM organization_sso WHERE organization_id=?").get(req.params.organizationId) as SsoRow | undefined;
+router.get("/:organizationId/config", requireSession, asyncHandler(async (req: AuthedRequest, res) => {
+  if (!(await organizationAdmin(req.params.organizationId, req.user!.id))) { res.status(403).json({ error: "Organization administrator access required" }); return; }
+  const row = (await db.prepare("SELECT issuer,client_id,redirect_uri,enabled,secret_encrypted FROM organization_sso WHERE organization_id=?").get(req.params.organizationId)) as SsoRow | undefined;
   res.json({ configuration: row ? { issuer: row.issuer, clientId: row.client_id, redirectUri: row.redirect_uri, enabled: Boolean(row.enabled), hasSecret: Boolean(row.secret_encrypted) } : null, nativeSaml: false, samlGateway: "Configure a SAML-to-OIDC identity broker as the OIDC issuer", configuredAllowedHosts: allowedHosts.size > 0 });
-});
+}));
 router.put("/:organizationId/config", requireSession, asyncHandler(async (req: AuthedRequest, res) => {
-  if (organizationRole(req.params.organizationId, req.user!.id) !== "owner") { res.status(403).json({ error: "Organization owner access required" }); return; }
+  if ((await organizationRole(req.params.organizationId, req.user!.id)) !== "owner") { res.status(403).json({ error: "Organization owner access required" }); return; }
   const parsed = configSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid SSO configuration" }); return; }
   let redirect: string;
   try { redirect = callbackUri(req.params.organizationId); if (parsed.data.enabled) await discovery(parsed.data.issuer); else trustedUrl(parsed.data.issuer); }
   catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : "Invalid SSO provider" }); return; }
-  const old = db.prepare("SELECT issuer,client_id,secret_encrypted FROM organization_sso WHERE organization_id=?").get(req.params.organizationId) as SsoRow | undefined;
+  const old = (await db.prepare("SELECT issuer,client_id,secret_encrypted FROM organization_sso WHERE organization_id=?").get(req.params.organizationId)) as SsoRow | undefined;
   // Do not carry a credential or old identity bindings across a provider change.
   const changedProvider = old && (old.issuer !== parsed.data.issuer || old.client_id !== parsed.data.clientId);
   const secret = parsed.data.clientSecret === undefined ? (changedProvider ? null : old?.secret_encrypted ?? null) : parsed.data.clientSecret ? seal(parsed.data.clientSecret, req.params.organizationId) : null;
-  const saved = withTransaction(() => {
-    if (organizationRole(req.params.organizationId, req.user!.id) !== "owner" || resolveSession(req)?.status !== "active") return false;
-    db.prepare(`INSERT INTO organization_sso (organization_id,issuer,client_id,secret_encrypted,redirect_uri,enabled,updated_at) VALUES (?,?,?,?,?,?,?)
+  const saved = (await withTransaction(async () => {
+    if ((await organizationRole(req.params.organizationId, req.user!.id)) !== "owner" || (await resolveSession(req))?.status !== "active") return false;
+    (await db.prepare(`INSERT INTO organization_sso (organization_id,issuer,client_id,secret_encrypted,redirect_uri,enabled,updated_at) VALUES (?,?,?,?,?,?,?)
       ON CONFLICT(organization_id) DO UPDATE SET issuer=excluded.issuer,client_id=excluded.client_id,secret_encrypted=excluded.secret_encrypted,redirect_uri=excluded.redirect_uri,enabled=excluded.enabled,configuration_revision=organization_sso.configuration_revision+1,updated_at=excluded.updated_at`)
-      .run(req.params.organizationId, parsed.data.issuer, parsed.data.clientId, secret, redirect, Number(parsed.data.enabled), now());
-    db.prepare("DELETE FROM organization_sso_flows WHERE organization_id=?").run(req.params.organizationId);
-    if (changedProvider) db.prepare("DELETE FROM organization_sso_identities WHERE organization_id=?").run(req.params.organizationId);
-    organizationAudit(req.params.organizationId, req.user!.id, "sso.configured", { issuer: parsed.data.issuer, enabled: parsed.data.enabled });
+      .run(req.params.organizationId, parsed.data.issuer, parsed.data.clientId, secret, redirect, Number(parsed.data.enabled), now()));
+    (await db.prepare("DELETE FROM organization_sso_flows WHERE organization_id=?").run(req.params.organizationId));
+    if (changedProvider) (await db.prepare("DELETE FROM organization_sso_identities WHERE organization_id=?").run(req.params.organizationId));
+    (await organizationAudit(req.params.organizationId, req.user!.id, "sso.configured", { issuer: parsed.data.issuer, enabled: parsed.data.enabled }));
     return true;
-  });
+  }));
   if (!saved) { res.status(403).json({ error: "Organization owner access changed" }); return; }
   res.json({ ok: true, redirectUri: redirect });
 }));
-router.delete("/:organizationId/identity", requireSession, asyncHandler((req: AuthedRequest, res) => {
-  if (!organizationRole(req.params.organizationId, req.user!.id)) { res.status(404).json({ error: "Organization not found" }); return; }
-  db.prepare("DELETE FROM organization_sso_identities WHERE organization_id=? AND user_id=?").run(req.params.organizationId, req.user!.id);
-  organizationAudit(req.params.organizationId, req.user!.id, "sso.identity_unlinked", {});
+router.delete("/:organizationId/identity", requireSession, asyncHandler(async (req: AuthedRequest, res) => {
+  if (!(await organizationRole(req.params.organizationId, req.user!.id))) { res.status(404).json({ error: "Organization not found" }); return; }
+  (await db.prepare("DELETE FROM organization_sso_identities WHERE organization_id=? AND user_id=?").run(req.params.organizationId, req.user!.id));
+  (await organizationAudit(req.params.organizationId, req.user!.id, "sso.identity_unlinked", {}));
   res.json({ ok: true });
 }));
 router.get("/:organizationId/start", strictLimiter, asyncHandler(async (req, res) => {
   const organizationId = req.params.organizationId;
-  const config = db.prepare("SELECT * FROM organization_sso WHERE organization_id=? AND enabled=1").get(organizationId) as SsoRow | undefined;
+  const config = (await db.prepare("SELECT * FROM organization_sso WHERE organization_id=? AND enabled=1").get(organizationId)) as SsoRow | undefined;
   if (!config) { res.status(404).json({ error: "Organization SSO is unavailable" }); return; }
-  const session = resolveSession(req);
+  const session = (await resolveSession(req));
   const linkingUser = req.query.link === "1" ? session?.status === "active" ? session.user_id : null : null;
-  if (req.query.link === "1" && (!linkingUser || !organizationRole(organizationId, linkingUser))) { res.status(403).json({ error: "Sign in locally as an organization member before linking SSO" }); return; }
+  if (req.query.link === "1" && (!linkingUser || !(await organizationRole(organizationId, linkingUser)))) { res.status(403).json({ error: "Sign in locally as an organization member before linking SSO" }); return; }
   const metadata = await discovery(config.issuer);
   const state = randomToken(32), nonce = randomToken(32), browser = randomToken(32), verifier = randomToken(48);
-  db.prepare("DELETE FROM organization_sso_flows WHERE expires_at<=?").run(now());
-  const count = db.prepare("SELECT COUNT(*) AS count FROM organization_sso_flows WHERE organization_id=?").get(organizationId) as { count: number };
+  (await db.prepare("DELETE FROM organization_sso_flows WHERE expires_at<=?").run(now()));
+  const count = (await db.prepare("SELECT COUNT(*) AS count FROM organization_sso_flows WHERE organization_id=?").get(organizationId)) as { count: number };
   if (count.count >= 100) { res.status(429).json({ error: "Too many pending organization sign-ins" }); return; }
-  db.prepare("INSERT INTO organization_sso_flows (state_hash,organization_id,browser_hash,verifier_encrypted,nonce_hash,linking_user_id,expires_at) VALUES (?,?,?,?,?,?,?)")
-    .run(sha256Hex(state), organizationId, sha256Hex(browser), seal(verifier, organizationId), sha256Hex(nonce), linkingUser, now() + 300);
+  (await db.prepare("INSERT INTO organization_sso_flows (state_hash,organization_id,browser_hash,verifier_encrypted,nonce_hash,linking_user_id,expires_at) VALUES (?,?,?,?,?,?,?)")
+    .run(sha256Hex(state), organizationId, sha256Hex(browser), seal(verifier, organizationId), sha256Hex(nonce), linkingUser, now() + 300));
   res.cookie("sso_flow", browser, { httpOnly: true, secure: IS_PROD, sameSite: "lax", path: "/api/sso", maxAge: 300000 });
   const authorization = trustedUrl(metadata.authorization_endpoint);
   authorization.searchParams.set("client_id", config.client_id); authorization.searchParams.set("redirect_uri", config.redirect_uri);
@@ -138,14 +138,14 @@ router.get("/:organizationId/callback", strictLimiter, asyncHandler(async (req, 
   const browser = (req.cookies as Record<string, string> | undefined)?.sso_flow;
   res.clearCookie("sso_flow", { path: "/api/sso" });
   if (!parsed.success || !browser) { res.status(400).json({ error: "Invalid or expired SSO flow" }); return; }
-  const flow = withTransaction(() => {
-    const row = db.prepare("SELECT * FROM organization_sso_flows WHERE state_hash=? AND organization_id=? AND expires_at>?")
-      .get(sha256Hex(parsed.data.state), organizationId, now()) as { browser_hash: string; verifier_encrypted: string; nonce_hash: string; linking_user_id: string | null } | undefined;
+  const flow = (await withTransaction(async () => {
+    const row = (await db.prepare("SELECT * FROM organization_sso_flows WHERE state_hash=? AND organization_id=? AND expires_at>?")
+      .get(sha256Hex(parsed.data.state), organizationId, now())) as { browser_hash: string; verifier_encrypted: string; nonce_hash: string; linking_user_id: string | null } | undefined;
     if (!row || !timingSafeEqual(Buffer.from(row.browser_hash, "hex"), Buffer.from(sha256Hex(browser), "hex"))) return undefined;
-    db.prepare("DELETE FROM organization_sso_flows WHERE state_hash=?").run(sha256Hex(parsed.data.state));
+    (await db.prepare("DELETE FROM organization_sso_flows WHERE state_hash=?").run(sha256Hex(parsed.data.state)));
     return row;
-  });
-  const config = db.prepare("SELECT * FROM organization_sso WHERE organization_id=? AND enabled=1").get(organizationId) as SsoRow | undefined;
+  }));
+  const config = (await db.prepare("SELECT * FROM organization_sso WHERE organization_id=? AND enabled=1").get(organizationId)) as SsoRow | undefined;
   if (!flow || !config) { res.status(400).json({ error: "Invalid or expired SSO flow" }); return; }
   try {
     const metadata = await discovery(config.issuer);
@@ -163,41 +163,42 @@ router.get("/:organizationId/callback", strictLimiter, asyncHandler(async (req, 
     const tokens = await boundedJson(trustedUrl(metadata.token_endpoint), { method: "POST", headers: tokenHeaders, body: form.toString() });
     if (typeof tokens.id_token !== "string") throw new Error("Provider did not return an ID token");
     const identity = await verifyIdToken(tokens.id_token, metadata, config, flow.nonce_hash);
-    const currentConfiguration = () => {
-      const current = db.prepare("SELECT * FROM organization_sso WHERE organization_id=? AND enabled=1").get(organizationId) as SsoRow | undefined;
+    const currentConfiguration = async () => {
+      const current = (await db.prepare("SELECT * FROM organization_sso WHERE organization_id=? AND enabled=1").get(organizationId)) as SsoRow | undefined;
       if (!current || current.configuration_revision !== config.configuration_revision || current.issuer !== config.issuer || current.client_id !== config.client_id || current.redirect_uri !== config.redirect_uri || current.secret_encrypted !== config.secret_encrypted) throw new Error("Provider configuration changed during sign-in");
     };
-    currentConfiguration();
+    (await currentConfiguration());
     if (flow.linking_user_id) {
-      const session = resolveSession(req);
-      const account = db.prepare("SELECT email_verified FROM users WHERE id=?").get(flow.linking_user_id) as { email_verified: number } | undefined;
-      if (session?.status !== "active" || session.user_id !== flow.linking_user_id || !account?.email_verified || !organizationRole(organizationId, flow.linking_user_id)) throw new Error("The original local linking session is no longer authorized");
+      const session = (await resolveSession(req));
+      const account = (await db.prepare("SELECT email_verified FROM users WHERE id=?").get(flow.linking_user_id)) as { email_verified: number } | undefined;
+      if (session?.status !== "active" || session.user_id !== flow.linking_user_id || !account?.email_verified || !(await organizationRole(organizationId, flow.linking_user_id))) throw new Error("The original local linking session is no longer authorized");
       // Linking requires proof of both the existing local session and provider
       // identity. An organization owner can never map their identity to another
       // member's global account or auto-link a matching email address.
-      withTransaction(() => {
-        currentConfiguration();
-        const linkingSession = resolveSession(req);
-        if (linkingSession?.status !== "active" || linkingSession.user_id !== flow.linking_user_id || !organizationRole(organizationId, flow.linking_user_id!)) throw new Error("Local linking authorization changed");
-        db.prepare("DELETE FROM organization_sso_identities WHERE organization_id=? AND user_id=?").run(organizationId, flow.linking_user_id);
-        db.prepare("INSERT INTO organization_sso_identities (organization_id,issuer,subject,user_id) VALUES (?,?,?,?)").run(organizationId, config.issuer, identity.sub, flow.linking_user_id);
-        organizationAudit(organizationId, flow.linking_user_id, "sso.identity_linked", { issuer: config.issuer });
-      });
+      (await withTransaction(async () => {
+        (await currentConfiguration());
+        const linkingSession = (await resolveSession(req));
+        if (linkingSession?.status !== "active" || linkingSession.user_id !== flow.linking_user_id || !(await organizationRole(organizationId, flow.linking_user_id!))) throw new Error("Local linking authorization changed");
+        (await db.prepare("DELETE FROM organization_sso_identities WHERE organization_id=? AND user_id=?").run(organizationId, flow.linking_user_id));
+        (await db.prepare("INSERT INTO organization_sso_identities (organization_id,issuer,subject,user_id) VALUES (?,?,?,?)").run(organizationId, config.issuer, identity.sub, flow.linking_user_id));
+        (await organizationAudit(organizationId, flow.linking_user_id, "sso.identity_linked", { issuer: config.issuer }));
+      }));
       res.set("Cache-Control", "no-store"); res.redirect("/organizations"); return;
     }
-    const user = withTransaction(() => {
-      currentConfiguration();
-      const eligible = db.prepare(`SELECT u.id,u.totp_enabled,u.email_verified,u.locked_until FROM organization_sso_identities i JOIN users u ON u.id=i.user_id
+    const user = (await withTransaction(async () => {
+      (await currentConfiguration());
+      const eligible = (await db.prepare(`SELECT u.id,u.totp_enabled,u.email_verified,u.locked_until FROM organization_sso_identities i JOIN users u ON u.id=i.user_id
       JOIN organization_members m ON m.user_id=u.id AND m.organization_id=i.organization_id WHERE i.organization_id=? AND i.issuer=? AND i.subject=?`)
-      .get(organizationId, config.issuer, identity.sub) as { id: string; totp_enabled: number; email_verified: number; locked_until: number | null } | undefined;
+      .get(organizationId, config.issuer, identity.sub)) as { id: string; totp_enabled: number; email_verified: number; locked_until: number | null } | undefined;
       if (!eligible || !eligible.email_verified || (eligible.locked_until !== null && eligible.locked_until > now())) throw new Error("SSO identity is not bound to an eligible organization member");
-      createSession(res, eligible.id, { isPending: Boolean(eligible.totp_enabled) });
-      organizationAudit(organizationId, eligible.id, "sso.authenticated", { issuer: config.issuer, pendingTwoFactor: Boolean(eligible.totp_enabled) });
-      return eligible;
-    });
+      const session = await createSession(res, eligible.id, { isPending: Boolean(eligible.totp_enabled), deferCookies: true });
+      (await organizationAudit(organizationId, eligible.id, "sso.authenticated", { issuer: config.issuer, pendingTwoFactor: Boolean(eligible.totp_enabled) }));
+      return { ...eligible, setCookies: session.setCookies };
+    }));
+    user.setCookies();
     res.set("Cache-Control", "no-store"); res.redirect(user.totp_enabled ? "/verify-2fa" : "/auth/complete");
   } catch {
-    organizationAudit(organizationId, null, "sso.rejected", {});
+    (await organizationAudit(organizationId, null, "sso.rejected", {}));
     res.status(401).json({ error: "SSO sign-in could not be verified. Ask the organization owner to check the provider configuration and subject binding." });
   }
 }));

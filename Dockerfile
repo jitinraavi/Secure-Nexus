@@ -17,7 +17,6 @@ RUN npm ci
 # Copy source trees
 COPY server ./server
 COPY client ./client
-COPY tsconfig.json ./
 
 # Compile client frontend and server backend
 RUN npm run build -w client
@@ -37,6 +36,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 ENV NODE_ENV=production
 ENV PORT=4000
 ENV GROUNDWORK_DATA_DIR=/data
+ENV GROUNDWORK_SERVER_ROLE=authority
+ENV GROUNDWORK_AUTHORITY_GATEWAY_MODE=direct
+ENV PAYMENTS_MODE=live
 
 # Create persistent storage directory with proper permissions
 RUN mkdir -p /data && chown -R node:node /data /app
@@ -46,15 +48,18 @@ COPY --chown=node:node --from=builder /app/node_modules ./node_modules
 COPY --chown=node:node --from=builder /app/package.json ./package.json
 COPY --chown=node:node --from=builder /app/server/package.json ./server/package.json
 COPY --chown=node:node --from=builder /app/server/dist ./server/dist
+COPY --chown=node:node --from=builder /app/server/supabase/migrations ./server/supabase/migrations
+COPY --chown=node:node --from=builder /app/server/certs ./server/certs
 COPY --chown=node:node --from=builder /app/client/dist ./client/dist
+COPY --chown=node:node scripts/deployment-preflight.mjs ./scripts/deployment-preflight.mjs
 
 USER node
 
 EXPOSE 4000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:4000/api/health || exit 1
+  CMD curl -fsS "http://127.0.0.1:${PORT:-4000}/api/health" || exit 1
 
 VOLUME ["/data"]
 
-CMD ["node", "--disable-warning=ExperimentalWarning", "server/dist/index.js"]
+CMD ["sh", "-c", "node scripts/deployment-preflight.mjs --check-build && exec node --disable-warning=ExperimentalWarning server/dist/index.js"]

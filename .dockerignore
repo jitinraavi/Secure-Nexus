@@ -15,4 +15,5 @@ data
 .github
 .system_generated
 coverage
+artifacts
 *.log

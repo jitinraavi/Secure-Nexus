@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
+import { readMailConfiguration } from "./mailConfig.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = path.resolve(__dirname, "..");
@@ -59,6 +60,31 @@ ensureDir(DATA_DIR);
 export const DB_PATH = process.env.DB_PATH
   ? path.resolve(process.env.DB_PATH, "groundwork.db")
   : path.join(DATA_DIR, "groundwork.db");
+
+/** Server-only PostgreSQL connection; never include these values in client configuration. */
+const databaseUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || "";
+const databaseProvider = process.env.DATABASE_PROVIDER || (databaseUrl ? "supabase" : "sqlite");
+if (databaseProvider !== "sqlite" && databaseProvider !== "supabase") {
+  throw new Error("DATABASE_PROVIDER must be sqlite or supabase");
+}
+const databasePoolMax = Number(process.env.DATABASE_POOL_MAX || 5);
+if (!Number.isSafeInteger(databasePoolMax) || databasePoolMax < 1 || databasePoolMax > 20) {
+  throw new Error("DATABASE_POOL_MAX must be an integer between 1 and 20");
+}
+if (databaseProvider === "supabase") {
+  try {
+    const parsed = new URL(databaseUrl);
+    if (!["postgres:", "postgresql:"].includes(parsed.protocol) || !parsed.hostname || !parsed.username || !parsed.password) throw new Error();
+  } catch { throw new Error("Supabase requires a valid server-only DATABASE_URL"); }
+}
+const databaseCaFile = process.env.DATABASE_SSL_CA_FILE || (databaseProvider === "supabase" ? path.join(SERVER_ROOT, "certs", "supabase-root-2021.crt") : undefined);
+export const DATABASE = {
+  provider: databaseProvider as "sqlite" | "supabase",
+  url: databaseUrl,
+  adminUrl: process.env.DATABASE_ADMIN_URL || "",
+  sslCa: databaseCaFile ? fs.readFileSync(path.resolve(databaseCaFile), "utf8") : undefined,
+  poolMax: databasePoolMax,
+};
 
 function loadOrCreateMasterKey(): Buffer {
   const envKey = process.env.MASTER_KEY;
@@ -117,14 +143,7 @@ export const ADMIN_EMAILS = new Set(
 );
 
 /* Pluggable mailer: set MAIL_PROVIDER=smtp or resend (auto-detected from creds if unset) */
-export const MAIL = {
-  provider: (process.env.MAIL_PROVIDER || "").toLowerCase(),
-  host: process.env.MAIL_HOST || "",
-  port: Number(process.env.MAIL_PORT || 587),
-  secure: process.env.MAIL_SECURE === "true",
-  user: process.env.MAIL_USER || "",
-  pass: process.env.MAIL_PASS || "",
-  from: process.env.MAIL_FROM || "Groundwork <noreply@groundwork.design>",
-  resendKey: process.env.RESEND_API_KEY || "",
-  devOtp: !IS_PROD && process.env.GROUNDWORK_DEV_OTP === "1" && isLoopbackAddress(BIND_HOST),
-};
+export const MAIL = readMailConfiguration(process.env, {
+  isProd: IS_PROD,
+  allowDevOtp: process.env.GROUNDWORK_DEV_OTP === "1" && isLoopbackAddress(BIND_HOST),
+});

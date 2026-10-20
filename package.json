@@ -11,12 +11,26 @@
     "dev": "concurrently -n server,client -c blue,cyan \"npm run dev -w server\" \"npm run dev -w client\"",
     "build": "npm run build -w client && npm run build -w server",
     "start": "npm run start -w server",
-    "lint": "tsc --noEmit -p server && tsc --noEmit -p client"
+    "lint": "tsc --noEmit -p server && tsc --noEmit -p client",
+    "test:studio": "npm run test:studio -w client",
+    "test:deployment": "node --disable-warning=ExperimentalWarning --import tsx --test server/test/studio-routing.test.ts",
+    "check:deployment": "node scripts/deployment-preflight.mjs --check-build",
+    "check:build": "node scripts/deployment-preflight.mjs --build-only",
+    "test": "npm test -w server && npm test -w client && npm run test:studio && npm run test:mail-setup",
+    "test:mail-setup": "node --test scripts/mail-environment.test.mjs",
+    "mail:setup": "node scripts/configure-gmail.mjs",
+    "mail:verify": "node scripts/configure-gmail.mjs --verify",
+    "db:migrate": "node --disable-warning=ExperimentalWarning server/dist/databaseCommand.js migrate",
+    "db:import": "node --disable-warning=ExperimentalWarning server/dist/databaseCommand.js import",
+    "db:verify": "node --disable-warning=ExperimentalWarning server/dist/databaseCommand.js verify",
+    "test:postgres-flow": "node --disable-warning=ExperimentalWarning --import tsx scripts/postgres-integration-check.cjs"
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.12.0"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "@electric-sql/pglite": "0.5.10",
+    "concurrently": "^9.1.0",
+    "supabase": "2.121.0"
   }
 }

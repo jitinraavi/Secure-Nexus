@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { ADMIN_EMAILS, IS_PROD } from "../config.js";
+import { ADMIN_EMAILS, IS_PROD, DATABASE } from "../config.js";
 import { requireSession, type AuthedRequest } from "../security.js";
 import {
   checkpointDatabase,
@@ -26,6 +26,10 @@ router.use((req: AuthedRequest, res, next) => {
  * Returns list of point-in-time database backups, sorted newest first.
  */
 router.get("/", async (_req: AuthedRequest, res) => {
+  if (DATABASE.provider === "supabase") {
+    res.json({ provider: "supabase", managedExternally: true, backups: [], message: "Manage database backups and restore verification in Supabase." });
+    return;
+  }
   try {
     const backups = await listDatabaseBackups();
     res.json({ backups });
@@ -39,6 +43,10 @@ router.get("/", async (_req: AuthedRequest, res) => {
  * Triggers an immediate atomic hot backup via SQLite VACUUM INTO with integrity check.
  */
 router.post("/", async (req: AuthedRequest, res) => {
+  if (DATABASE.provider === "supabase") {
+    res.status(501).json({ ok: false, error: "Use Supabase backup management for the hosted database", code: "MANAGED_DATABASE_BACKUP" });
+    return;
+  }
   const label = typeof req.body?.label === "string" ? req.body.label.trim().slice(0, 50) : undefined;
   try {
     const result = await performDatabaseBackup({ label });
@@ -59,12 +67,16 @@ router.post("/", async (req: AuthedRequest, res) => {
  * POST /api/admin/checkpoints
  * Manually flushes SQLite Write-Ahead Log (WAL) pages to disk.
  */
-router.post("/checkpoint", (req: AuthedRequest, res) => {
+router.post("/checkpoint", async (req: AuthedRequest, res) => {
+  if (DATABASE.provider === "supabase") {
+    res.status(501).json({ ok: false, error: "SQLite checkpoints do not apply to the hosted PostgreSQL database", code: "MANAGED_DATABASE_BACKUP" });
+    return;
+  }
   const mode = req.body?.mode;
   const validModes = ["PASSIVE", "FULL", "RESTART", "TRUNCATE"] as const;
   const selectedMode = validModes.includes(mode) ? mode : "TRUNCATE";
   try {
-    const result = checkpointDatabase(selectedMode);
+    const result = await checkpointDatabase(selectedMode);
     res.json({ ok: true, mode: selectedMode, ...result });
   } catch (err) {
     res.status(500).json({ error: "WAL checkpoint failed", details: err instanceof Error ? err.message : String(err) });

@@ -56,23 +56,23 @@ function handle(work: (req: AuthedRequest, res: Response) => void | Promise<void
 }
 
 router.use(requireSession);
-router.use((req: AuthedRequest, res, next) => {
+router.use(asyncHandler(async (req: AuthedRequest, res, next) => {
   if (!projectIdSchema.safeParse(req.params.projectId).success) {
     res.status(400).json({ error: "Invalid project ID", code: "INVALID_PROJECT_ID" });
     return;
   }
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   if (!access) {
     res.status(404).json({ error: "Project not found", code: "PROJECT_NOT_FOUND" });
     return;
   }
-  if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !canWriteProject(access)) {
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !(await canWriteProject(access))) {
     res.status(403).json({ error: "Editor access required", code: "READ_ONLY" });
     return;
   }
   res.set("Cache-Control", "private, no-store");
   next();
-});
+}));
 
 // GET capabilities & presets
 router.get("/capabilities", (_req, res) => {
@@ -88,8 +88,8 @@ router.get("/capabilities", (_req, res) => {
 });
 
 // GET /api/projects/:projectId/renders
-router.get("/", handle((req, res) => {
-  const data = listRenderJobs(req.params.projectId, actor(req));
+router.get("/", handle(async (req, res) => {
+  const data = (await listRenderJobs(req.params.projectId, actor(req)));
   res.json(data);
 }));
 
@@ -104,7 +104,7 @@ router.post(
       next();
     }
   },
-  handle((req, res) => {
+  handle(async (req, res) => {
     let payload = req.body;
     if (req.file) {
       payload = {
@@ -125,33 +125,33 @@ router.post(
       return;
     }
 
-    const job = submitRenderJob(req.params.projectId, actor(req), parsed.data);
-    logAudit(req.user?.id ?? null, "render.submit", { projectId: req.params.projectId, jobId: job.id }, req);
+    const job = (await submitRenderJob(req.params.projectId, actor(req), parsed.data));
+    (await logAudit(req.user?.id ?? null, "render.submit", { projectId: req.params.projectId, jobId: job.id }, req));
     res.status(201).json({ job });
   }),
 );
 
 // GET /api/projects/:projectId/renders/:jobId
-router.get("/:jobId", handle((req, res) => {
+router.get("/:jobId", handle(async (req, res) => {
   if (!jobIdSchema.safeParse(req.params.jobId).success) {
     throw new WorkspaceError(400, "Invalid render job ID", "INVALID_JOB_ID");
   }
-  const job = getRenderJob(req.params.projectId, req.params.jobId, actor(req));
+  const job = (await getRenderJob(req.params.projectId, req.params.jobId, actor(req)));
   res.json({ job });
 }));
 
 // GET /api/projects/:projectId/renders/:jobId/image
-router.get("/:jobId/image", handle((req, res) => {
+router.get("/:jobId/image", handle(async (req, res) => {
   if (!jobIdSchema.safeParse(req.params.jobId).success) {
     throw new WorkspaceError(400, "Invalid render job ID", "INVALID_JOB_ID");
   }
   const which = req.query.type === "source" ? "source" : "output";
-  const { bytes, mime, filename, sha256 } = getRenderJobArtifact(
+  const { bytes, mime, filename, sha256 } = (await getRenderJobArtifact(
     req.params.projectId,
     req.params.jobId,
     which,
     actor(req),
-  );
+  ));
 
   res.set({
     "Content-Type": mime,
@@ -165,22 +165,22 @@ router.get("/:jobId/image", handle((req, res) => {
 }));
 
 // POST /api/projects/:projectId/renders/:jobId/retry
-router.post("/:jobId/retry", handle((req, res) => {
+router.post("/:jobId/retry", handle(async (req, res) => {
   if (!jobIdSchema.safeParse(req.params.jobId).success) {
     throw new WorkspaceError(400, "Invalid render job ID", "INVALID_JOB_ID");
   }
-  const job = retryRenderJob(req.params.projectId, req.params.jobId, actor(req));
-  logAudit(req.user?.id ?? null, "render.retry", { projectId: req.params.projectId, originalJobId: req.params.jobId, newJobId: job.id }, req);
+  const job = (await retryRenderJob(req.params.projectId, req.params.jobId, actor(req)));
+  (await logAudit(req.user?.id ?? null, "render.retry", { projectId: req.params.projectId, originalJobId: req.params.jobId, newJobId: job.id }, req));
   res.status(201).json({ job });
 }));
 
 // POST /api/projects/:projectId/renders/:jobId/cancel
-router.post("/:jobId/cancel", handle((req, res) => {
+router.post("/:jobId/cancel", handle(async (req, res) => {
   if (!jobIdSchema.safeParse(req.params.jobId).success) {
     throw new WorkspaceError(400, "Invalid render job ID", "INVALID_JOB_ID");
   }
-  const job = cancelRenderJob(req.params.projectId, req.params.jobId, actor(req));
-  logAudit(req.user?.id ?? null, "render.cancel", { projectId: req.params.projectId, jobId: job.id }, req);
+  const job = (await cancelRenderJob(req.params.projectId, req.params.jobId, actor(req)));
+  (await logAudit(req.user?.id ?? null, "render.cancel", { projectId: req.params.projectId, jobId: job.id }, req));
   res.json({ job });
 }));
 

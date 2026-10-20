@@ -10,16 +10,25 @@ A deployable, full-stack design studio for interior designers, architects and si
 - **Hardened by default** — scrypt password hashing, TOTP 2FA, encrypted-at-rest design data and photos (AES-256-GCM), CSRF, rate limiting, account lockout and a full audit log.
 - **Bounded live collaboration** — authenticated owner presence over reconnecting SSE, encrypted collaboration events, comments/issues, snapshots, and optimistic revision conflict checks.
 
-Stack: Node 22 · Express · SQLite (`node:sqlite`) · React 18 · Vite · Tailwind v4 · three.js.
+Stack: Node 22 · Express · Supabase PostgreSQL (SQLite local/test fallback) · React 18 · Vite · Tailwind v4 · three.js.
+
+For the product overview, competitor positioning and full verified technology
+inventory, read the [project documentation](docs/PROJECT-DOCUMENTATION.md).
+A [formatted browser version](docs/PROJECT-DOCUMENTATION.html) and a
+[shareable PDF](docs/Groundwork-Project-Documentation.pdf) are also available.
+
+The hosted database setup and verified SQLite-to-PostgreSQL import are described in
+[Supabase setup](docs/SUPABASE.md). Existing login, Gmail OTP and encryption remain
+in the Groundwork backend. Database credentials never belong in the browser.
 
 ---
 
 ## Local development
 
-Requirements: Node >= 22.5.
+Requirements: Node >= 22.12 (Vite 8; CI uses the maintained Node 22 line).
 
 ```bash
-npm install
+npm ci
 npm run dev        # API on :4000, Vite app on :5173 (proxies /api)
 ```
 
@@ -49,8 +58,9 @@ Navigate to the app at the served port. In production the session/CSRF cookies u
 ## Deploy to Render
 
 Create a web service with these settings and persistent storage. See
-[release instructions](docs/RELEASE.md) for the required mail, payment, key and
-provider-budget configuration; this repository does not include a Render blueprint.
+[deployment guide](docs/DEPLOYMENT.md) and [release instructions](docs/RELEASE.md)
+for required mail, payment, key and provider-budget configuration. The included
+`render.yaml` defines a single authority with required persistent storage.
 
 | Setting | Value |
 | --- | --- |
@@ -63,11 +73,15 @@ provider-budget configuration; this repository does not include a Render bluepri
 | Env: `MASTER_KEY` | **Required stable base64 32-byte secret** (must never change) |
 | Env: `GROUNDWORK_DATA_DIR` | `/var/data` on the required persistent disk |
 
-**Persistence:** production refuses to start without `MASTER_KEY` and `GROUNDWORK_DATA_DIR`. Configure a persistent disk mounted at `/var/data`; encrypted data requires its matching master key. `DB_PATH` is an optional directory override and the database filename remains `groundwork.db`.
+**Persistence:** set `DATABASE_PROVIDER=supabase` and the server-only `DATABASE_URL`
+for the hosted PostgreSQL database. Preserve the matching `MASTER_KEY` for encrypted
+records. `GROUNDWORK_DATA_DIR` remains required for optional native-job scratch
+storage. Local SQLite fallback uses `groundwork.db`, with `DB_PATH` as a directory
+override. See [Supabase migration and rollback](docs/SUPABASE.md).
 
 **Payments:** production requires `PAYMENTS_MODE=live`; missing, invalid or demo modes fail startup. Razorpay requires a live `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` and `RAZORPAY_ACCOUNT_ID`. Register `https://<your-app>/api/payments/webhook` for `payment_link.paid`. PayPal requires `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_MERCHANT_ID` and `PAYPAL_MODE=live`. Unconfigured live providers cannot grant demo subscriptions. Demo checkout is available in local development/test.
 
-**Email:** configure SMTP or Resend before onboarding users. Production has no console-mail fallback, OTP response disclosure or OTP payload logging. Local code disclosure requires explicit `GROUNDWORK_DEV_OTP=1` and a loopback-only request/service.
+**Email:** configure SMTP or Resend before onboarding users. For Gmail, run `npm run mail:setup` in a local terminal; it hides app-password entry, verifies authentication and preserves the existing encryption key. See [Gmail OTP setup](docs/GMAIL-OTP.md). Production has no console-mail fallback, OTP response disclosure or OTP payload logging. Local code disclosure requires explicit `GROUNDWORK_DEV_OTP=1` and a loopback-only request/service.
 
 Payments are stored with `status`, provider order id and provider URL. PayPal amounts are collected in USD (converted from the INR plan price); Razorpay Payment Links accept UPI and cards natively.
 
@@ -88,7 +102,9 @@ Payments are stored with `status`, provider order id and provider URL. PayPal am
 ```
 server/src
   config.ts         env, constants, cookie names
-  db.ts             SQLite schema + migrations (users, sessions, audit_logs, secrets, files, projects, payments)
+  db.ts             asynchronous database adapter and transaction ownership
+  postgresDatabase.ts Supabase PostgreSQL pooling, TLS and explicit migrations
+  sqliteDatabase.ts local/test SQLite schema bootstrap
   crypto.ts         scrypt, AES-256-GCM, HKDF, random tokens
   totp.ts           TOTP implementation
   validate.ts       Zod schemas (email/password/confirm)
@@ -101,7 +117,9 @@ client/src
   editor/Canvas3D.tsx  three.js room editor (drag, selection, GLB export)
   lib/              furniture catalog, DXF/OBJ/CSV exporters, zip/download
   pages/            landing, auth, dashboard, editor, audit, settings, billing, checkout
-render.yaml         Render blueprint (free tier, optional persistent disk)
+client/studio.html  architecture studio homepage, built alongside the application
+client/studio/      vanilla JavaScript, Three.js scenes and modular studio CSS
+render.yaml         single-authority blueprint with required persistent disk
 SPEC.md             product specification & open questions
 ```
 
@@ -110,3 +128,20 @@ SPEC.md             product specification & open questions
 - Server: `npm run build -w server` (tsc).
 - Client: `npm run build -w client` (tsc + vite).
 - Smoke test the API flow with the built server running (`npm start`): sign up → create project → save design → upload photo → pay (demo) → export → check the audit log.
+
+## Studio homepage and deployment readiness
+
+The public architecture/interiors studio is integrated with the existing
+application rather than replacing its authenticated tools. Both HTML entries
+ship in the same Vite build. The studio uses local photography and fonts,
+centralized design tokens, a Three.js point-scan city, accessible service layouts,
+an eight-project gallery and a staged process model. Existing authentication,
+dashboard, editor, sharing and billing routes remain application routes.
+
+Run `node scripts/deployment-preflight.mjs --build-only` after building, then
+`node scripts/deployment-preflight.mjs --env-file .env --check-build` with your
+private production configuration on the target runtime. The helper prints no
+configuration values. [DEPLOYMENT.md](docs/DEPLOYMENT.md) covers Docker, Render,
+HTTPS/proxy identity, email, payments, backup restoration and offline upgrades.
+Production still requires owner-provided infrastructure and provider credentials;
+the optional native worker remains explicitly disabled and unverified.

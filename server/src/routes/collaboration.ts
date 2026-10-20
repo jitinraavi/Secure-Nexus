@@ -15,8 +15,8 @@ const router = Router();
 const vaultKey = deriveVaultKey(MASTER_KEY);
 const previousVaultKey = PREVIOUS_MASTER_KEY ? deriveVaultKey(PREVIOUS_MASTER_KEY) : null;
 
-router.use((req: AuthedRequest, res, next) => {
-  const session = resolveSession(req);
+router.use(asyncHandler(async (req: AuthedRequest, res, next) => {
+  const session = (await resolveSession(req));
   if (!session || session.status !== "active") {
     res.status(401).json({ error: "Not authenticated" });
     return;
@@ -25,7 +25,7 @@ router.use((req: AuthedRequest, res, next) => {
   req.session = session;
   req.csrfToken = session.csrf_token;
   next();
-});
+}));
 router.use("/:projectId/sync", syncRouter);
 
 function encryptProjectText(plaintext: string, ownerId: string): string {
@@ -63,63 +63,78 @@ function decryptItemBody(payloadJson: string, ownerId: string, projectId: string
   }
 }
 
-router.get("/:projectId/events", (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+router.get("/:projectId/events", asyncHandler(async (req: AuthedRequest, res) => {
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   if (!canReadProject(access)) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
-  const connectionCount = db.prepare("SELECT COUNT(*) AS count FROM project_presence WHERE project_id=? AND user_id=? AND expires_at>?").get(req.params.projectId, req.user!.id, now()) as { count: number };
+  const connectionCount = (await db.prepare("SELECT COUNT(*) AS count FROM project_presence WHERE project_id=? AND user_id=? AND expires_at>?").get(req.params.projectId, req.user!.id, now())) as { count: number };
   if (connectionCount.count >= 10) { res.status(429).json({ error: "Too many active collaboration connections for this project" }); return; }
   res.status(200).set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
   res.flushHeaders();
   res.write(`event: ready\ndata: ${JSON.stringify({ projectId: req.params.projectId, role: access.role })}\n\n`);
-  const unsubscribe = subscribeProject(req.params.projectId, req.user!.id, res);
+  const unsubscribe = (await subscribeProject(req.params.projectId, req.user!.id, res));
   const requestedId = Number(req.get("Last-Event-ID") || req.query.after || 0);
-  let lastEventId = replayProjectEvents(req.params.projectId, res, Number.isSafeInteger(requestedId) && requestedId >= 0 ? requestedId : 0);
+  let lastEventId = (await replayProjectEvents(req.params.projectId, res, Number.isSafeInteger(requestedId) && requestedId >= 0 ? requestedId : 0));
   let redisCursor = "0";
   let polling = false;
-  res.write(`event: presence\ndata: ${JSON.stringify(presenceSnapshot(req.params.projectId))}\n\n`);
+  res.write(`event: presence\ndata: ${JSON.stringify((await presenceSnapshot(req.params.projectId)))}\n\n`);
   const heartbeat = setInterval(() => {
-    if (!canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) { res.end(); return; }
-    res.write(": heartbeat\n\n");
+    if (!res.writableEnded && !res.destroyed) res.write(": heartbeat\n\n");
   }, 20_000);
-  // SQLite event-log polling delivers events produced by other workers sharing this DB.
-  const replay = setInterval(() => {
-    const session = resolveSession(req);
-    if (!session || session.status !== "active" || !canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) { res.end(); return; }
-    lastEventId = replayProjectEvents(req.params.projectId, res, lastEventId);
-    if (redisTransportConfigured && !polling) {
-      polling = true;
-      void readRedisProjectEvents(req.params.projectId, redisCursor).then((result) => {
-        if (res.writableEnded || res.destroyed || resolveSession(req)?.status !== "active" || !canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) return;
+  // Database polling delivers events produced by other workers. A slow database
+  // must not accumulate concurrent polls or leave rejected promises unhandled.
+  const replayOnce = async () => {
+    if (polling || res.writableEnded || res.destroyed) return;
+    polling = true;
+    try {
+      const session = (await resolveSession(req));
+      if (!session || session.status !== "active" || !canReadProject((await getProjectAccess(req.params.projectId, req.user!.id)))) { res.end(); return; }
+      lastEventId = (await replayProjectEvents(req.params.projectId, res, lastEventId));
+      if (redisTransportConfigured) {
+        let result: Awaited<ReturnType<typeof readRedisProjectEvents>>;
+        try { result = await readRedisProjectEvents(req.params.projectId, redisCursor); }
+        catch {
+          if (!res.writableEnded && !res.destroyed) res.write('event: transport-status\ndata: {"backend":"redis-rest","degraded":true}\n\n');
+          return;
+        }
+        if (res.writableEnded || res.destroyed || (await resolveSession(req))?.status !== "active" || !canReadProject((await getProjectAccess(req.params.projectId, req.user!.id)))) return;
         redisCursor = result.cursor;
         for (const event of result.events) {
           const parsed = z.object({ origin: z.string().max(120), eventId: z.string().max(120), projectId: z.string(), type: z.string().max(80), revision: z.number().int().min(0), createdAt: z.number().int(), actorId: z.string().max(120) }).safeParse(event);
           if (parsed.success && parsed.data.origin !== collaborationInstanceId && parsed.data.projectId === req.params.projectId) res.write(`event: distributed\ndata: ${JSON.stringify(parsed.data)}\n\n`);
         }
-      }).catch(() => { if (!res.writableEnded && !res.destroyed) res.write('event: transport-status\ndata: {"backend":"redis-rest","degraded":true}\n\n'); }).finally(() => { polling = false; });
+      }
+    } finally {
+      polling = false;
     }
+  };
+  const replay = setInterval(() => {
+    void replayOnce().catch(() => { res.end(); });
   }, 2000);
-  res.on("close", () => { clearInterval(heartbeat); clearInterval(replay); unsubscribe(); });
-});
+  res.on("close", () => { clearInterval(heartbeat); clearInterval(replay); void Promise.resolve(unsubscribe()).catch(() => {}); });
+}));
 
 router.get("/:projectId/presence", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
   if (redisTransportConfigured) {
     const presence = await redisPresence(req.params.projectId);
-    if (resolveSession(req)?.status !== "active" || !canReadProject(getProjectAccess(req.params.projectId, req.user!.id))) { res.status(403).json({ error: "Project access changed during presence lookup" }); return; }
-    const users = presence.users.filter((entry) => canReadProject(getProjectAccess(req.params.projectId, entry.userId)));
+    if ((await resolveSession(req))?.status !== "active" || !canReadProject((await getProjectAccess(req.params.projectId, req.user!.id)))) { res.status(403).json({ error: "Project access changed during presence lookup" }); return; }
+    const users: typeof presence.users = [];
+    for (const entry of presence.users) {
+      if (canReadProject((await getProjectAccess(req.params.projectId, entry.userId)))) users.push(entry);
+    }
     res.json({ projectId: req.params.projectId, users, count: users.length, backend: "redis-rest" });
-  } else res.json({ ...presenceSnapshot(req.params.projectId), backend: "sqlite" });
+  } else res.json({ ...(await presenceSnapshot(req.params.projectId)), backend: "sqlite" });
 }));
 
-router.get("/:projectId/items", (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+router.get("/:projectId/items", asyncHandler(async (req: AuthedRequest, res) => {
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
-  const rows = db.prepare("SELECT id, user_id, kind, body, status, created_at, updated_at FROM project_collaboration_items WHERE project_id = ? ORDER BY created_at DESC")
-    .all(req.params.projectId) as { id: string; user_id: string; kind: string; body: string; status: string; created_at: number; updated_at: number }[];
+  const rows = (await db.prepare("SELECT id, user_id, kind, body, status, created_at, updated_at FROM project_collaboration_items WHERE project_id = ? ORDER BY created_at DESC")
+    .all(req.params.projectId)) as { id: string; user_id: string; kind: string; body: string; status: string; created_at: number; updated_at: number }[];
   res.json({ items: rows.map((row) => ({
     id: row.id,
     userId: row.user_id,
@@ -129,125 +144,125 @@ router.get("/:projectId/items", (req: AuthedRequest, res) => {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   })) });
-});
+}));
 
 const itemSchema = z.object({ kind: z.enum(["comment", "issue"]), body: z.string().trim().min(1).max(2000) });
 router.post("/:projectId/items", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   const parsed = itemSchema.safeParse(req.body || {});
   if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid collaboration item" }); return; }
-  const project = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
+  const project = (await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId)) as { revision: number };
   const id = collaborationItemId();
   const timestamp = now();
-  db.prepare("INSERT INTO project_collaboration_items (id, project_id, user_id, kind, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(id, req.params.projectId, req.user!.id, parsed.data.kind, encryptItemBody(parsed.data.body, access.ownerId, req.params.projectId), timestamp, timestamp);
-  emitProjectEvent(req.params.projectId, req.user!.id, parsed.data.kind === "comment" ? "comment.created" : "issue.updated", project.revision, { itemId: id });
+  (await db.prepare("INSERT INTO project_collaboration_items (id, project_id, user_id, kind, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(id, req.params.projectId, req.user!.id, parsed.data.kind, encryptItemBody(parsed.data.body, access.ownerId, req.params.projectId), timestamp, timestamp));
+  (await emitProjectEvent(req.params.projectId, req.user!.id, parsed.data.kind === "comment" ? "comment.created" : "issue.updated", project.revision, { itemId: id }));
   res.status(201).json({ id, userId: req.user!.id, kind: parsed.data.kind, body: parsed.data.body, status: "open", createdAt: timestamp, updatedAt: timestamp });
 }));
 
 router.patch("/:projectId/items/:itemId", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   const parsed = z.object({ status: z.enum(["open", "resolved"]) }).safeParse(req.body || {});
-  if (!canWriteProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return; }
+  if (!access || !(await canWriteProject(access))) { res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return; }
   if (!parsed.success) { res.status(400).json({ error: "Status must be open or resolved" }); return; }
   const timestamp = now();
-  const result = db.prepare("UPDATE project_collaboration_items SET status = ?, updated_at = ? WHERE id = ? AND project_id = ?")
-    .run(parsed.data.status, timestamp, req.params.itemId, req.params.projectId);
+  const result = (await db.prepare("UPDATE project_collaboration_items SET status = ?, updated_at = ? WHERE id = ? AND project_id = ?")
+    .run(parsed.data.status, timestamp, req.params.itemId, req.params.projectId));
   if (!result.changes) { res.status(404).json({ error: "Collaboration item not found" }); return; }
-  const project = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
-  emitProjectEvent(req.params.projectId, req.user!.id, "issue.updated", project.revision, { itemId: req.params.itemId, status: parsed.data.status });
+  const project = (await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId)) as { revision: number };
+  (await emitProjectEvent(req.params.projectId, req.user!.id, "issue.updated", project.revision, { itemId: req.params.itemId, status: parsed.data.status }));
   res.json({ ok: true, status: parsed.data.status, updatedAt: timestamp });
 }));
 
 /* -------------------------- Project memberships -------------------------- */
 
-router.get("/:projectId/members", (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+router.get("/:projectId/members", asyncHandler(async (req: AuthedRequest, res) => {
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
   if (access.organizationId) {
-    const members = db.prepare(`SELECT m.user_id AS userId,u.email,u.username,CASE WHEN m.role IN ('owner','admin') THEN 'owner' ELSE m.role END AS role,m.created_at AS createdAt
-      FROM organization_members m JOIN users u ON u.id=m.user_id WHERE m.organization_id=? ORDER BY m.created_at`).all(access.organizationId);
+    const members = (await db.prepare(`SELECT m.user_id AS userId,u.email,u.username,CASE WHEN m.role IN ('owner','admin') THEN 'owner' ELSE m.role END AS role,m.created_at AS createdAt
+      FROM organization_members m JOIN users u ON u.id=m.user_id WHERE m.organization_id=? ORDER BY m.created_at`).all(access.organizationId));
     res.json({ members, currentRole: access.role, managedByOrganization: true }); return;
   }
-  const owner = db.prepare("SELECT u.id, u.email, u.username FROM projects p JOIN users u ON u.id = p.user_id WHERE p.id = ?")
-    .get(req.params.projectId) as { id: string; email: string; username: string | null };
-  const rows = db.prepare("SELECT pm.user_id, pm.role, pm.created_at, u.email, u.username FROM project_members pm JOIN users u ON u.id = pm.user_id WHERE pm.project_id = ? ORDER BY pm.created_at")
-    .all(req.params.projectId) as { user_id: string; role: "editor" | "viewer"; created_at: number; email: string; username: string | null }[];
+  const owner = (await db.prepare("SELECT u.id, u.email, u.username FROM projects p JOIN users u ON u.id = p.user_id WHERE p.id = ?")
+    .get(req.params.projectId)) as { id: string; email: string; username: string | null };
+  const rows = (await db.prepare("SELECT pm.user_id, pm.role, pm.created_at, u.email, u.username FROM project_members pm JOIN users u ON u.id = pm.user_id WHERE pm.project_id = ? ORDER BY pm.created_at")
+    .all(req.params.projectId)) as { user_id: string; role: "editor" | "viewer"; created_at: number; email: string; username: string | null }[];
   res.json({ members: [
     { userId: owner.id, email: owner.email, username: owner.username, role: "owner", createdAt: 0 },
     ...rows.map((row) => ({ userId: row.user_id, email: row.email, username: row.username, role: row.role, createdAt: row.created_at })),
   ], currentRole: access.role });
-});
+}));
 
 const memberSchema = z.object({ identifier: z.string().trim().min(3).max(254), role: z.enum(["editor", "viewer"]) });
 router.post("/:projectId/members", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   const parsed = memberSchema.safeParse(req.body || {});
   if (!canManageProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" }); return; }
   if (access.organizationId) { res.status(403).json({ error: "Manage membership in the organization workspace" }); return; }
   if (!parsed.success) { res.status(400).json({ error: "Enter a valid user and role" }); return; }
-  const target = db.prepare("SELECT id, email, username FROM users WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE LIMIT 1")
-    .get(parsed.data.identifier, parsed.data.identifier) as { id: string; email: string; username: string | null } | undefined;
+  const target = (await db.prepare("SELECT id, email, username FROM users WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE LIMIT 1")
+    .get(parsed.data.identifier, parsed.data.identifier)) as { id: string; email: string; username: string | null } | undefined;
   if (!target || target.id === access.ownerId) { res.status(404).json({ error: "Eligible Groundwork user not found" }); return; }
-  db.prepare(`INSERT INTO project_members (project_id, user_id, role, invited_by, created_at) VALUES (?, ?, ?, ?, ?)
+  (await db.prepare(`INSERT INTO project_members (project_id, user_id, role, invited_by, created_at) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(project_id, user_id) DO UPDATE SET role = excluded.role, invited_by = excluded.invited_by`)
-    .run(req.params.projectId, target.id, parsed.data.role, req.user!.id, now());
-  const project = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
-  emitProjectEvent(req.params.projectId, req.user!.id, "member.updated", project.revision, { userId: target.id, role: parsed.data.role });
+    .run(req.params.projectId, target.id, parsed.data.role, req.user!.id, now()));
+  const project = (await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId)) as { revision: number };
+  (await emitProjectEvent(req.params.projectId, req.user!.id, "member.updated", project.revision, { userId: target.id, role: parsed.data.role }));
   res.status(201).json({ userId: target.id, email: target.email, username: target.username, role: parsed.data.role });
 }));
 
 router.patch("/:projectId/members/:userId", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   const parsed = z.object({ role: z.enum(["editor", "viewer"]) }).safeParse(req.body || {});
   if (!canManageProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" }); return; }
   if (access.organizationId) { res.status(403).json({ error: "Manage membership in the organization workspace" }); return; }
   if (!parsed.success) { res.status(400).json({ error: "Role must be editor or viewer" }); return; }
-  const result = db.prepare("UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?")
-    .run(parsed.data.role, req.params.projectId, req.params.userId);
+  const result = (await db.prepare("UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?")
+    .run(parsed.data.role, req.params.projectId, req.params.userId));
   if (!result.changes) { res.status(404).json({ error: "Project member not found" }); return; }
-  if (parsed.data.role === "viewer") db.prepare("DELETE FROM project_locks WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId);
-  const project = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
-  emitProjectEvent(req.params.projectId, req.user!.id, "member.updated", project.revision, { userId: req.params.userId, role: parsed.data.role });
+  if (parsed.data.role === "viewer") (await db.prepare("DELETE FROM project_locks WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId));
+  const project = (await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId)) as { revision: number };
+  (await emitProjectEvent(req.params.projectId, req.user!.id, "member.updated", project.revision, { userId: req.params.userId, role: parsed.data.role }));
   res.json({ ok: true });
 }));
 
 router.delete("/:projectId/members/:userId", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   if (!canManageProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" }); return; }
   if (access.organizationId) { res.status(403).json({ error: "Manage membership in the organization workspace" }); return; }
-  const result = db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId);
-  db.prepare("DELETE FROM project_locks WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId);
+  const result = (await db.prepare("DELETE FROM project_members WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId));
+  (await db.prepare("DELETE FROM project_locks WHERE project_id = ? AND user_id = ?").run(req.params.projectId, req.params.userId));
   if (!result.changes) { res.status(404).json({ error: "Project member not found" }); return; }
-  const project = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
-  emitProjectEvent(req.params.projectId, req.user!.id, "member.updated", project.revision, { userId: req.params.userId, removed: true });
+  const project = (await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId)) as { revision: number };
+  (await emitProjectEvent(req.params.projectId, req.user!.id, "member.updated", project.revision, { userId: req.params.userId, removed: true }));
   res.json({ ok: true });
 }));
 
 /* ----------------------------- Object locks ------------------------------ */
 
-function clearExpiredLocks() {
-  db.prepare("DELETE FROM project_locks WHERE expires_at <= ?").run(now());
+async function clearExpiredLocks() {
+  (await db.prepare("DELETE FROM project_locks WHERE expires_at <= ?").run(now()));
 }
 
-router.get("/:projectId/locks", (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+router.get("/:projectId/locks", asyncHandler(async (req: AuthedRequest, res) => {
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
-  clearExpiredLocks();
-  const locks = db.prepare("SELECT object_id, user_id, expires_at, updated_at FROM project_locks WHERE project_id = ?")
-    .all(req.params.projectId) as { object_id: string; user_id: string; expires_at: number; updated_at: number }[];
+  (await clearExpiredLocks());
+  const locks = (await db.prepare("SELECT object_id, user_id, expires_at, updated_at FROM project_locks WHERE project_id = ?")
+    .all(req.params.projectId)) as { object_id: string; user_id: string; expires_at: number; updated_at: number }[];
   res.json({ locks: locks.map((lock) => ({ objectId: lock.object_id, userId: lock.user_id, expiresAt: lock.expires_at, updatedAt: lock.updated_at })) });
-});
+}));
 
 router.post("/:projectId/locks", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   const parsed = z.object({ objectId: z.string().trim().min(1).max(200), ttlSeconds: z.number().int().min(15).max(300).default(90) }).safeParse(req.body || {});
-  if (!canWriteProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return; }
+  if (!access || !(await canWriteProject(access))) { res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return; }
   if (!parsed.success) { res.status(400).json({ error: "Invalid object lock request" }); return; }
-  clearExpiredLocks();
-  const existing = db.prepare("SELECT user_id, expires_at FROM project_locks WHERE project_id = ? AND object_id = ?")
-    .get(req.params.projectId, parsed.data.objectId) as { user_id: string; expires_at: number } | undefined;
+  (await clearExpiredLocks());
+  const existing = (await db.prepare("SELECT user_id, expires_at FROM project_locks WHERE project_id = ? AND object_id = ?")
+    .get(req.params.projectId, parsed.data.objectId)) as { user_id: string; expires_at: number } | undefined;
   if (existing && existing.user_id !== req.user!.id && existing.expires_at > now()) {
     res.status(423).json({ error: "Object is locked by another editor", userId: existing.user_id, expiresAt: existing.expires_at });
     return;
@@ -255,23 +270,23 @@ router.post("/:projectId/locks", asyncHandler(async (req: AuthedRequest, res) =>
   const token = randomId();
   const timestamp = now();
   const expiresAt = timestamp + parsed.data.ttlSeconds;
-  db.prepare(`INSERT INTO project_locks (project_id, object_id, user_id, token, expires_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+  (await db.prepare(`INSERT INTO project_locks (project_id, object_id, user_id, token, expires_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id, object_id) DO UPDATE SET user_id = excluded.user_id, token = excluded.token, expires_at = excluded.expires_at, updated_at = excluded.updated_at`)
-    .run(req.params.projectId, parsed.data.objectId, req.user!.id, token, expiresAt, timestamp);
-  const project = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
-  emitProjectEvent(req.params.projectId, req.user!.id, "lock.updated", project.revision, { objectId: parsed.data.objectId, userId: req.user!.id, expiresAt });
+    .run(req.params.projectId, parsed.data.objectId, req.user!.id, token, expiresAt, timestamp));
+  const project = (await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId)) as { revision: number };
+  (await emitProjectEvent(req.params.projectId, req.user!.id, "lock.updated", project.revision, { objectId: parsed.data.objectId, userId: req.user!.id, expiresAt }));
   res.status(201).json({ objectId: parsed.data.objectId, userId: req.user!.id, token, expiresAt, updatedAt: timestamp });
 }));
 
 router.delete("/:projectId/locks/:objectId", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
-  if (!canWriteProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return; }
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
+  if (!access || !(await canWriteProject(access))) { res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return; }
   const result = access.role === "owner"
-    ? db.prepare("DELETE FROM project_locks WHERE project_id = ? AND object_id = ?").run(req.params.projectId, req.params.objectId)
-    : db.prepare("DELETE FROM project_locks WHERE project_id = ? AND object_id = ? AND user_id = ?").run(req.params.projectId, req.params.objectId, req.user!.id);
+    ? (await db.prepare("DELETE FROM project_locks WHERE project_id = ? AND object_id = ?").run(req.params.projectId, req.params.objectId))
+    : (await db.prepare("DELETE FROM project_locks WHERE project_id = ? AND object_id = ? AND user_id = ?").run(req.params.projectId, req.params.objectId, req.user!.id));
   if (!result.changes) { res.status(404).json({ error: "Object lock not found" }); return; }
-  const project = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
-  emitProjectEvent(req.params.projectId, req.user!.id, "lock.updated", project.revision, { objectId: req.params.objectId, released: true });
+  const project = (await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId)) as { revision: number };
+  (await emitProjectEvent(req.params.projectId, req.user!.id, "lock.updated", project.revision, { objectId: req.params.objectId, released: true }));
   res.json({ ok: true });
 }));
 
@@ -318,16 +333,16 @@ function applyOperation(root: unknown, kind: "set" | "merge" | "delete", path: s
 }
 
 router.post("/:projectId/operations", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = getProjectAccess(req.params.projectId, req.user!.id);
+  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
   const parsed = operationSchema.safeParse(req.body || {});
-  if (!canWriteProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return; }
+  if (!access || !(await canWriteProject(access))) { res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return; }
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid collaboration operation" }); return; }
 
-  const prior = db.prepare("SELECT result_revision FROM project_operations WHERE project_id = ? AND operation_id = ?")
-    .get(req.params.projectId, parsed.data.operationId) as { result_revision: number } | undefined;
+  const prior = (await db.prepare("SELECT result_revision FROM project_operations WHERE project_id = ? AND operation_id = ?")
+    .get(req.params.projectId, parsed.data.operationId)) as { result_revision: number } | undefined;
   if (prior) { res.json({ ok: true, revision: prior.result_revision, duplicate: true }); return; }
 
-  const project = db.prepare("SELECT design_data, revision FROM projects WHERE id = ?").get(req.params.projectId) as { design_data: string | null; revision: number };
+  const project = (await db.prepare("SELECT design_data, revision FROM projects WHERE id = ?").get(req.params.projectId)) as { design_data: string | null; revision: number };
   if (project.revision !== parsed.data.baseRevision) {
     res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: project.revision });
     return;
@@ -347,22 +362,22 @@ router.post("/:projectId/operations", asyncHandler(async (req: AuthedRequest, re
   }
   const serialized = JSON.stringify(next);
   if (serialized.length > MAX_DESIGN_BYTES || Buffer.byteLength(serialized, "utf8") > MAX_DESIGN_BYTES) { res.status(413).json({ error: "Resulting design is too large" }); return; }
-  const lockedObject = conflictingDesignLock(req.params.projectId, req.user!.id, design, next);
+  const lockedObject = (await conflictingDesignLock(req.params.projectId, req.user!.id, design, next));
   if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
   const nextRevision = project.revision + 1;
-  const committed = withTransaction(() => {
-  const updated = db.prepare("UPDATE projects SET design_data = ?, revision = ?, updated_at = ? WHERE id = ? AND revision = ?")
-    .run(encryptProjectText(serialized, access.ownerId), nextRevision, now(), req.params.projectId, project.revision);
+  const committed = (await withTransaction(async () => {
+  const updated = (await db.prepare("UPDATE projects SET design_data = ?, revision = ?, updated_at = ? WHERE id = ? AND revision = ?")
+    .run(encryptProjectText(serialized, access.ownerId), nextRevision, now(), req.params.projectId, project.revision));
   if (!updated.changes) {
     return false;
   }
-  db.prepare("INSERT INTO project_operations (project_id, user_id, operation_id, base_revision, result_revision, kind, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(req.params.projectId, req.user!.id, parsed.data.operationId, project.revision, nextRevision, parsed.data.kind, JSON.stringify({ path: parsed.data.path }), now());
-  emitProjectEvent(req.params.projectId, req.user!.id, "operation.applied", nextRevision, { operationId: parsed.data.operationId, kind: parsed.data.kind, path: parsed.data.path });
+  (await db.prepare("INSERT INTO project_operations (project_id, user_id, operation_id, base_revision, result_revision, kind, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(req.params.projectId, req.user!.id, parsed.data.operationId, project.revision, nextRevision, parsed.data.kind, JSON.stringify({ path: parsed.data.path }), now()));
+  (await emitProjectEvent(req.params.projectId, req.user!.id, "operation.applied", nextRevision, { operationId: parsed.data.operationId, kind: parsed.data.kind, path: parsed.data.path }));
   return true;
-  });
+  }));
   if (!committed) {
-    const latest = db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId) as { revision: number };
+    const latest = (await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.projectId)) as { revision: number };
     res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision });
     return;
   }

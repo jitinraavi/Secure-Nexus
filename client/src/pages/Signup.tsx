@@ -105,15 +105,16 @@ export function Signup() {
       if (res.needsEmailVerification) {
         emailRef.current = email.trim();
         setDevHint(res.devOtp ?? null);
-        setDeliveryFailed(res.emailDelivered === false);
+        const failed = res.emailDelivered === false && !res.devOtp;
+        setDeliveryFailed(failed);
         setVerifyOpen(true);
         setCode("");
         setVerifyError("");
-        startCountdown();
+        if (!failed) startCountdown();
         toast.push({
-          title: "Check your email",
+          title: failed ? "Email delivery unavailable" : res.devOtp ? "Local development code" : "Check your email",
           description: res.message ?? "A 6-digit verification code was sent.",
-          tone: "info",
+          tone: failed ? "error" : "info",
         });
         return;
       }
@@ -153,9 +154,17 @@ export function Signup() {
     try {
       const res = await resendOtp(emailRef.current);
       setDevHint(res.devOtp ?? null);
-      setDeliveryFailed(res.delivered === false);
+      const failed = res.delivered === false && !res.devOtp;
+      setDeliveryFailed(failed);
+      if (failed) {
+        const message = res.mailError || res.message || "We couldn't send the code. Try again or contact the studio administrator.";
+        setVerifyError(message);
+        toast.push({ title: "Couldn't send the code", description: message, tone: "error" });
+        return;
+      }
+      setCode("");
       startCountdown();
-      toast.push({ title: "Code sent", description: res.message, tone: "info" });
+      toast.push({ title: res.devOtp ? "Local development code" : "Code sent", description: res.message, tone: "info" });
     } catch (err) {
       setVerifyError(err instanceof Error ? err.message : "Could not resend");
     } finally {
@@ -169,7 +178,8 @@ export function Signup() {
           <Card className="auth-card">
             <h1 className="text-2xl font-bold text-slate-100">Verify your email</h1>
             <p className="mt-1 text-sm text-slate-400">
-              We sent a 6-digit code to <span className="text-emerald-300">{emailRef.current}</span>.
+              {deliveryFailed ? "We couldn't send a verification code to " : devHint ? "Use the local development code to verify " : "We sent a 6-digit code to "}
+              <span className="text-emerald-300">{emailRef.current}</span>.
             </p>
             <form className="mt-6 space-y-4" onSubmit={event => { event.preventDefault(); if (code.length === 6 && !verifyBusy) void verify(); }}>
               <Input
@@ -184,13 +194,12 @@ export function Signup() {
               />
               {devHint && (
                 <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                  No mail provider configured — dev code: <span className="font-mono font-bold">{devHint}</span>
+                  Local development only — no email was sent. Code: <span className="font-mono font-bold">{devHint}</span>
                 </p>
               )}
               {deliveryFailed && (
                 <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
-                  The email server is unreachable right now, so the code was not delivered. Use the login page's "Email
-                  code" option or contact support.
+                  Email delivery is unavailable. You can retry now, or ask the studio administrator to check the email configuration.
                 </p>
               )}
               {verifyError && <p role="alert" className="text-sm text-rose-400">{verifyError}</p>}

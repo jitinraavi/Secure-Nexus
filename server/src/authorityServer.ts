@@ -10,7 +10,7 @@ import { DesignInputError } from "./designValidation.js";
 import { db, now } from "./db.js";
 import { hashPassword } from "./crypto.js";
 import { passwordSchema } from "./validate.js";
-import { apiLimiter, csrfProtection } from "./security.js";
+import { apiLimiter, asyncHandler, csrfProtection } from "./security.js";
 import { COUNTRIES } from "./payments/pricing.js";
 import authRoutes from "./routes/auth.js";
 import secretRoutes from "./routes/secrets.js";
@@ -31,6 +31,7 @@ import adminBackupRoutes from "./routes/adminBackup.js";
 import { reconcileInterruptedRenderJobs } from "./renderJobs.js";
 import { startDatabaseScheduler, checkpointDatabase } from "./databaseBackup.js";
 import { authorityGatewayMiddleware, normalizeIp, requireAuthorityConfiguration } from "./topology.js";
+import { mountPublicSite } from "./publicSite.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(__dirname, "../../client/dist");
@@ -79,10 +80,10 @@ app.use(express.json({
 
 app.use("/api", csrfProtection);
 
-app.get("/api/health", (_req, res) => {
-  const ok = (db.prepare("SELECT 1 AS ok").get() as { ok: number }).ok === 1;
+app.get("/api/health", asyncHandler(async (_req, res) => {
+  const ok = ((await db.prepare("SELECT 1 AS ok").get()) as { ok: number }).ok === 1;
   res.json({ ok, uptime: process.uptime() });
-});
+}));
 
 app.get("/api/countries", (_req, res) => {
   res.json({
@@ -142,17 +143,8 @@ app.use(
   },
 );
 
-/* Serve the built SPA in production (deployed on Render) */
-if (fs.existsSync(path.join(CLIENT_DIST, "index.html"))) {
-  app.use(express.static(CLIENT_DIST, { index: false, maxAge: "1h" }));
-  app.get(/^(?!\/api).*/, (req, res) => {
-    if (req.method !== "GET") {
-      res.status(405).json({ error: "Method not allowed" });
-      return;
-    }
-    res.sendFile(path.join(CLIENT_DIST, "index.html"));
-  });
-}
+/* Serve the studio at home and retain the React workspace on application routes. */
+mountPublicSite(app, CLIENT_DIST);
 
 app.use(
   (
@@ -169,7 +161,7 @@ app.use(
   },
 );
 
-export function seedDevUserIfEmpty(): void {
+export async function seedDevUserIfEmpty(): Promise<void> {
   if (process.env.GROUNDWORK_SEED_DEMO !== "1") return;
   if (NODE_ENV !== "development" || !isLoopbackAddress(BIND_HOST)) {
     throw new Error("Demo seeding requires development mode and loopback binding");
@@ -178,12 +170,12 @@ export function seedDevUserIfEmpty(): void {
   if (!password || password.length < 12 || !passwordSchema.safeParse(password).success) {
     throw new Error("GROUNDWORK_DEMO_PASSWORD must contain at least 12 characters, a letter and a number");
   }
-  const count = (db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
+  const count = ((await db.prepare("SELECT COUNT(*) AS count FROM users").get()) as { count: number }).count;
   if (count > 0) return;
 
   const t = now();
   const { salt, hash } = hashPassword(password);
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO users (
       id, email, username, email_verified, password_salt, password_hash,
       country, account_type, password_changed_at, created_at, updated_at
@@ -195,10 +187,17 @@ export function seedDevUserIfEmpty(): void {
   console.log("[groundwork] Seeded development demo account");
 }
 
-export function startAuthorityServer() {
-  reconcileInterruptedRenderJobs();
-  seedDevUserIfEmpty();
+export async function startAuthorityServer() {
+  await reconcileInterruptedRenderJobs();
+  await seedDevUserIfEmpty();
   const stopDatabaseScheduler = startDatabaseScheduler();
+  let reconciling = false;
+  const reconciliationTimer = setInterval(() => {
+    if (reconciling) return;
+    reconciling = true;
+    void reconcileInterruptedRenderJobs().finally(() => { reconciling = false; });
+  }, 60_000);
+  reconciliationTimer.unref();
   const server = app.listen(PORT, BIND_HOST, () => {
     console.log(`[groundwork] API listening on http://localhost:${PORT}`);
     console.log(`[groundwork] Environment: ${IS_PROD ? "production" : "development"}`);
@@ -212,12 +211,14 @@ export function startAuthorityServer() {
   function stopResources(): Promise<void> {
     if (!resourceCleanup) {
       stopDatabaseScheduler();
-      resourceCleanup = nativeWorker.stop().then(() => {
+      clearInterval(reconciliationTimer);
+      resourceCleanup = nativeWorker.stop().then(async () => {
         try {
-          checkpointDatabase("TRUNCATE");
+          await checkpointDatabase("TRUNCATE");
         } catch (err) {
           console.error("[groundwork] Shutdown checkpoint failed", { type: err instanceof Error ? err.name : "UnknownError" });
         }
+        await db.close();
       });
     }
     return resourceCleanup;
@@ -227,7 +228,7 @@ export function startAuthorityServer() {
   async function stopServer(): Promise<void> {
     if (stopping) return;
     stopping = true;
-    server.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await stopResources();
     process.exit(0);
   }
@@ -237,7 +238,7 @@ export function startAuthorityServer() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
-  startAuthorityServer();
+  await startAuthorityServer();
 }
 
 export default app;

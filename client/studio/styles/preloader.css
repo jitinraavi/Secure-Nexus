@@ -1,0 +1,22 @@
+.preloader { display: none; }
+.js .preloader { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: var(--paper); transition: opacity 650ms var(--ease-out), transform 850ms var(--ease-in-out), visibility 850ms; }
+.preloader.is-leaving { opacity: 0; transform: translateY(-5%); pointer-events: none; visibility: hidden; }
+.preloader__top, .preloader__bottom { position: absolute; left: var(--gutter); right: var(--gutter); display: flex; justify-content: space-between; gap: 30px; font-family: var(--font-mono); font-size: 10px; letter-spacing: .065em; line-height: 1.7; }
+.preloader__top { top: 42px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.preloader__bottom { bottom: 38px; align-items: flex-end; }
+.preloader__bottom button { background: transparent; border: 0; border-bottom: 1px solid var(--line); padding: 8px 0; font-family: var(--font-sans); font-size: 12px; }
+#loader-count { position: absolute; left: 50%; transform: translateX(-50%); font-size: 36px; line-height: 1; font-weight: 400; letter-spacing: -.05em; color: var(--accent); }
+.ruler-mark { position: relative; width: 1px; height: 1px; perspective: 600px; transform: rotateX(0deg); transition: transform 1300ms var(--ease-out); }
+.ruler-piece { position: absolute; top: -8px; left: 0; width: 70px; height: 16px; background: var(--ink); transform: translateX(var(--start)); transform-origin: left center; clip-path: inset(0); transition: transform 1450ms var(--ease-in-out), clip-path 1450ms var(--ease-in-out), background 1000ms; box-shadow: inset 0 1px rgb(255 255 255 / 8%); }
+.ruler-piece::before { content: ''; position: absolute; inset: 0 0 7px; background: repeating-linear-gradient(90deg, transparent 0 6px, var(--paper) 6px 7px); opacity: .85; }
+.ruler-piece::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 12px; background: repeating-linear-gradient(90deg, transparent 0 34px, var(--paper) 34px 35px); }
+.ruler-piece:nth-child(2) { transition-delay: 70ms; }.ruler-piece:nth-child(3) { transition-delay: 140ms; }.ruler-piece:nth-child(4) { transition-delay: 210ms; }
+.is-folded .ruler-mark { transform: rotateX(12deg) rotateZ(-4deg); }
+.is-folded .ruler-piece { transform: translate(var(--x), var(--y)) rotate(var(--angle)); }
+.ruler-mark::before, .ruler-mark::after { content: ''; position: absolute; z-index: 2; opacity: 0; pointer-events: none; transition: opacity 450ms var(--ease-out) 1150ms, transform 600ms var(--ease-out) 1000ms; }
+.ruler-mark::before { left: 27px; top: -35px; width: 16px; height: 19px; background: var(--accent); }
+.ruler-mark::after { left: 0; top: -8px; width: 35px; height: 16px; background: var(--ink); transform: scaleX(0); transform-origin: right; }
+.is-folded .ruler-piece:nth-child(3) { clip-path: inset(0 0 0 50%); }
+.is-folded .ruler-mark::before, .is-folded .ruler-mark::after { opacity: 1; }
+.is-folded .ruler-mark::after { transform: scaleX(1); }
+@media (max-width: 540px) { .preloader__top { top: 30px; font-size: 8px; } .preloader__top span:last-child { text-align: right; max-width: 100px; } .preloader__bottom { bottom: 28px; font-size: 8px; } .preloader__bottom button { font-size: 10px; } #loader-count { font-size: 28px; bottom: 90px; } }

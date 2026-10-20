@@ -1,3 +1,4 @@
+import { asyncHandler } from "../security.js";
 import { Router } from "express";
 import { decryptAesGcm, deriveVaultKey, sha256Hex } from "../crypto.js";
 import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
@@ -20,12 +21,12 @@ function decryptForUser(payloadJson: string, userId: string): string {
 }
 
 /* Public by design: the random, expiring token is the read-only capability. */
-router.get("/:token", (req, res) => {
-  const row = db.prepare(
+router.get("/:token", asyncHandler(async (req, res) => {
+  const row = (await db.prepare(
     `SELECT l.project_id, l.user_id, l.expires_at, p.name, p.project_type, p.design_data, p.width_mm, p.depth_mm, p.revision, p.created_at, p.updated_at, p.photo_file_id
      FROM project_share_links l JOIN projects p ON p.id = l.project_id
      WHERE l.token_hash = ? AND l.revoked_at IS NULL AND p.organization_id IS NULL`,
-  ).get(sha256Hex(req.params.token)) as {
+  ).get(sha256Hex(req.params.token))) as {
     project_id: string; user_id: string; expires_at: number; name: string; project_type: string;
      design_data: string | null; width_mm: number; depth_mm: number; revision: number; created_at: number; updated_at: number; photo_file_id: string | null;
   } | undefined;
@@ -43,7 +44,7 @@ router.get("/:token", (req, res) => {
   res.set("Cache-Control", "private, no-store");
   res.set("X-Content-Type-Options", "nosniff");
   res.json({ id: row.project_id, name: row.name, projectType: row.project_type, widthMm: row.width_mm, depthMm: row.depth_mm, design, readOnly: true, expiresAt: row.expires_at, revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at, hasPhoto: Boolean(row.photo_file_id) });
-});
+}));
 
 export default router;
 
