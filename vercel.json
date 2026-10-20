@@ -15,7 +15,7 @@
   },
   "routes": [
     {
-      "src": "/(.*)",
+      "src": "^/(.*)$",
       "headers": {
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
@@ -26,50 +26,50 @@
       "continue": true
     },
     {
-      "src": "/api(?:/.*)?",
+      "src": "^/api(?:/.*)?$",
       "headers": {
         "Cache-Control": "private, no-store"
       },
       "continue": true
     },
     {
-      "src": "/sw\\.js",
+      "src": "^/sw\\.js$",
       "headers": {
         "Cache-Control": "no-cache, no-store, must-revalidate"
       },
       "continue": true
     },
     {
-      "src": "/offline-shell\\.json",
+      "src": "^/offline-shell\\.json$",
       "headers": {
         "Cache-Control": "no-cache, no-store, must-revalidate"
       },
       "continue": true
     },
     {
-      "src": "/assets/(.*)",
+      "src": "^/assets/(.*)$",
       "headers": {
         "Cache-Control": "public, max-age=31536000, immutable"
       },
       "continue": true
     },
     {
-      "src": "/api(?:/.*)?",
+      "src": "^/api(?:/.*)?$",
       "dest": "/api/index"
     },
     {
-      "src": "/",
+      "src": "^/$",
       "dest": "/studio.html"
     },
     {
       "handle": "filesystem"
     },
     {
-      "src": "/(?:assets|studio-assets)/.*",
+      "src": "^/(?:assets|studio-assets)/.*$",
       "status": 404
     },
     {
-      "src": "/.*",
+      "src": "^/.*$",
       "dest": "/index.html"
     }
   ]
