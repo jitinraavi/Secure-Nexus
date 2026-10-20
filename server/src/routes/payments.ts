@@ -23,10 +23,10 @@ import { applyTenantReceipt, parseRazorpayPaidReceipt } from "../payments/tenant
 
 const router = Router();
 
-router.use((req: AuthedRequest, res, next) => {
+router.use(asyncHandler(async (req: AuthedRequest, res, next) => {
   // Provider callbacks have no browser session; the handler verifies their signature.
   if (req.method === "POST" && req.path === "/webhook") { next(); return; }
-  const session = resolveSession(req);
+  const session = (await resolveSession(req));
   if (!session || session.status !== "active") {
     res.status(401).json({ error: "Not authenticated" });
     return;
@@ -34,10 +34,10 @@ router.use((req: AuthedRequest, res, next) => {
   req.user = { id: session.user_id, email: "" };
   req.session = session;
   next();
-});
+}));
 
-router.get("/plans", (req: AuthedRequest, res) => {
-  const userRow = db.prepare("SELECT country FROM users WHERE id = ?").get(req.user!.id) as
+router.get("/plans", asyncHandler(async (req: AuthedRequest, res) => {
+  const userRow = (await db.prepare("SELECT country FROM users WHERE id = ?").get(req.user!.id)) as
     | { country?: string }
     | undefined;
   const country = userRow?.country ?? "IN";
@@ -55,23 +55,23 @@ router.get("/plans", (req: AuthedRequest, res) => {
     methods: availableMethods(country),
     country: { iso2: country, name: info.name, currency: info.currency, symbol: info.symbol, digits: info.digits },
   });
-});
+}));
 
-router.get("/", (req: AuthedRequest, res) => {
-  const rows = db
+router.get("/", asyncHandler(async (req: AuthedRequest, res) => {
+  const rows = (await db
     .prepare(
       "SELECT id, provider, method, plan, amount, currency, status, provider_order_id, completed_at, created_at FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
     )
-    .all(req.user!.id);
+    .all(req.user!.id));
   res.json({ payments: rows });
-});
+}));
 
 router.get(
   "/:id",
   asyncHandler(async (req: AuthedRequest, res) => {
-    const row = db
+    const row = (await db
       .prepare("SELECT * FROM payments WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id);
+      .get(req.params.id, req.user!.id));
     if (!row) {
       res.status(404).json({ error: "Payment not found" });
       return;
@@ -104,7 +104,7 @@ router.post(
       res.status(409).json({ error: "Organization capacity requires the separately configured prepaid seat checkout.", code: "tenant_checkout_required" }); return;
     }
     const method = parsed.data.method as PaymentMethod;
-    const user = db.prepare("SELECT email, country FROM users WHERE id = ?").get(req.user!.id) as {
+    const user = (await db.prepare("SELECT email, country FROM users WHERE id = ?").get(req.user!.id)) as {
       email: string;
       country?: string;
     };
@@ -132,12 +132,12 @@ router.post(
         country,
       });
     } catch (err) {
-      logAudit(req.user!.id, "payment.create_failed", { method, message: String(err) }, req);
+      (await logAudit(req.user!.id, "payment.create_failed", { method, message: String(err) }, req));
       res.status(502).json({ error: err instanceof Error ? err.message : "Payment provider error" });
       return;
     }
 
-    db.prepare(
+    (await db.prepare(
       `INSERT INTO payments (id, user_id, organization_id, provider, method, plan, amount, currency, status, provider_order_id, provider_url, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
@@ -153,9 +153,9 @@ router.post(
       created.providerOrderId,
       created.checkoutUrl,
       now(),
-    );
+    ));
 
-    logAudit(req.user!.id, "payment.created", { plan: plan.id, method, provider: created.provider, organizationId }, req);
+    (await logAudit(req.user!.id, "payment.created", { plan: plan.id, method, provider: created.provider, organizationId }, req));
 
     res.status(201).json({
       paymentId: orderId,
@@ -170,36 +170,36 @@ router.post(
 );
 
 interface PersonalReceipt { provider: "razorpay" | "paypal"; receiptId: string; providerOrderId: string; merchantAccountId: string; amount: number; currency: string }
-function markPaid(userId: string, paymentId: string, receipt: PersonalReceipt | "demo", sessionId?: string) {
-  const completed = withTransaction(() => {
-    const payment = db.prepare("SELECT plan, amount, currency, status, organization_id, provider, provider_order_id FROM payments WHERE id = ? AND user_id = ?")
-      .get(paymentId, userId) as { plan: string; amount: number; currency: string; status: string; organization_id: string | null; provider: string; provider_order_id: string } | undefined;
+async function markPaid(userId: string, paymentId: string, receipt: PersonalReceipt | "demo", sessionId?: string) {
+  const completed = (await withTransaction(async () => {
+    const payment = (await db.prepare("SELECT plan, amount, currency, status, organization_id, provider, provider_order_id FROM payments WHERE id = ? AND user_id = ?")
+      .get(paymentId, userId)) as { plan: string; amount: number; currency: string; status: string; organization_id: string | null; provider: string; provider_order_id: string } | undefined;
     if (!payment || payment.organization_id || !["pro", "studio"].includes(payment.plan)) throw new BillingError("Personal payment not found or tenant receipt unsupported", 409, "invalid_payment");
-    if (sessionId && !db.prepare("SELECT id FROM sessions WHERE id=? AND user_id=? AND status='active' AND expires_at>?").get(sessionId, userId, now())) throw new BillingError("Session changed during payment confirmation", 401, "session_changed");
+    if (sessionId && !(await db.prepare("SELECT id FROM sessions WHERE id=? AND user_id=? AND status='active' AND expires_at>?").get(sessionId, userId, now()))) throw new BillingError("Session changed during payment confirmation", 401, "session_changed");
     if (receipt === "demo") {
       if (!isDemoMode() || payment.provider !== "demo") throw new BillingError("Demo confirmation cannot confirm a provider or tenant payment", 403, "demo_only");
     } else {
       if (payment.provider !== receipt.provider || payment.provider_order_id !== receipt.providerOrderId || payment.amount !== receipt.amount || payment.currency !== receipt.currency) throw new BillingError("Receipt does not match the stored personal payment", 400, "invalid_receipt");
-      const prior = db.prepare("SELECT payment_id,receipt_id,provider,amount,currency,provider_order_id,merchant_account_id FROM payment_receipts WHERE (provider=? AND receipt_id=?) OR payment_id=?")
-        .get(receipt.provider, receipt.receiptId, paymentId) as { payment_id: string; receipt_id: string; provider: string; amount: number; currency: string; provider_order_id: string; merchant_account_id: string } | undefined;
+      const prior = (await db.prepare("SELECT payment_id,receipt_id,provider,amount,currency,provider_order_id,merchant_account_id FROM payment_receipts WHERE (provider=? AND receipt_id=?) OR payment_id=?")
+        .get(receipt.provider, receipt.receiptId, paymentId)) as { payment_id: string; receipt_id: string; provider: string; amount: number; currency: string; provider_order_id: string; merchant_account_id: string } | undefined;
       if (prior && (prior.payment_id !== paymentId || prior.receipt_id !== receipt.receiptId || prior.provider !== receipt.provider || prior.amount !== receipt.amount || prior.currency !== receipt.currency || prior.provider_order_id !== receipt.providerOrderId || prior.merchant_account_id !== receipt.merchantAccountId)) throw new BillingError("Receipt already belongs to another payment", 409, "receipt_conflict");
-      if (!prior) db.prepare(`INSERT INTO payment_receipts (provider,receipt_id,payment_id,provider_order_id,merchant_account_id,amount,currency,disposition,received_at) VALUES (?,?,?,?,?,?,?,'applied',?)`)
-        .run(receipt.provider, receipt.receiptId, paymentId, receipt.providerOrderId, receipt.merchantAccountId, receipt.amount, receipt.currency, now());
+      if (!prior) (await db.prepare(`INSERT INTO payment_receipts (provider,receipt_id,payment_id,provider_order_id,merchant_account_id,amount,currency,disposition,received_at) VALUES (?,?,?,?,?,?,?,'applied',?)`)
+        .run(receipt.provider, receipt.receiptId, paymentId, receipt.providerOrderId, receipt.merchantAccountId, receipt.amount, receipt.currency, now()));
     }
     if (payment.status === "paid") return null;
     if (payment.status !== "pending") throw new BillingError("Payment is no longer pending", 409, "payment_closed");
     const plan = planForId(payment.plan);
     if (!plan || plan.id === "free") return null;
     const t = now();
-    const result = db.prepare("UPDATE payments SET status = 'paid', completed_at = ? WHERE id = ? AND user_id = ? AND status != 'paid'")
-      .run(t, paymentId, userId);
+    const result = (await db.prepare("UPDATE payments SET status = 'paid', completed_at = ? WHERE id = ? AND user_id = ? AND status != 'paid'")
+      .run(t, paymentId, userId));
     if (!result.changes) return null;
 
-    db.prepare("UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = ? WHERE id = ?")
-      .run(plan.id, t + plan.periodDays * 86400, t, userId);
+    (await db.prepare("UPDATE users SET plan = ?, plan_expires_at = ?, updated_at = ? WHERE id = ?")
+      .run(plan.id, t + plan.periodDays * 86400, t, userId));
     return { plan: plan.id, amount: payment.amount / 100, currency: payment.currency, organizationId: payment.organization_id };
-  });
-  if (completed) logAudit(userId, "payment.completed", completed, undefined);
+  }));
+  if (completed) (await logAudit(userId, "payment.completed", completed, undefined));
 }
 
 /* POST /api/payments/confirm-demo — ONLY reachable in demo mode */
@@ -215,9 +215,9 @@ router.post(
       res.status(400).json({ error: "Invalid request" });
       return;
     }
-    const payment = db
+    const payment = (await db
       .prepare("SELECT * FROM payments WHERE id = ? AND user_id = ?")
-      .get(parsed.data.paymentId, req.user!.id) as
+      .get(parsed.data.paymentId, req.user!.id)) as
       | { id: string; status: string; plan: string; provider: string; organization_id: string | null }
       | undefined;
     if (!payment) {
@@ -229,7 +229,7 @@ router.post(
       res.json({ ok: true });
       return;
     }
-    markPaid(req.user!.id, payment.id, "demo", req.session!.id);
+    (await markPaid(req.user!.id, payment.id, "demo", req.session!.id));
     res.json({ ok: true });
   }),
 );
@@ -252,9 +252,9 @@ router.post(
       res.status(400).json({ error: "Invalid request" });
       return;
     }
-    const payment = db
+    const payment = (await db
       .prepare("SELECT * FROM payments WHERE id = ? AND user_id = ? AND provider = 'paypal'")
-      .get(parsed.data.paymentId, req.user!.id) as
+      .get(parsed.data.paymentId, req.user!.id)) as
       | { id: string; status: string; provider_order_id: string; amount: number; currency: string; organization_id: string | null }
       | undefined;
     if (!payment || payment.organization_id || payment.provider_order_id !== parsed.data.providerOrderId) {
@@ -321,8 +321,8 @@ router.post(
       unitAmount?.currency_code !== payment.currency || unitAmount.value !== value || !Number.isSafeInteger(amountMinor) || amountMinor !== payment.amount) {
       res.status(502).json({ error: "PayPal receipt does not match the stored order, payer reference, merchant, capture, amount or currency.", code: "invalid_receipt" }); return;
     }
-    markPaid(req.user!.id, payment.id, { provider: "paypal", receiptId: capture.id, providerOrderId: payment.provider_order_id,
-      merchantAccountId: process.env.PAYPAL_MERCHANT_ID, amount: payment.amount, currency: payment.currency }, req.session!.id);
+    (await markPaid(req.user!.id, payment.id, { provider: "paypal", receiptId: capture.id, providerOrderId: payment.provider_order_id,
+      merchantAccountId: process.env.PAYPAL_MERCHANT_ID, amount: payment.amount, currency: payment.currency }, req.session!.id));
     res.json({ ok: true });
   }),
 );
@@ -351,16 +351,16 @@ router.post(
     try {
       const receipt = parseRazorpayPaidReceipt(req.body);
       if (!receipt) { res.json({ ok: true }); return; }
-      const tenant = applyTenantReceipt(receipt);
+      const tenant = (await applyTenantReceipt(receipt));
       if (tenant.handled) { res.json({ ok: true, requiresReview: tenant.requiresReview ?? false }); return; }
-      const payment = db.prepare("SELECT user_id,organization_id FROM payments WHERE id=? AND provider='razorpay'").get(receipt.referenceId) as { user_id: string; organization_id: string | null } | undefined;
+      const payment = (await db.prepare("SELECT user_id,organization_id FROM payments WHERE id=? AND provider='razorpay'").get(receipt.referenceId)) as { user_id: string; organization_id: string | null } | undefined;
       if (payment?.organization_id) { res.status(409).json({ error: "Legacy tenant payment requires operator reconciliation; it cannot grant seats.", code: "legacy_tenant_payment" }); return; }
       if (payment) {
         if (!process.env.RAZORPAY_ACCOUNT_ID || receipt.merchantAccountId !== process.env.RAZORPAY_ACCOUNT_ID || !process.env.RAZORPAY_KEY_ID?.startsWith("rzp_live_")) {
           res.status(503).json({ error: "Razorpay merchant verification is not configured", code: "payment_unconfigured" }); return;
         }
-        markPaid(payment.user_id, receipt.referenceId, { provider: "razorpay", receiptId: receipt.receiptId, providerOrderId: receipt.linkId,
-          merchantAccountId: receipt.merchantAccountId, amount: receipt.amount, currency: receipt.currency });
+        (await markPaid(payment.user_id, receipt.referenceId, { provider: "razorpay", receiptId: receipt.receiptId, providerOrderId: receipt.linkId,
+          merchantAccountId: receipt.merchantAccountId, amount: receipt.amount, currency: receipt.currency }));
       }
     } catch (error) {
       if (error instanceof BillingError) { res.status(error.status).json({ error: error.message, code: error.code }); return; }

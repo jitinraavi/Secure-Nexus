@@ -77,21 +77,21 @@ export function clearSessionCookie(res: Response) {
 
 /* -------------------------------- Session -------------------------------- */
 
-export function createSession(
+export async function createSession(
   res: Response,
   userId: string,
-  opts: { pending2fa?: boolean; isPending?: boolean; credentialVersion?: number } = {},
+  opts: { pending2fa?: boolean; isPending?: boolean; credentialVersion?: number; deferCookies?: boolean } = {},
 ) {
   const raw = randomToken(32);
   const dbCsrf = randomToken(24);
   const ttl = opts.isPending ? PENDING_2FA_TTL_SECONDS : SESSION_TTL_SECONDS;
   const sessionId = randomToken(16);
-  withTransaction(() => {
-    const account = db.prepare("SELECT credential_version FROM users WHERE id=?").get(userId) as { credential_version: number } | undefined;
+  (await withTransaction(async () => {
+    const account = (await db.prepare("SELECT credential_version FROM users WHERE id=?").get(userId)) as { credential_version: number } | undefined;
     if (!account || (opts.credentialVersion !== undefined && opts.credentialVersion !== account.credential_version)) {
       throw Object.assign(new Error("Authentication changed. Sign in again."), { status: 401 });
     }
-    db.prepare(
+    (await db.prepare(
       `INSERT INTO sessions (id, user_id, token_hash, csrf_token, status, user_agent, ip, created_at, last_seen_at, expires_at, credential_version)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
@@ -106,11 +106,15 @@ export function createSession(
       now(),
       now() + ttl,
       account.credential_version,
-    );
-  });
-  setSessionCookie(res, raw, ttl);
-  setCsrfCookie(res, dbCsrf);
-  return { sessionId, csrfToken: dbCsrf, ttl };
+    ));
+  }));
+  const setCookies = () => {
+    setSessionCookie(res, raw, ttl);
+    setCsrfCookie(res, dbCsrf);
+  };
+  // A surrounding credential transaction must commit before cookies are sent.
+  if (!opts.deferCookies) setCookies();
+  return { sessionId, csrfToken: dbCsrf, ttl, setCookies };
 }
 
 /* ------------------------------- Middleware ------------------------------ */
@@ -131,14 +135,14 @@ type SessionRow = {
   totp_attempts: number;
 };
 
-export function resolveSession(req: Request): SessionRow | null {
+export async function resolveSession(req: Request): Promise<SessionRow | null> {
   const raw = (req.cookies as Record<string, string> | undefined)?.[COOKIE_SESSION];
   if (!raw) return null;
-  const row = db
+  const row = (await db
     .prepare(`SELECT s.id,s.user_id,s.csrf_token,s.status,s.expires_at,s.credential_version,s.totp_attempts
       FROM sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=? AND s.credential_version=u.credential_version`)
-    .get(sha256Hex(raw)) as SessionRow | undefined;
+    .get(sha256Hex(raw))) as SessionRow | undefined;
   if (!row) return null;
   if (row.status === "revoked") return null;
   if (row.expires_at <= now()) return null;
@@ -156,15 +160,15 @@ export function allowDevelopmentOtp(req: Request): boolean {
   } catch { return false; }
 }
 
-export function requireSession(req: Request, res: Response, next: NextFunction) {
-  const session = resolveSession(req);
+export const requireSession = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const session = (await resolveSession(req));
   if (!session || session.status !== "active") {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
-  const user = db
+  const user = (await db
     .prepare("SELECT id, email FROM users WHERE id = ?")
-    .get(session.user_id) as { id: string; email: string } | undefined;
+    .get(session.user_id)) as { id: string; email: string } | undefined;
   if (!user) {
     res.status(401).json({ error: "Not authenticated" });
     return;
@@ -173,11 +177,11 @@ export function requireSession(req: Request, res: Response, next: NextFunction) 
   authed.user = user;
   authed.session = session;
   authed.csrfToken = session.csrf_token;
-  db.prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(now(), session.id);
+  (await db.prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(now(), session.id));
   next();
-}
+});
 
-export function csrfProtection(req: Request, res: Response, next: NextFunction) {
+export const csrfProtection = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     next();
     return;
@@ -204,7 +208,7 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
   }
   const headerToken = req.get("x-csrf-token");
   const cookieToken = (req.cookies as Record<string, string> | undefined)?.[COOKIE_CSRF];
-  const session = resolveSession(req);
+  const session = (await resolveSession(req));
   const sessionToken = session?.csrf_token ?? null;
 
   let matches = false;
@@ -223,12 +227,12 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
     return;
   }
   next();
-}
+});
 
 export function asyncHandler(
-  fn: (req: Request, res: Response) => Promise<void> | void,
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<void> | void,
 ): (req: Request, res: Response, next: NextFunction) => void {
   return (req, res, next) => {
-    Promise.resolve(fn(req, res)).catch(next);
+    Promise.resolve().then(() => fn(req, res, next)).catch(next);
   };
 }

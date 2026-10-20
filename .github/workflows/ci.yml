@@ -14,7 +14,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22"
           cache: npm
 
       - name: Install dependencies
@@ -29,8 +29,20 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify integrated deployment output
+        run: node scripts/deployment-preflight.mjs --build-only
+
       - name: Test server
         run: npm run test -w server
 
+      - name: Verify PostgreSQL API flow
+        run: npm run test:postgres-flow
+
       - name: Test browser security helpers
         run: npm run test -w client
+
+      - name: Test studio interactions
+        run: npm run test:studio
+
+      - name: Test private mail setup
+        run: npm run test:mail-setup

@@ -93,7 +93,7 @@ router.post("/plan", asyncHandler(async (req: AuthedRequest, res) => {
   const maximumOutput = assistantOutputTokens();
   let permit;
   try {
-    permit = admitProviderRequest({ userId: req.user!.id, kind: "assistant", tokenBudget: Buffer.byteLength(SYSTEM_PROMPT + requestContent, "utf8") + maximumOutput });
+    permit = (await admitProviderRequest({ userId: req.user!.id, kind: "assistant", tokenBudget: Buffer.byteLength(SYSTEM_PROMPT + requestContent, "utf8") + maximumOutput }));
   } catch (error) {
     if (!(error instanceof ProviderResourceError)) throw error;
     res.status(error.status).json({ error: error.message, code: error.code });
@@ -128,7 +128,7 @@ router.post("/plan", asyncHandler(async (req: AuthedRequest, res) => {
       });
     }
   } finally {
-    releaseProviderPermit(permit);
+    (await releaseProviderPermit(permit));
     req.removeListener("aborted", abort);
     res.removeListener("close", abort);
   }

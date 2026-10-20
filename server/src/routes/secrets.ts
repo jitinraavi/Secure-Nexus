@@ -10,8 +10,8 @@ const router = Router();
 const VAULT_KEY = deriveVaultKey(MASTER_KEY);
 const AAD = "groundwork:vault";
 
-router.use((req: AuthedRequest, res, next) => {
-  const session = resolveSession(req);
+router.use(asyncHandler(async (req: AuthedRequest, res, next) => {
+  const session = (await resolveSession(req));
   if (!session || session.status !== "active") {
     res.status(401).json({ error: "Not authenticated" });
     return;
@@ -20,15 +20,15 @@ router.use((req: AuthedRequest, res, next) => {
   req.session = session;
   req.csrfToken = session.csrf_token;
   next();
-});
+}));
 
 /* GET /api/secrets */
-router.get("/", (req: AuthedRequest, res) => {
-  const rows = db
+router.get("/", asyncHandler(async (req: AuthedRequest, res) => {
+  const rows = (await db
     .prepare(
       "SELECT id, name, created_at, updated_at, LENGTH(ciphertext) AS ciphertext_bytes FROM secrets WHERE user_id = ? ORDER BY created_at DESC",
     )
-    .all(req.user!.id) as {
+    .all(req.user!.id)) as {
     id: string;
     name: string;
     created_at: number;
@@ -45,7 +45,7 @@ router.get("/", (req: AuthedRequest, res) => {
       ciphertextBytes: Number(r.ciphertext_bytes),
     })),
   });
-});
+}));
 
 /* POST /api/secrets */
 router.post(
@@ -60,10 +60,10 @@ router.post(
     const payload = encryptAesGcm(plaintext, VAULT_KEY, `${AAD}:${req.user!.id}`);
     const id = randomId();
     const t = now();
-    db.prepare(
+    (await db.prepare(
       "INSERT INTO secrets (id, user_id, name, iv, tag, ciphertext, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(id, req.user!.id, name, payload.iv, payload.tag, payload.data, t, t);
-    logAudit(req.user!.id, "secret.created", { name }, req);
+    ).run(id, req.user!.id, name, payload.iv, payload.tag, payload.data, t, t));
+    (await logAudit(req.user!.id, "secret.created", { name }, req));
     res.status(201).json({ id, name, createdAt: t, updatedAt: t });
   }),
 );
@@ -72,9 +72,9 @@ router.post(
 router.get(
   "/:id",
   asyncHandler(async (req: AuthedRequest, res) => {
-    const row = db
+    const row = (await db
       .prepare("SELECT * FROM secrets WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id) as
+      .get(req.params.id, req.user!.id)) as
       | { id: string; name: string; iv: string; tag: string; ciphertext: string; created_at: number }
       | undefined;
     if (!row) {
@@ -86,7 +86,7 @@ router.get(
       VAULT_KEY,
       `${AAD}:${req.user!.id}`,
     );
-    logAudit(req.user!.id, "secret.viewed", { name: row.name }, req);
+    (await logAudit(req.user!.id, "secret.viewed", { name: row.name }, req));
     res.json({ id: row.id, name: row.name, plaintext, createdAt: row.created_at });
   }),
 );
@@ -95,15 +95,15 @@ router.get(
 router.delete(
   "/:id",
   asyncHandler(async (req: AuthedRequest, res) => {
-    const row = db
+    const row = (await db
       .prepare("SELECT name FROM secrets WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id) as { name: string } | undefined;
+      .get(req.params.id, req.user!.id)) as { name: string } | undefined;
     if (!row) {
       res.status(404).json({ error: "Secret not found" });
       return;
     }
-    db.prepare("DELETE FROM secrets WHERE id = ? AND user_id = ?").run(req.params.id, req.user!.id);
-    logAudit(req.user!.id, "secret.deleted", { name: row.name }, req);
+    (await db.prepare("DELETE FROM secrets WHERE id = ? AND user_id = ?").run(req.params.id, req.user!.id));
+    (await logAudit(req.user!.id, "secret.deleted", { name: row.name }, req));
     res.json({ ok: true });
   }),
 );

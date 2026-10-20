@@ -1,5 +1,4 @@
 import path from "node:path";
-import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import http, { type IncomingHttpHeaders, type OutgoingHttpHeaders } from "node:http";
 import https from "node:https";
@@ -7,6 +6,7 @@ import { Transform, type TransformCallback } from "node:stream";
 import express, { type Request, type Response } from "express";
 import helmet from "helmet";
 import { browserHostMatches, browserMutationAllowed, normalizeIp, requireSecondaryConfiguration } from "./topology.js";
+import { mountPublicSite } from "./publicSite.js";
 
 const configuration = requireSecondaryConfiguration();
 const clientDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/dist");
@@ -158,10 +158,7 @@ function proxyApi(req: Request, res: Response): void {
 }
 app.use("/api", proxyApi);
 app.use("/api", (_req, res) => { res.status(502).json({ error: "Central API routing failed" }); });
-if (fs.existsSync(path.join(clientDist, "index.html"))) {
-  app.use(express.static(clientDist, { index: false, maxAge: "1h" }));
-  app.get(/^(?!\/api).*/, (_req, res) => { res.sendFile(path.join(clientDist, "index.html")); });
-}
+mountPublicSite(app, clientDist);
 app.use((_req, res) => { res.status(404).json({ error: "Secondary host asset not found" }); });
 app.use((error: unknown, _req: Request, res: Response, _next: express.NextFunction) => {
   console.error("[groundwork] Secondary gateway request failed", error instanceof Error ? error.name : "UnknownError");

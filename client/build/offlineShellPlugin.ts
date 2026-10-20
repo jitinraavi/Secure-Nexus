@@ -7,7 +7,14 @@ import type { Plugin, ResolvedConfig } from "vite";
 const MAX_FILES = 256;
 const MAX_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 96 * 1024 * 1024;
-const PUBLIC_FILES = ["logo.svg", "logo.png", "manifest.webmanifest"];
+const PUBLIC_FILES = [
+  "logo.svg", "logo.png", "manifest.webmanifest",
+  "studio-assets/favicon.svg",
+  "studio-assets/fonts/dm-sans-latin-variable.woff2",
+  "studio-assets/fonts/instrument-serif-latin-italic.woff2",
+  "studio-assets/fonts/instrument-serif-latin-regular.woff2",
+  ...Array.from({ length: 8 }, (_, index) => `studio-assets/images/project-${String(index + 1).padStart(2, "0")}.jpg`),
+];
 const TEMPLATE_TOKEN = "/*__GROUNDWORK_SHELL_INVENTORY__*/null";
 interface ShellAsset { url: string; bytes: number; sha256: string }
 
@@ -39,7 +46,7 @@ export function offlineShellPlugin(): Plugin {
         if (outputRoot !== expectedRoot || options.file) throw new Error("Offline shell requires the configured single output directory");
         const resolvedRoot = await realpath(outputRoot);
         const emitted = Object.keys(bundle);
-        if (!emitted.includes("index.html") || !emitted.some((name) => bundle[name].type === "chunk")) throw new Error("Offline shell requires emitted HTML and application chunks");
+        if (!emitted.includes("index.html") || !emitted.includes("studio.html") || !emitted.some((name) => bundle[name].type === "chunk")) throw new Error("Offline shell requires both studio and workspace HTML with application chunks");
         if (emitted.some((name) => !assetName(name) || name === "sw.js" || name === "offline-shell.json")) throw new Error("Offline shell encountered an unsupported or reserved asset name");
         const emittedNames = new Set(emitted);
         for (const item of Object.values(bundle)) {

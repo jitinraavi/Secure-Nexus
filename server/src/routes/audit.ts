@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { db, now } from "../db.js";
-import { AuthedRequest, requireSession } from "../security.js";
+import { asyncHandler, type AuthedRequest, requireSession } from "../security.js";
 
 const router = Router();
 
 router.use(requireSession);
 
 /* Stable personal audit pages: id is a unique cursor even when timestamps match. */
-router.get("/", (req: AuthedRequest, res) => {
+router.get("/", asyncHandler(async (req: AuthedRequest, res) => {
   const integer = (value: unknown, minimum: number): number | undefined => {
     if (value === undefined) return undefined;
     if (typeof value !== "string" || !/^\d+$/.test(value)) return NaN;
@@ -25,7 +25,7 @@ router.get("/", (req: AuthedRequest, res) => {
     res.status(400).json({ error: "Invalid audit filters or cursor" }); return;
   }
   const limit = Math.min(requestedLimit ?? 50, 200);
-  const latest = db.prepare("SELECT COALESCE(MAX(id), 0) AS id FROM audit_logs WHERE user_id = ?").get(req.user!.id) as { id: number };
+  const latest = (await db.prepare("SELECT COALESCE(MAX(id), 0) AS id FROM audit_logs WHERE user_id = ?").get(req.user!.id)) as { id: number };
   const snapshotId = Math.min(requestedSnapshot ?? Number(latest.id), Number(latest.id));
   const clauses = ["user_id = ?", "id <= ?"];
   const values: (string | number)[] = [req.user!.id, snapshotId];
@@ -33,12 +33,12 @@ router.get("/", (req: AuthedRequest, res) => {
   if (beforeId !== undefined) { clauses.push("id < ?"); values.push(beforeId); }
   if (from !== undefined) { clauses.push("created_at >= ?"); values.push(from); }
   if (to !== undefined) { clauses.push("created_at <= ?"); values.push(to); }
-  const rows = db.prepare(`SELECT id, action, detail, ip, user_agent, created_at FROM audit_logs WHERE ${clauses.join(" AND ")} ORDER BY id DESC LIMIT ?`)
-    .all(...values, limit + 1) as unknown as AuditRow[];
+  const rows = (await db.prepare(`SELECT id, action, detail, ip, user_agent, created_at FROM audit_logs WHERE ${clauses.join(" AND ")} ORDER BY id DESC LIMIT ?`)
+    .all(...values, limit + 1)) as unknown as AuditRow[];
   const events = rows.slice(0, limit);
   res.set("Cache-Control", "private, no-store");
   res.json({ events, snapshotId, nextBeforeId: rows.length > limit ? events[events.length - 1]?.id ?? null : null });
-});
+}));
 
 interface AuditRow {
   id: number;
@@ -50,42 +50,42 @@ interface AuditRow {
 }
 
 /* GET /api/audit/stats — aggregates for the dashboard */
-router.get("/stats", (req: AuthedRequest, res) => {
+router.get("/stats", asyncHandler(async (req: AuthedRequest, res) => {
   const uid = req.user!.id;
   const dayAgo = now() - 86400;
 
   const activeSessions = Number(
-    (db
+    ((await db
       .prepare("SELECT COUNT(*) AS c FROM sessions WHERE user_id = ? AND status = 'active' AND expires_at > ?")
-      .get(uid, now()) as { c: number }).c,
+      .get(uid, now())) as { c: number }).c,
   );
   const secretsCount = Number(
-    (db.prepare("SELECT COUNT(*) AS c FROM secrets WHERE user_id = ?").get(uid) as { c: number }).c,
+    ((await db.prepare("SELECT COUNT(*) AS c FROM secrets WHERE user_id = ?").get(uid)) as { c: number }).c,
   );
   const projectsCount = Number(
-    (db.prepare("SELECT COUNT(*) AS c FROM projects WHERE user_id = ?").get(uid) as { c: number }).c,
+    ((await db.prepare("SELECT COUNT(*) AS c FROM projects WHERE user_id = ?").get(uid)) as { c: number }).c,
   );
   const failedLogins24h = Number(
-    (db
+    ((await db
       .prepare("SELECT COUNT(*) AS c FROM audit_logs WHERE user_id = ? AND action = 'auth.login_failed' AND created_at > ?")
-      .get(uid, dayAgo) as { c: number }).c,
+      .get(uid, dayAgo)) as { c: number }).c,
   );
   const logins24h = Number(
-    (db
+    ((await db
       .prepare("SELECT COUNT(*) AS c FROM audit_logs WHERE user_id = ? AND action IN ('auth.login','auth.2fa_verified') AND created_at > ?")
-      .get(uid, dayAgo) as { c: number }).c,
+      .get(uid, dayAgo)) as { c: number }).c,
   );
   const signupsEver = Number(
-    (db
+    ((await db
       .prepare("SELECT COUNT(*) AS c FROM audit_logs WHERE user_id = ? AND action = 'auth.signup'")
-      .get(uid) as { c: number }).c,
+      .get(uid)) as { c: number }).c,
   );
   const enabled2fa = Boolean(
-    (db.prepare("SELECT totp_enabled FROM users WHERE id = ?").get(uid) as { totp_enabled: number })
+    ((await db.prepare("SELECT totp_enabled FROM users WHERE id = ?").get(uid)) as { totp_enabled: number })
       .totp_enabled,
   );
   const lastLogin = (
-    db.prepare("SELECT last_login_at FROM users WHERE id = ?").get(uid) as {
+    (await db.prepare("SELECT last_login_at FROM users WHERE id = ?").get(uid)) as {
       last_login_at: number | null;
     }
   ).last_login_at;
@@ -100,6 +100,6 @@ router.get("/stats", (req: AuthedRequest, res) => {
     enabled2fa,
     lastLogin,
   });
-});
+}));
 
 export default router;

@@ -13,7 +13,7 @@ export const startAuthorityServer = authority.startAuthorityServer;
 const isDirectRun = Boolean(process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url)));
 
 if (isDirectRun) {
-  startAuthorityServer();
+  await startAuthorityServer();
 }
 
 export default app;

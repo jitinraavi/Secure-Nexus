@@ -5,7 +5,6 @@ import { SplashScreen } from "./components/SplashScreen";
 import { Spinner } from "./components/ui";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 
-const Landing = lazy(() => import("./pages/Landing").then((m) => ({ default: m.Landing })));
 const Layout = lazy(() => import("./components/Layout").then((m) => ({ default: m.Layout })));
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
 const Signup = lazy(() => import("./pages/Signup").then((m) => ({ default: m.Signup })));
@@ -46,6 +45,11 @@ function PublicOnly({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function StudioHome() {
+  useEffect(() => { window.location.replace("/"); }, []);
+  return <FullScreenLoading />;
+}
+
 export default function App() {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -59,7 +63,7 @@ export default function App() {
       <AppErrorBoundary resetKey={pathname}>
       <Suspense fallback={<FullScreenLoading />}>
       <Routes>
-      <Route path="/" element={<Landing />} />
+      <Route path="/" element={<StudioHome />} />
       <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
       <Route path="/signup" element={<PublicOnly><Signup /></PublicOnly>} />
       <Route path="/verify-2fa" element={<PublicOnly><VerifyTwoFactor /></PublicOnly>} />

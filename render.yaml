@@ -1,32 +1,47 @@
-# Render Blueprint — Groundwork Design Studio
-# Deploy: connect this repo, or 'New Web Service' -> 'From render.yaml'
+# Authoritative application with hosted Supabase PostgreSQL and durable native-job scratch storage.
 services:
   - type: web
     name: groundwork-design-studio
     runtime: node
     plan: starter
     region: oregon
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    buildCommand: npm ci && npm run build && node scripts/deployment-preflight.mjs --build-only
+    startCommand: node scripts/deployment-preflight.mjs --check-build && npm start
     healthCheckPath: /api/health
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: NODE_ENV
         value: production
-      # Since MASTER_KEY encrypts every project/photo, it must never change.
-      # Set once in Render and keep this value unchanged.
-      - key: MASTER_KEY
-        sync: false
+      - key: GROUNDWORK_SERVER_ROLE
+        value: authority
+      - key: GROUNDWORK_AUTHORITY_GATEWAY_MODE
+        value: direct
       - key: GROUNDWORK_DATA_DIR
         value: /var/data
-      - key: PORT
-        value: 10000
-      # Payments default to DEMO mode (no credentials needed, fake checkout).
-      # Configure live payment credentials to enable paid checkout:
-      #   RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET / RAZORPAY_WEBHOOK_SECRET
-      #   PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET  (PAYPAL_MODE=live for prod)
+      - key: DATABASE_PROVIDER
+        value: supabase
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_POOL_MAX
+        value: "5"
+      - key: MASTER_KEY
+        sync: false
+      - key: PUBLIC_APP_ORIGIN
+        sync: false
+      - key: GROUNDWORK_TRUSTED_PROXY_IPS
+        sync: false
+      - key: MAIL_PROVIDER
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      # Add SMTP variables or RESEND_API_KEY in the platform secret store.
       - key: PAYMENTS_MODE
         value: live
-        sync: false
+      - key: NATIVE_WORKER_ENABLED
+        value: "false"
+      - key: NATIVE_ISOLATION_ACKNOWLEDGED
+        value: "false"
     disk:
       name: data
       mountPath: /var/data

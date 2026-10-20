@@ -20,7 +20,7 @@ function readInventory(value) {
     urls.add(asset.url); bytes += asset.bytes;
     if (bytes > MAX_TOTAL_BYTES) throw new Error("Shell byte budget exceeded");
   }
-  if (!urls.has("/index.html") || !value.assets.some((asset) => asset.url.endsWith(".js")) || bytes !== value.totalBytes) throw new Error("Shell inventory is incomplete");
+  if (!urls.has("/index.html") || !urls.has("/studio.html") || !value.assets.some((asset) => asset.url.endsWith(".js")) || bytes !== value.totalBytes) throw new Error("Shell inventory is incomplete");
   return value;
 }
 let inventory = null;
@@ -146,13 +146,18 @@ self.addEventListener("fetch", (event) => {
   if (!inventory || !cacheName || request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== origin || /^\/api(?:\/|$)/i.test(url.pathname)) return;
+  // Missing files retain their network 404 instead of receiving an HTML shell.
+  if (/^\/(?:assets|studio-assets)(?:\/|$)/i.test(url.pathname) && !assets.has(url.pathname)) return;
   if (request.mode === "navigate") {
-    // Route/query HTML is never read into Cache Storage. Every navigation uses
-    // the same verified public entry for this worker's immutable application.
+    const entry = url.pathname === "/" || url.pathname === "/studio.html" ? "/studio.html" : "/index.html";
+    if (/\.[a-z0-9]{1,12}$/i.test(url.pathname) && !["/studio.html", "/index.html"].includes(url.pathname)
+      && !/^\/(?:editor|share)\/[^/]+\/?$/.test(url.pathname)) return;
+    // Route/query HTML is never cached. Both documents come from this worker's
+    // complete, fingerprinted build; private API responses remain network-only.
     event.respondWith((async () => {
       try {
-        const cached = await (await caches.open(cacheName)).match(`${origin}/index.html`);
-        if (validCached(cached, assets.get("/index.html"))) return cached;
+        const cached = await (await caches.open(cacheName)).match(`${origin}${entry}`);
+        if (validCached(cached, assets.get(entry))) return cached;
       } catch { failure = "Offline shell storage is unavailable"; }
       return fetch(request);
     })());

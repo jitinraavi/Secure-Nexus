@@ -57,9 +57,7 @@ export function Login() {
       const res = await requestOtpLogin(identifier.trim());
       const failed = res.delivered === false && !res.devOtp;
       if (failed) {
-        const message = res.mailError
-          ? `The email service rejected the message: ${res.mailError}`
-          : res.message || "We couldn't send the code. Please try again shortly.";
+        const message = `${res.mailError || res.message || "We couldn't send the code."} You can use the Password option to sign in, or contact the studio administrator.`;
         setError(message);
         toast.push({ title: "Couldn't send the code", description: message, tone: "error" });
         return;
@@ -67,7 +65,7 @@ export function Login() {
       setOtpRequested(true);
       setCode("");
       toast.push({
-        title: "Code sent",
+        title: res.devOtp ? "Local development code" : "Code sent",
         description: res.devOtp
           ? `Development code: ${res.devOtp}`
           : res.message || "Check your inbox for a 6-digit login code.",
@@ -190,7 +188,7 @@ export function Login() {
 
           {mode === "otp" && otpRequested && (
             <form onSubmit={submitOtp} className="mt-6 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="public-auth-identity">
                 <Input
                   label="Email or username"
                   type="text"
