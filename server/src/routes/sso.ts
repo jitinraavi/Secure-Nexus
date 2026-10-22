@@ -6,6 +6,7 @@ import { decryptAesGcm, deriveVaultKey, encryptAesGcm, randomToken, sha256Hex } 
 import { db, now, withTransaction } from "../db.js";
 import { organizationAdmin, organizationAudit, organizationRole } from "../organization.js";
 import { asyncHandler, createSession, requireSession, resolveSession, strictLimiter, type AuthedRequest } from "../security.js";
+import { outboundRequest } from "../outbound.js";
 
 const router = Router();
 const key = deriveVaultKey(MASTER_KEY);
@@ -32,13 +33,9 @@ function open(value: string, organizationId: string) {
   catch (error) { if (!previousKey) throw error; return decryptAesGcm(payload, previousKey, `groundwork:sso:${organizationId}`); }
 }
 async function boundedJson(url: URL, init: RequestInit = {}): Promise<Record<string, unknown>> {
-  const response = await fetch(url, { ...init, redirect: "error", signal: AbortSignal.timeout(8000) });
+  const response = await outboundRequest(url, init, { service: "sso", allowedHosts: [...allowedHosts], timeoutMs: 8_000, maximumBytes: 256_000 });
   if (!response.ok) throw new Error("Identity provider request failed");
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Identity provider response is empty");
-  const chunks: Uint8Array[] = []; let length = 0;
-  for (;;) { const part = await reader.read(); if (part.done) break; length += part.value.length; if (length > 256000) { await reader.cancel(); throw new Error("Identity provider response exceeds limit"); } chunks.push(part.value); }
-  const data: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const data: unknown = JSON.parse(response.text);
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Identity provider response is invalid");
   return data as Record<string, unknown>;
 }

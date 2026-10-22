@@ -12,6 +12,14 @@ A deployable, full-stack design studio for interior designers, architects and si
 
 Stack: Node 22 · Express · Supabase PostgreSQL (SQLite local/test fallback) · React 18 · Vite · Tailwind v4 · three.js.
 
+Release 1.1 adds shared request limits and circuit breakers, revision-safe saves and restores,
+atomic collaboration leases, bounded SSE streams, encrypted render inputs, key rotation,
+redacted tracing, SLO metrics, operational alerts and audited feature controls.
+The stable API prefix is `/api/v1`; installed clients may continue using `/api`.
+Design writes and snapshot restores require the last observed `baseRevision`.
+Read [operations](docs/OPERATIONS.md), [recovery](docs/DURABLE-RECOVERY.md), and
+[release controls](docs/RELEASE.md) before deploying changes or restoring data.
+
 For the product overview, competitor positioning and full verified technology
 inventory, read the [project documentation](docs/PROJECT-DOCUMENTATION.md).
 A [formatted browser version](docs/PROJECT-DOCUMENTATION.html) and a

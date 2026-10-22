@@ -1,13 +1,15 @@
 import { Router } from "express";
 import { logAudit } from "../audit.js";
-import { deriveVaultKey, encryptAesGcm, decryptAesGcm, randomId } from "../crypto.js";
-import { MASTER_KEY } from "../config.js";
+import { deriveVaultKey, encryptAesGcm, randomId } from "../crypto.js";
+import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
 import { db, now } from "../db.js";
 import { asyncHandler, AuthedRequest, resolveSession } from "../security.js";
 import { createSecretSchema } from "../validate.js";
+import { decryptWithKeyRotation } from "../vaultCrypto.js";
 
 const router = Router();
 const VAULT_KEY = deriveVaultKey(MASTER_KEY);
+const PREVIOUS_VAULT_KEY = PREVIOUS_MASTER_KEY ? deriveVaultKey(PREVIOUS_MASTER_KEY) : null;
 const AAD = "groundwork:vault";
 
 router.use(asyncHandler(async (req: AuthedRequest, res, next) => {
@@ -81,11 +83,19 @@ router.get(
       res.status(404).json({ error: "Secret not found" });
       return;
     }
-    const plaintext = decryptAesGcm(
+    const { plaintext, resealed } = decryptWithKeyRotation(
       { iv: row.iv, tag: row.tag, data: row.ciphertext },
       VAULT_KEY,
+      PREVIOUS_VAULT_KEY,
       `${AAD}:${req.user!.id}`,
     );
+    if (resealed) {
+      // Compare the authenticated ciphertext so rotation cannot resurrect a
+      // deleted value or overwrite a concurrent replacement. Logical timestamps
+      // stay intact because key rotation does not change the secret's contents.
+      await db.prepare("UPDATE secrets SET iv=?,tag=?,ciphertext=? WHERE id=? AND user_id=? AND iv=? AND tag=? AND ciphertext=?")
+        .run(resealed.iv, resealed.tag, resealed.data, row.id, req.user!.id, row.iv, row.tag, row.ciphertext);
+    }
     (await logAudit(req.user!.id, "secret.viewed", { name: row.name }, req));
     res.json({ id: row.id, name: row.name, plaintext, createdAt: row.created_at });
   }),

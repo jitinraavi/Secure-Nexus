@@ -1,4 +1,5 @@
 import { sha256Hex } from "./crypto.js";
+import { outboundRequest } from "./outbound.js";
 
 const endpoint = process.env.COLLABORATION_REDIS_REST_URL || "";
 const token = process.env.COLLABORATION_REDIS_REST_TOKEN || "";
@@ -13,19 +14,14 @@ export async function redisCommand<T>(command: (string | number)[]): Promise<T> 
   if (!redisTransportConfigured) throw new Error("Redis collaboration transport is not configured");
   const url = new URL(endpoint);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error("Redis REST transport requires a plain HTTPS endpoint");
-  const response = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(command), redirect: "error", signal: AbortSignal.timeout(5000) });
+  // Streams publish with XADD are deliberately single-attempt. Retrying a lost
+  // acknowledgement would publish a second event. Read-only commands can replay.
+  const safeToRetry = ["GET", "MGET", "XRANGE", "ZRANGE", "PING"].includes(String(command[0]).toUpperCase());
+  const response = await outboundRequest(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(command) }, {
+    service: "collaboration-redis", allowedOrigins: [url.origin], timeoutMs: 5_000, maximumBytes: 4_000_000, safeToRetry,
+  });
   if (!response.ok) throw new Error("Redis collaboration transport unavailable");
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Redis response is empty");
-  const chunks: Uint8Array[] = []; let length = 0;
-  for (;;) {
-    const part = await reader.read(); if (part.done) break;
-    length += part.value.length;
-    if (length > 4_000_000) { await reader.cancel(); throw new Error("Redis response exceeds transport limit"); }
-    chunks.push(part.value);
-  }
-  const text = Buffer.concat(chunks).toString("utf8");
-  const data = JSON.parse(text) as { result?: T; error?: string };
+  const data = JSON.parse(response.text) as { result?: T; error?: string };
   if (data.error || !("result" in data)) throw new Error("Redis collaboration command rejected");
   return data.result as T;
 }

@@ -4,8 +4,10 @@ import { AI } from "../config.js";
 import { asyncHandler, requireSession, type AuthedRequest } from "../security.js";
 import {
   admitProviderRequest, assistantOutputTokens, isBoundedProviderJson, ProviderResourceError,
-  readProviderBody, releaseProviderPermit, withProviderDeadline,
+  releaseProviderPermit, withProviderDeadline,
 } from "../providerBudget.js";
+import { configuredDestination, outboundRequest, OutboundRequestError } from "../outbound.js";
+import { CircuitOpenError } from "../runtimeResilience.js";
 
 const finiteNumber = z.number().finite();
 const point = z.object({ x: finiteNumber, y: finiteNumber, z: finiteNumber }).strict();
@@ -105,15 +107,15 @@ router.post("/plan", asyncHandler(async (req: AuthedRequest, res) => {
   res.once("close", abort);
   try {
     const body = await withProviderDeadline(permit.timeoutMs, async (signal) => {
-      const provider = await fetch(endpoint, {
+      const provider = await outboundRequest(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${AI.apiKey}` },
         body: JSON.stringify(endpoint.endsWith("/responses")
           ? { model: AI.model || "default", max_output_tokens: maximumOutput, temperature: 0.1, input: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: requestContent }], text: { format: { type: "json_object" } } }
           : { model: AI.model || "default", max_tokens: maximumOutput, temperature: 0.1, response_format: { type: "json_object" }, messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: requestContent }] }),
         signal,
-      });
-      const text = await readProviderBody(provider, provider.ok ? 256 * 1024 : 16 * 1024, signal);
+      }, { ...configuredDestination(endpoint, process.env.AI_ALLOWED_HOSTS), service: "assistant", timeoutMs: permit.timeoutMs, maximumBytes: 256 * 1024, errorMaximumBytes: 16 * 1024, safeToRetry: false });
+      const text = provider.text;
       if (!provider.ok) throw new ProviderResourceError(502, `Assistant provider request failed (${provider.status})`, "PROVIDER_REQUEST_FAILED");
       try { return JSON.parse(text) as unknown; }
       catch { throw new ProviderResourceError(502, "Assistant provider returned invalid JSON", "PROVIDER_RESPONSE_INVALID"); }
@@ -122,9 +124,11 @@ router.post("/plan", asyncHandler(async (req: AuthedRequest, res) => {
     res.json({ source: "ai", model: AI.model || "default", assistantMessage: plan.summary, plan: { ...plan, warnings: [...new Set([...plan.warnings, SAFETY])] } });
   } catch (error) {
     if (!res.destroyed) {
-      res.status(error instanceof ProviderResourceError ? error.status : 502).json({
-        error: error instanceof ProviderResourceError ? error.message : "Assistant request failed or returned an invalid action plan",
-        code: error instanceof ProviderResourceError ? error.code : "PROVIDER_RESPONSE_INVALID",
+      const known = error instanceof ProviderResourceError || error instanceof OutboundRequestError || error instanceof CircuitOpenError;
+      if (error instanceof CircuitOpenError) res.set("Retry-After", String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))));
+      res.status(known ? error.status : 502).json({
+        error: known ? error.message : "Assistant request failed or returned an invalid action plan",
+        code: known ? error.code : "PROVIDER_RESPONSE_INVALID",
       });
     }
   } finally {

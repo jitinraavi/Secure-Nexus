@@ -1,4 +1,4 @@
-import { ApiError, getCsrfToken } from "../api";
+import { request } from "../api";
 
 export type OrganizationRole = "owner" | "admin" | "editor" | "viewer";
 export interface Organization { id: string; name: string; seatLimit: number; seatsUsed: number; auditRetentionDays: number; role: OrganizationRole }
@@ -59,16 +59,7 @@ export interface TenantBillingOrder { id: string; organizationId: string; target
 export interface OrganizationAuditPage { events: { id: number; actorId: string | null; action: string; detail: unknown; createdAt: number }[]; nextBeforeId: number | null }
 export interface SsoConfiguration { issuer: string; clientId: string; redirectUri: string; enabled: boolean; hasSecret: boolean }
 export async function organizationRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const token = getCsrfToken();
-  if (method !== "GET" && token) headers["x-csrf-token"] = token;
-  const response = await fetch(path, { method, headers, credentials: "same-origin", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  if (!response.ok) {
-    let message = `Request failed (${response.status})`;
-    try { const result = await response.json() as { error?: string }; message = result.error || message; } catch { /* preserve HTTP error */ }
-    throw new ApiError(response.status, message);
-  }
-  return response.json() as Promise<T>;
+  return request<T>(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }
 const orgPath = (id: string) => `/api/organizations/${encodeURIComponent(id)}`;
 export const listOrganizations = () => organizationRequest<{ organizations: Organization[]; seatEntitlement: number }>("/api/organizations");

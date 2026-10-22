@@ -20,6 +20,7 @@ import { randomId } from "../crypto.js";
 import { z } from "zod";
 import { BillingError } from "../organization.js";
 import { applyTenantReceipt, parseRazorpayPaidReceipt } from "../payments/tenantBilling.js";
+import { outboundRequest } from "../outbound.js";
 
 const router = Router();
 
@@ -269,39 +270,36 @@ router.post(
     const base = process.env.PAYPAL_MODE === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
     const clientId = process.env.PAYPAL_CLIENT_ID!;
     const clientSecret = process.env.PAYPAL_CLIENT_SECRET!;
-    const authRes = await fetch(`${base}/v1/oauth2/token`, {
+    const authRes = await outboundRequest(`${base}/v1/oauth2/token`, {
       method: "POST",
-      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: "grant_type=client_credentials",
-    });
-    const auth = (await authRes.json()) as { access_token?: string };
+    }, { service: "paypal-auth", allowedOrigins: [base], timeoutMs: 20_000, safeToRetry: true });
+    const auth = JSON.parse(authRes.text) as { access_token?: string };
     if (!authRes.ok || !auth.access_token) {
       res.status(502).json({ error: "PayPal authentication failed" });
       return;
     }
-    const cap = await fetch(`${base}/v2/checkout/orders/${encodeURIComponent(payment.provider_order_id)}/capture`, {
+    await outboundRequest(`${base}/v2/checkout/orders/${encodeURIComponent(payment.provider_order_id)}/capture`, {
       method: "POST",
-      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization: `Bearer ${auth.access_token}`,
         "Content-Type": "application/json",
         "PayPal-Request-Id": crypto.createHash("sha256").update(`paypal-capture:${payment.id}`).digest("hex").slice(0, 32),
         Prefer: "return=representation",
       },
-    });
-    await cap.body?.cancel();
+    }, { service: "paypal-capture", allowedOrigins: [base], timeoutMs: 20_000, safeToRetry: false });
     // Capture representations may omit the original unit metadata. The full
     // authenticated order supplies references/payee plus captured payments;
     // it also reconciles a prior successful capture whose response was lost.
-    const fetched = await fetch(`${base}/v2/checkout/orders/${encodeURIComponent(payment.provider_order_id)}`, {
-      headers: { Authorization: `Bearer ${auth.access_token}` }, signal: AbortSignal.timeout(20000),
-    });
+    const fetched = await outboundRequest(`${base}/v2/checkout/orders/${encodeURIComponent(payment.provider_order_id)}`, {
+      headers: { Authorization: `Bearer ${auth.access_token}` },
+    }, { service: "paypal-orders", allowedOrigins: [base], timeoutMs: 20_000 });
     if (!fetched.ok) { res.status(502).json({ error: "PayPal capture could not be verified" }); return; }
-    const captured: unknown = await fetched.json();
+    const captured: unknown = JSON.parse(fetched.text);
     const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
     const result = object(captured), units = result?.purchase_units;
     const unit = Array.isArray(units) && units.length === 1 ? object(units[0]) : null;

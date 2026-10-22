@@ -33,6 +33,9 @@ import { startDatabaseScheduler, checkpointDatabase } from "./databaseBackup.js"
 import { authorityGatewayMiddleware, normalizeIp, requireAuthorityConfiguration } from "./topology.js";
 import { mountPublicSite } from "./publicSite.js";
 import { vercelRequestContext } from "./serverlessRuntime.js";
+import { telemetryMiddleware, drainTelemetry } from "./telemetry.js";
+import operationsRoutes, { operationalTokenMatches } from "./routes/operations.js";
+import { featureFlagGuard } from "./featureFlags.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(__dirname, "../../client/dist");
@@ -66,9 +69,22 @@ app.use(
   }),
 );
 
+// Stable v1 prefix; retain the original path for existing installed clients.
+app.use((req, res, next) => {
+  if (/^\/api\/v1(?:\/|\?|$)/.test(req.url)) req.url = req.url.replace(/^\/api\/v1/, "/api");
+  if (/^\/api(?:\/|\?|$)/.test(req.url)) res.setHeader("X-API-Version", "1");
+  next();
+});
+app.use("/api", telemetryMiddleware);
 if (SERVERLESS) app.use("/api", vercelRequestContext(process.env));
 app.use("/api", authorityGatewayMiddleware(topology));
-app.use("/api", apiLimiter);
+app.get("/api/live", (_req, res) => { res.json({ ok: true }); });
+app.use("/api", (req, res, next) => {
+  const machinePath = /^\/ops\/(?:check|metrics|traces|backup-report|flags(?:\/[a-z]+)?)$/.test(req.path);
+  const trusted = machinePath && (operationalTokenMatches(req.get("authorization"), process.env.OPERATIONS_TOKEN)
+    || (req.path === "/ops/check" && req.method === "GET" && operationalTokenMatches(req.get("authorization"), process.env.CRON_SECRET)));
+  if (trusted) next(); else apiLimiter(req, res, next);
+});
 app.use(cookieParser());
 app.use(express.json({
   limit: SERVERLESS ? "4mb" : "8mb",
@@ -80,7 +96,10 @@ app.use(express.json({
   },
 }));
 
+// Operations use a dedicated bearer credential, never browser cookies.
+app.use("/api/ops", operationsRoutes);
 app.use("/api", csrfProtection);
+
 
 app.get("/api/health", asyncHandler(async (_req, res) => {
   const ok = ((await db.prepare("SELECT 1 AS ok").get()) as { ok: number }).ok === 1;
@@ -97,14 +116,18 @@ app.use("/api/auth", authRoutes);
 app.use("/api/secrets", secretRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/projects/:projectId/workspaces", workspaceRoutes);
-app.use("/api/projects/:projectId/jobs", nativeJobRoutes);
-app.use("/api/projects/:projectId/renders", renderJobRoutes);
+app.use("/api/projects/:projectId/jobs", (req, res, next) => {
+  if (IS_PROD && !SERVERLESS && req.method === "POST" && req.path === "/") featureFlagGuard("native")(req, res, next); else next();
+}, nativeJobRoutes);
+app.use("/api/projects/:projectId/renders", (req, res, next) => {
+  if (IS_PROD && !SERVERLESS && req.method === "POST" && (req.path === "/" || /^\/[a-f0-9]{32}\/retry$/.test(req.path))) featureFlagGuard("render")(req, res, next); else next();
+}, renderJobRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/share", shareRoutes);
 app.use("/api/payments", paymentRoutes);
-app.use("/api/assistant", assistantRoutes);
+app.use("/api/assistant", featureFlagGuard("assistant"), assistantRoutes);
 app.use("/api/cad-exchange", cadExchangeRoutes);
-app.use("/api/collaboration", collaborationRoutes);
+app.use("/api/collaboration", featureFlagGuard("collaboration"), collaborationRoutes);
 app.use("/api/organizations", organizationRoutes);
 app.use("/api/sso", ssoRoutes);
 app.use("/api/admin/backups", adminBackupRoutes);
@@ -158,7 +181,7 @@ app.use(
     if (err instanceof DesignInputError) {
       res.status(err.status).json({ error: err.message, code: err.code }); return;
     }
-    console.error("[groundwork] Unhandled request error", { type: err instanceof Error ? err.name : "UnknownError" });
+    console.error("[groundwork] Unhandled request error", { type: err instanceof Error ? err.name : "UnknownError", requestId: res.getHeader("x-request-id") });
     res.status(500).json({ error: "Internal server error" });
   },
 );
@@ -221,6 +244,7 @@ export async function startAuthorityServer() {
         } catch (err) {
           console.error("[groundwork] Shutdown checkpoint failed", { type: err instanceof Error ? err.name : "UnknownError" });
         }
+        await drainTelemetry();
         await db.close();
       });
     }
@@ -231,7 +255,10 @@ export async function startAuthorityServer() {
   async function stopServer(): Promise<void> {
     if (stopping) return;
     stopping = true;
+    const force = setTimeout(() => { server.closeAllConnections(); }, 10_000);
+    force.unref();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    clearTimeout(force);
     await stopResources();
     process.exit(0);
   }

@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import rateLimit from "express-rate-limit";
+import { sharedRateLimiter } from "./sharedRateLimit.js";
 import {
   COOKIE_CSRF,
   COOKIE_SESSION,
@@ -28,20 +28,18 @@ export interface AuthedRequest extends Request {
 
 /* ----------------------------- Rate limiting ----------------------------- */
 
-export const strictLimiter = rateLimit({
+export const strictLimiter = sharedRateLimiter({
+  namespace: "authentication",
   windowMs: 15 * 60 * 1000,
   limit: 10,
-  standardHeaders: "draft-7",
-  legacyHeaders: false,
-  message: { error: "Too many attempts. Please wait 15 minutes." },
+  message: "Too many attempts. Please wait 15 minutes.",
 });
 
-export const apiLimiter = rateLimit({
+export const apiLimiter = sharedRateLimiter({
+  namespace: "api",
   windowMs: 15 * 60 * 1000,
   limit: 300,
-  standardHeaders: "draft-7",
-  legacyHeaders: false,
-  message: { error: "Too many requests. Please slow down." },
+  message: "Too many requests. Please slow down.",
 });
 
 /* ------------------------------- Cookies --------------------------------- */

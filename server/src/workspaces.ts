@@ -178,17 +178,17 @@ export async function saveWorkspace(projectId: string, kind: WorkspaceKind, acto
         };
         if (count.count >= MAX_WORKSPACE_HISTORY)
             throw new WorkspaceError(409, "Workspace history is full. Prune earlier revisions before saving.", "HISTORY_CAPACITY", currentRevision);
-        for (const artifactId of [input.payloadArtifactId, ...input.referencedArtifactIds]) {
-            const artifact = await db.prepare("SELECT id FROM project_workspace_artifacts WHERE id=? AND project_id=? AND kind=?").get(artifactId, projectId, kind);
-            if (!artifact)
-                throw new WorkspaceError(400, "A workspace artifact is missing or belongs to another project or module", "ARTIFACT_INVALID");
-        }
+        const artifactIds = [input.payloadArtifactId, ...input.referencedArtifactIds];
+        const artifacts = await db.prepare(`SELECT id FROM project_workspace_artifacts WHERE project_id=? AND kind=? AND id IN (${artifactIds.map(() => "?").join(",")})`)
+            .all(projectId, kind, ...artifactIds);
+        if (artifacts.length !== artifactIds.length)
+            throw new WorkspaceError(400, "A workspace artifact is missing or belongs to another project or module", "ARTIFACT_INVALID");
         const revision = currentRevision + 1;
         await db.prepare("INSERT INTO project_workspace_snapshots(project_id,kind,revision,source_revision,payload_artifact_id,referenced_artifact_ids,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?)")
             .run(projectId, kind, revision, input.sourceRevision, input.payloadArtifactId, JSON.stringify(input.referencedArtifactIds), actor.userId, now());
-        for (const artifactId of input.referencedArtifactIds) {
-            await db.prepare("INSERT INTO project_workspace_artifact_refs(project_id,kind,revision,artifact_id) VALUES (?,?,?,?)").run(projectId, kind, revision, artifactId);
-        }
+        if (input.referencedArtifactIds.length)
+            await db.prepare(`INSERT INTO project_workspace_artifact_refs(project_id,kind,revision,artifact_id) VALUES ${input.referencedArtifactIds.map(() => "(?,?,?,?)").join(",")}`)
+                .run(...input.referencedArtifactIds.flatMap((artifactId) => [projectId, kind, revision, artifactId]));
         await db.prepare("INSERT INTO project_workspaces(project_id,kind,current_revision) VALUES (?,?,?) ON CONFLICT(project_id,kind) DO UPDATE SET current_revision=excluded.current_revision")
             .run(projectId, kind, revision);
         await tenantAudit(access, actor, "workspace.save", { kind, revision, sourceRevision: input.sourceRevision, referenceCount: input.referencedArtifactIds.length });

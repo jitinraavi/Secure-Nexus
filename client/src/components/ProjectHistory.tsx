@@ -15,10 +15,12 @@ import { timeAgo } from "../lib/format";
 export function ProjectHistory({
   projectId,
   currentDesign,
+  currentRevision,
   onRestored,
 }: {
   projectId: string;
   currentDesign: Design;
+  currentRevision: number;
   onRestored: (state: { design: Design | null; projectType: ProjectType; widthMm: number; depthMm: number }) => void;
 }) {
   const toast = useToast();
@@ -97,7 +99,7 @@ export function ProjectHistory({
     const isCurrent = beginAction(revision.id);
     if (!isCurrent) return;
     try {
-      const restored = await restoreProjectRevision(projectId, revision.id);
+      const restored = await restoreProjectRevision(projectId, revision.id, currentRevision);
       if (!isCurrent()) return;
       onRestored({ design: restored.design, projectType: restored.projectType as ProjectType, widthMm: restored.widthMm, depthMm: restored.depthMm });
       toast.push({ title: "Snapshot restored", description: revision.name, tone: "success" });

@@ -1,4 +1,5 @@
-import { organizationRequest } from "./organizationApi";
+import { ApiError, request } from "../api";
+import { isTransientStatus, RequestTimeoutError, syncRetryDelay } from "./requestResilience";
 
 export type CoordinationField = "title" | "body" | "status" | "assignee" | "dueDate" | "deleted";
 export interface CoordinationOperation { operationId: string; clientId: string; logicalClock: number; entityId: string; field: CoordinationField; value: string | boolean }
@@ -30,7 +31,10 @@ export class CoordinationSync {
   private storageBlocked = false;
   private recoveryIncomplete = false;
   private recoveryRecords: { key: string; raw: string }[] = [];
-  private interval: ReturnType<typeof setInterval> | null = null;
+  private interval: ReturnType<typeof setTimeout> | null = null;
+  private failures = 0;
+  private retryAt = 0;
+  private controller: AbortController | null = null;
   private changed: () => void;
   constructor(private userId: string, private projectId: string, changed: () => void) {
     this.changed = changed;
@@ -104,7 +108,7 @@ export class CoordinationSync {
     try { localStorage.setItem(`${this.storageKey}${operation.operationId}`, JSON.stringify(operation)); }
     catch { this.durable = false; this.error = "The edit is queued in memory; browser storage could not save it"; }
     this.queue = next; this.changed();
-    void this.synchronize();
+    void this.synchronize(false, false);
   }
   private persist(): void {
     // Writes are idempotent per immutable operation; malformed records are never
@@ -123,16 +127,20 @@ export class CoordinationSync {
   }
   async start(): Promise<void> {
     await this.synchronize(true);
-    if (!this.stopped) this.interval = setInterval(() => { void this.synchronize(); }, 4000);
   }
-  async synchronize(snapshot = false): Promise<void> {
+  async synchronize(snapshot = false, manual = true): Promise<void> {
     if (this.running || this.stopped) return;
+    if (!manual && Date.now() < this.retryAt) return;
+    if (manual) { this.failures = 0; this.retryAt = 0; }
+    if (this.interval) { clearTimeout(this.interval); this.interval = null; }
+    let delay: number | null = 4_000 + Math.floor(Math.random() * 1_000);
+    const controller = new AbortController(); this.controller = controller;
     this.running = true; this.changed();
     this.loadPending();
     const path = `/api/collaboration/${encodeURIComponent(this.projectId)}/sync`;
     try {
       for (let page = 0; page < 20; page += 1) {
-        const result = await organizationRequest<{ registers: CoordinationRegister[]; cursor: number; maxClock: number; backend: string }>(`${path}?${snapshot && page === 0 ? "snapshot=1" : `after=${this.cursor}`}`);
+        const result = await request<{ registers: CoordinationRegister[]; cursor: number; maxClock: number; backend: string }>(`${path}?${snapshot && page === 0 ? "snapshot=1" : `after=${this.cursor}`}`, { signal: controller.signal });
         if (this.stopped) return;
         if (!Array.isArray(result.registers) || result.registers.length > 10000 || !Number.isSafeInteger(result.cursor) || !Number.isSafeInteger(result.maxClock)) throw new Error("Invalid synchronization response");
         if (this.backend !== "unknown" && this.backend !== result.backend) throw new Error("The collaboration backend changed; reopen the workspace after the server migration");
@@ -148,7 +156,7 @@ export class CoordinationSync {
       }
       while (this.queue.pending.length && !this.stopped) {
         const operation = this.queue.pending[0];
-        const accepted = await organizationRequest<{ sequence: number; register: CoordinationRegister; maxClock?: number }>(path, "POST", operation);
+        const accepted = await request<{ sequence: number; register: CoordinationRegister; maxClock?: number }>(path, { method: "POST", body: JSON.stringify(operation), signal: controller.signal });
         if (this.stopped) return;
         const register = accepted.register;
         if (!register || register.entityId !== operation.entityId || register.field !== operation.field || !Number.isSafeInteger(register.logicalClock) || register.logicalClock < 1 || register.logicalClock > 1_000_000_000) throw new Error("Server did not return the effective coordination register");
@@ -164,10 +172,24 @@ export class CoordinationSync {
         } catch { this.durable = false; }
         this.changed();
       }
-      this.persist(); this.error = this.storageBlocked ? this.recoveryIncomplete ? "Recovery exceeded its limit. Export is partial and original records remain preserved; repair storage and reopen the workspace." : "Invalid operation data remains preserved; export recovery data before clearing it" : this.durable ? null : "Browser storage is unavailable; keep this tab open until pending edits synchronize";
-    } catch (error) { this.error = error instanceof Error ? error.message : "Synchronization failed; edits remain queued"; }
-    finally { this.running = false; if (!this.stopped) this.changed(); }
+      this.persist(); this.failures = 0; this.retryAt = 0; this.error = this.storageBlocked ? this.recoveryIncomplete ? "Recovery exceeded its limit. Export is partial and original records remain preserved; repair storage and reopen the workspace." : "Invalid operation data remains preserved; export recovery data before clearing it" : this.durable ? null : "Browser storage is unavailable; keep this tab open until pending edits synchronize";
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : "Synchronization failed; edits remain queued";
+      const transient = error instanceof ApiError ? isTransientStatus(error.status) : error instanceof TypeError || error instanceof RequestTimeoutError;
+      this.failures += 1;
+      delay = transient && this.failures < 6 ? syncRetryDelay(this.failures, error instanceof ApiError ? error.retryAfterMs : undefined) : null;
+      if (delay !== null && !Number.isFinite(delay)) delay = null;
+      this.retryAt = delay === null ? Number.POSITIVE_INFINITY : Date.now() + delay;
+      if (transient && delay === null) this.error += "; automatic retries paused. Use Synchronize to retry.";
+    } finally {
+      this.running = false;
+      if (this.controller === controller) this.controller = null;
+      if (!this.stopped) {
+        if (delay !== null) this.interval = setTimeout(() => { this.interval = null; void this.synchronize(false, false); }, delay);
+        this.changed();
+      }
+    }
   }
   exportQueue(): string { return JSON.stringify({ userId: this.userId, projectId: this.projectId, ...this.queue, invalidRecords: this.recoveryRecords, recoveryIncomplete: this.recoveryIncomplete, ...(this.recoveryIncomplete ? { recoveryNotice: "Partial export: records beyond the recovery budget remain untouched in browser storage. Preserve site data before repairing storage." } : {}) }, null, 2); }
-  stop(): void { this.stopped = true; if (this.interval) clearInterval(this.interval); this.persist(); }
+  stop(): void { this.stopped = true; this.controller?.abort(); if (this.interval) clearTimeout(this.interval); this.persist(); }
 }

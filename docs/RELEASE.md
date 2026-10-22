@@ -1,8 +1,10 @@
 # Release and deployment baseline
 
-This application is a Node 22 web service with a SQLite database. Build with
-`npm ci && npm run build`, start with `npm start`, and check `/api/health`.
-Configure persistent storage and the environment below in the hosting platform.
+The hosted Vercel application uses Node 22 and Supabase PostgreSQL's private
+`groundwork` schema. The persistent-server/SQLite configuration below remains
+available for self-hosted deployments; it is not the Vercel persistence model.
+Build with `npm ci && npm run build`, and check `/api/health` after release.
+See `VERCEL.md`, `SUPABASE.md` and `OPERATIONS.md` for the hosted configuration.
 
 ## Release checks
 
@@ -16,7 +18,70 @@ npm run lint
 npm run build
 npm run test -w server
 npm run test -w client
+node --test scripts/operational*.test.mjs scripts/backup*.test.mjs scripts/release*.test.mjs
 ```
+
+CI additionally checks the integrated deployment output, PostgreSQL API flow,
+studio interactions and private mail setup. Its `backup-drill` job uses native
+PostgreSQL 17 with synthetic records to export an encrypted application archive,
+authenticate it, restore to an empty isolated database and compare all table
+fingerprints. `release-gate` succeeds only when `verify` and `backup-drill` pass.
+No live credentials are needed by CI. Actions are pinned to full official commits;
+see the reviewed pin sources below.
+
+## Exact-commit release on Vercel Hobby
+
+The `Release readiness` manual workflow and `npm run release:check` verify that
+`RELEASE_COMMIT` is the current production-branch full SHA and that the newest
+matching push run of `.github/workflows/ci.yml` completed successfully. The local
+script requires `GITHUB_REPOSITORY=owner/repository`, `RELEASE_COMMIT`, optionally
+`RELEASE_BRANCH` (default `main`), and a private read-only `GITHUB_TOKEN` for a
+private repository. It prints a reviewable evidence summary and never deploys.
+A later failing/in-progress rerun invalidates earlier success.
+
+Have the repository owner require `release-gate` as a GitHub branch/ruleset check
+if their account/repository supports it. No branch rule or Vercel account setting
+is changed by this repository. These workflows do not by themselves stop Vercel
+Git integration from auto-deploying the production branch; review that behavior
+before describing this as an enforced production gate. Do not depend on paid
+Vercel Deployment Checks for the free-plan release procedure.
+
+A practical repository-controlled free-plan gate is to add the following to the
+existing `vercel.json` before the release commit is pushed (use the actual
+production branch). This prevents Vercel Git pushes to `main` from starting an
+automatic deployment while leaving unspecified preview branches enabled:
+
+```json
+{ "git": { "deploymentEnabled": { "main": false } } }
+```
+
+Then release the exact tested commit explicitly with the authenticated Vercel
+CLI. This configuration is a proposal until the owner applies it; no external
+account mutation is needed. It protects the normal Git path, while anyone with
+deployment credentials can still deliberately bypass the manual procedure. See
+[Vercel Git configuration](https://vercel.com/docs/project-configuration/git-configuration).
+
+1. Freeze the reviewed production-branch SHA; wait for the full matching CI run.
+2. Run `Release readiness` for that exact SHA and retain its successful run URL.
+3. Verify target Vercel team/project, canonical origin, production environment,
+   schema compatibility, stable application key, latest encrypted archive and a
+   known-good rollback deployment. Keep administrator URLs out of Vercel runtime.
+4. The authorized release owner releases that exact commit through the existing
+   Vercel project. When using CLI staging, stage production without domain
+   assignment, test it and promote that production deployment. Promoting a
+   preview can rebuild with production variables, so repeat validation if the
+   released build differs. Never silently substitute a newer branch head.
+5. Verify public health and static routing, password/OTP login, secure cookies,
+   CSRF rejection, unauthorized access denial, a synthetic project save/reload,
+   logout, and the external monitor. Real mail delivery needs an authorized inbox
+   check. Record deployment URL/ID, full SHA, CI and readiness URLs, schema
+   version, smoke results and operator in the release record.
+6. On failure, stop promotion or use the reviewed compatible rollback deployment.
+   Data migrations require a separate recovery decision; switching application
+   code does not reverse database writes. Follow `INCIDENTS.md`.
+
+Do not claim that passing local tests proves a remote CI run, external monitor,
+offsite backup, restore drill or Vercel deployment has completed.
 
 ## Production secrets and persistence
 
@@ -120,6 +185,11 @@ survive reload even when durable storage is full. Private render images use
 
 ## Backups and restore
 
+For the hosted Supabase database use the encrypted offsite PostgreSQL export and
+isolated restore rehearsal in `OPERATIONS.md`. The following directory/snapshot
+procedure is only for a persistent SQLite deployment. It does not back up cloud
+records, and Vercel scratch files are never a recovery source.
+
 Set `ADMIN_EMAILS` to the explicit administrator email allowlist for production
 backup endpoints. An empty allowlist grants nobody access. The authenticated mail
 diagnostic sends only to the caller's own email unless they are allowlisted.
@@ -158,3 +228,16 @@ missing `MASTER_KEY`/`GROUNDWORK_DATA_DIR`, or `PAYMENTS_MODE` before routing tr
 to the release. A successful health check does not verify email delivery, live
 checkout, provider billing limits, TLS or external access controls; validate those
 in the owner's controlled staging environment.
+
+## Reviewed action pin sources
+
+Pinned revisions were resolved from the official action release commit pages:
+
+- [checkout v4.2.2](https://github.com/actions/checkout/commit/11bd71901bbe5b1630ceea73d27597364c9af683)
+- [setup-node v4.4.0](https://github.com/actions/setup-node/commit/49933ea5288caeca8642d1e84afbd3f7d6820020)
+- [upload-artifact v4.6.2](https://github.com/actions/upload-artifact/commit/ea165f8d65b6e75b540449e92b4886f43607fa02)
+
+Re-review action updates deliberately. These are verified version pins, not a
+claim that an automated dependency/security audit has reviewed upstream code.
+References: [Vercel deployment promotion](https://vercel.com/docs/deployments/promoting-a-deployment),
+[GitHub secure use](https://docs.github.com/en/actions/reference/security/secure-use).

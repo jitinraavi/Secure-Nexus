@@ -87,3 +87,18 @@ References: [Express on Vercel](https://vercel.com/docs/frameworks/backend/expre
 [function limits](https://vercel.com/docs/functions/limitations),
 [request headers](https://vercel.com/docs/headers/request-headers) and
 [SMTP on Vercel](https://vercel.com/kb/guide/serverless-functions-and-smtp).
+
+## Operating and releasing the free-plan deployment
+
+`OPERATIONS.md` describes opt-in external GitHub health checks with the existing
+SMTP account, a real encrypted offsite export of the private Supabase schema,
+separate key custody, and isolated restore verification. These run outside
+Vercel and do not depend on an in-process timer or ephemeral function storage.
+They require privately configured credentials and successful activation evidence;
+their presence in the repository does not mean they are active.
+
+`RELEASE.md` defines an exact-commit GitHub CI gate and manual release evidence.
+It does not provision paid Deployment Checks or change Vercel account settings.
+Confirm the project's Git auto-production behavior before claiming the gate
+prevents untested production releases. `SLO.md` defines initial objectives and
+measurement limits; `INCIDENTS.md` records ownership and the recovery procedure.

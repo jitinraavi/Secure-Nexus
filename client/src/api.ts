@@ -21,10 +21,11 @@ import type {
   ProjectObjectLock,
 } from "./types";
 import type { NativeCapability } from "./lib/jobsApi";
+import { readResponseJson, retryAfterDelay, withRequestTimeout } from "./lib/requestResilience";
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, public readonly retryAfterMs?: number) {
     super(message);
     this.status = status;
   }
@@ -113,7 +114,7 @@ export function applyAssistantPlanPreview(preview: AssistantPlanPreview, apply: 
   apply([...preview.plan.actions]);
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init: RequestInit = {},
   opts: { skipCsrf?: boolean } = {},
@@ -129,18 +130,18 @@ async function request<T>(
   if (needsCsrf && csrfToken) {
     headers["x-csrf-token"] = csrfToken;
   }
-  const res = await fetch(path, { ...init, headers, credentials: "same-origin" });
-  if (!res.ok) {
-    let message = `Request failed (${res.status})`;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) message = body.error;
-    } catch {
-      /* no json body */
+  return withRequestTimeout(async signal => {
+    const res = await fetch(path, { ...init, headers, credentials: "same-origin", signal });
+    if (!res.ok) {
+      let message = `Request failed (${res.status})`;
+      try {
+        const body = await readResponseJson<{ error?: string }>(res, signal);
+        if (body.error) message = body.error;
+      } catch (error) { if (signal.aborted) throw error; /* no json body */ }
+      throw new ApiError(res.status, message, retryAfterDelay(res.headers.get("retry-after")));
     }
-    throw new ApiError(res.status, message);
-  }
-  return (await res.json()) as T;
+    return readResponseJson<T>(res, signal);
+  }, init.signal);
 }
 
 /* ---------------------------------- Auth ---------------------------------- */
@@ -507,9 +508,9 @@ export function createProjectRevision(id: string, name: string, designData?: str
   return request<ProjectRevision>(`/api/projects/${id}/revisions`, { method: "POST", body: JSON.stringify({ name, designData }) });
 }
 
-export function restoreProjectRevision(id: string, revisionId: string) {
+export function restoreProjectRevision(id: string, revisionId: string, baseRevision: number) {
   return request<{ ok: boolean; revision: number; name: string; projectType: string; widthMm: number; depthMm: number; design: Design | null }>(
-    `/api/projects/${id}/revisions/${revisionId}/restore`, { method: "POST", body: "{}" },
+    `/api/projects/${id}/revisions/${revisionId}/restore`, { method: "POST", body: JSON.stringify({ baseRevision }) },
   );
 }
 

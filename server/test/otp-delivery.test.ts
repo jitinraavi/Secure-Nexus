@@ -175,15 +175,16 @@ test("console codes require explicit local development opt-in and never claim em
         const url='http://127.0.0.1:'+server.address().port;
         const response=await fetch(url+'/api/auth/otp/request',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:'fixture@example.invalid'})});
         const body=await response.json(); const state=await db.prepare("SELECT otp_code_hash FROM users WHERE id='fixture'").get();
-        process.stdout.write(JSON.stringify({status:response.status,body,active:Boolean(state.otp_code_hash)}));
-        await new Promise(resolve=>server.close(resolve)); await db.close();`;
+        await new Promise(resolve=>server.close(resolve));
+        await (await import('./src/telemetry.ts')).drainTelemetry(); await db.close();
+        process.stdout.write('RESULT:'+JSON.stringify({status:response.status,body,active:Boolean(state.otp_code_hash)}));`;
             const child = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", "--import", "tsx", "--input-type=module", "-e", script], {
                 cwd: new URL("..", import.meta.url), encoding: "utf8", timeout: 20000,
                 env: { ...process.env, NODE_ENV: "test", PAYMENTS_MODE: "demo", MAIL_PROVIDER: "console", GROUNDWORK_DEV_OTP: optIn,
                     GROUNDWORK_DATA_DIR: directory, MAIL_HOST: "", MAIL_USER: "", MAIL_PASS: "", RESEND_API_KEY: "" },
             });
             assert.equal(child.status, 0, child.stderr);
-            const result = JSON.parse(child.stdout) as {
+            const result = JSON.parse(child.stdout.slice(child.stdout.lastIndexOf('RESULT:') + 7)) as {
                 status: number;
                 body: Record<string, unknown>;
                 active: boolean;

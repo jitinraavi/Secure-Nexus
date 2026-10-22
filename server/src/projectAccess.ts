@@ -34,5 +34,19 @@ export async function getProjectAccess(projectId: string, userId: string): Promi
     return { projectId, ownerId: owner.user_id, role: member.role as ProjectRole };
 }
 export const canReadProject = (access: ProjectAccess | null): access is ProjectAccess => Boolean(access);
+/** Batch presence authorization without exposing members from another tenant. */
+export async function readableProjectUsers(projectId: string, userIds: string[]): Promise<Set<string>> {
+    const accepted = new Set<string>();
+    const ids = [...new Set(userIds)].slice(0, 2000);
+    for (let index = 0; index < ids.length; index += 200) {
+        const batch = ids.slice(index, index + 200);
+        const rows = await db.prepare(`SELECT u.id FROM users u JOIN projects p ON p.id=? WHERE u.id IN (${batch.map(() => "?").join(",")}) AND (
+          (p.organization_id IS NOT NULL AND EXISTS (SELECT 1 FROM organization_members m WHERE m.organization_id=p.organization_id AND m.user_id=u.id))
+          OR (p.organization_id IS NULL AND (p.user_id=u.id OR EXISTS (SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.user_id=u.id AND m.role IN ('editor','viewer')))))`)
+          .all(projectId, ...batch) as { id: string }[];
+        for (const row of rows) accepted.add(row.id);
+    }
+    return accepted;
+}
 export const canWriteProject = async (access: ProjectAccess | null): Promise<boolean> => Boolean(access && (access.role === "owner" || access.role === "editor") && (!access.organizationId || await organizationCanWrite(access.organizationId)));
 export const canManageProject = (access: ProjectAccess | null): access is ProjectAccess => Boolean(access && access.role === "owner");

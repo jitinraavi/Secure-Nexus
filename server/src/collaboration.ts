@@ -2,7 +2,8 @@ import type { Response } from "express";
 import { deriveVaultKey, encryptAesGcm, randomId } from "./crypto.js";
 import { MASTER_KEY } from "./config.js";
 import { db, now, withTransaction, afterCommit } from "./db.js";
-import { getProjectAccess } from "./projectAccess.js";
+import { getProjectAccess, readableProjectUsers } from "./projectAccess.js";
+import { writeSse } from "./sse.js";
 import { publishRedisProjectEvent, redisPresence, redisTransportConfigured } from "./redisTransport.js";
 const key = deriveVaultKey(MASTER_KEY);
 const connections = new Map<string, Map<string, Set<Response>>>();
@@ -51,16 +52,7 @@ function encrypt(userId: string, value: unknown): string {
 }
 export type CollaborationType = "design.updated" | "snapshot.created" | "comment.created" | "issue.updated" | "operation.applied" | "lock.updated" | "member.updated";
 function writeEvent(response: Response, event: string, data: unknown, id?: number) {
-    if (response.destroyed || response.writableEnded)
-        return;
-    try {
-        if (id !== undefined)
-            response.write(`id: ${id}\n`);
-        response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    }
-    catch {
-        response.end();
-    }
+    return writeSse(response, event, data, id);
 }
 function broadcast(projectId: string, event: string, data: unknown, id?: number) {
     for (const set of connections.get(projectId)?.values() ?? []) {
@@ -93,8 +85,9 @@ export async function presenceSnapshot(projectId: string) {
         userId: string;
         connections: number;
     }[] = [];
+    const readable = await readableProjectUsers(projectId, rows.map((row) => row.user_id));
     for (const row of rows) {
-        if (await getProjectAccess(projectId, row.user_id)) {
+        if (readable.has(row.user_id)) {
             users.push({ userId: row.user_id, connections: Number(row.connections) });
         }
     }
@@ -103,19 +96,67 @@ export async function presenceSnapshot(projectId: string) {
 async function broadcastPresence(projectId: string) {
     broadcast(projectId, "presence", await presenceSnapshot(projectId));
 }
-export async function subscribeProject(projectId: string, userId: string, response: Response) {
-    const connectionId = randomId();
+export interface ProjectSubscriptionLease { connectionId: string; projectId: string; userId: string; }
+export class CollaborationSubscriptionError extends Error {
+    constructor(public readonly status: number, message: string) { super(message); }
+}
+/** Reserve before sending SSE headers, under the shared cross-instance write fence. */
+export async function reserveProjectSubscription(projectId: string, userId: string): Promise<ProjectSubscriptionLease> {
+    return await withTransaction(async () => {
+        if (!await getProjectAccess(projectId, userId)) throw new CollaborationSubscriptionError(404, "Project not found");
+        const timestamp = now();
+        await db.prepare("DELETE FROM project_presence WHERE expires_at<=?").run(timestamp);
+        const count = await db.prepare("SELECT COUNT(*) AS count FROM project_presence WHERE project_id=? AND user_id=? AND expires_at>?").get(projectId, userId, timestamp) as { count: number };
+        if (count.count >= 10) throw new CollaborationSubscriptionError(429, "Too many active collaboration connections for this project");
+        const connectionId = randomId();
+        await db.prepare("INSERT INTO project_presence(connection_id,project_id,user_id,expires_at) VALUES(?,?,?,?)").run(connectionId, projectId, userId, timestamp + 45);
+        return { connectionId, projectId, userId };
+    });
+}
+export async function releaseProjectSubscription(lease: ProjectSubscriptionLease): Promise<void> {
+    await db.prepare("DELETE FROM project_presence WHERE connection_id=? AND project_id=? AND user_id=?").run(lease.connectionId, lease.projectId, lease.userId);
+}
+export async function subscribeProject(projectId: string, userId: string, response: Response, reserved?: ProjectSubscriptionLease) {
+    const reservation = reserved || await reserveProjectSubscription(projectId, userId);
+    if (reservation.projectId !== projectId || reservation.userId !== userId) throw new Error("Invalid collaboration reservation");
+    const connectionId = reservation.connectionId;
     const redisMember = `${userId}|${connectionId}`;
     let closed = false;
     let renewing = false;
+    let closing: Promise<void> | undefined;
+    let lease: ReturnType<typeof setInterval> | undefined;
+    let project: Map<string, Set<Response>> | undefined;
+    let userConnections: Set<Response> | undefined;
+    const onClose = () => { void unsubscribe().catch(() => undefined); };
+    const unsubscribe = (): Promise<void> => {
+        if (closing) return closing;
+        closed = true;
+        if (lease) clearInterval(lease);
+        response.off("close", onClose);
+        response.off("finish", onClose);
+        userConnections?.delete(response);
+        if (userConnections?.size === 0) project?.delete(userId);
+        if (project?.size === 0) connections.delete(projectId);
+        closing = (async () => {
+            await releaseProjectSubscription(reservation);
+            if (redisTransportConfigured) await redisPresence(projectId, redisMember).catch(() => undefined);
+            if (project?.size) await broadcastPresence(projectId);
+        })();
+        return closing;
+    };
+    // Install cleanup before the first asynchronous renewal or presence write.
+    response.once("close", onClose);
+    response.once("finish", onClose);
     const renew = async () => {
         if (closed || renewing)
             return;
         renewing = true;
         try {
-            await db.prepare("DELETE FROM project_presence WHERE expires_at<=?").run(now());
-            await db.prepare("INSERT INTO project_presence (connection_id,project_id,user_id,expires_at) VALUES (?,?,?,?) ON CONFLICT(connection_id) DO UPDATE SET expires_at=excluded.expires_at")
-                .run(connectionId, projectId, userId, now() + 45);
+            // Expired reservations never resurrect after another connection has
+            // claimed the released capacity.
+            const renewed = await db.prepare("UPDATE project_presence SET expires_at=? WHERE connection_id=? AND project_id=? AND user_id=? AND expires_at>?")
+                .run(now() + 45, connectionId, projectId, userId, now());
+            if (!renewed.changes) { response.end(); await unsubscribe(); return; }
             if (closed) {
                 await db.prepare("DELETE FROM project_presence WHERE connection_id=?").run(connectionId);
                 return;
@@ -127,8 +168,9 @@ export async function subscribeProject(projectId: string, userId: string, respon
                 });
                 if (!presence) return;
                 const users: typeof presence.users = [];
+                const readable = await readableProjectUsers(projectId, presence.users.map((entry) => entry.userId));
                 for (const entry of presence.users) {
-                    if (await getProjectAccess(projectId, entry.userId))
+                    if (readable.has(entry.userId))
                         users.push(entry);
                 }
                 if (closed) {
@@ -142,42 +184,21 @@ export async function subscribeProject(projectId: string, userId: string, respon
             renewing = false;
         }
     };
-    await renew();
-    const lease = setInterval(() => {
-        void renew().catch(() => broadcast(projectId, "transport-status", { backend: redisTransportConfigured ? "redis-rest" : "database", degraded: true }));
-    }, 15000);
-    let project = connections.get(projectId);
-    if (!project) {
-        project = new Map<string, Set<Response>>();
-        connections.set(projectId, project);
-    }
-    let userConnections = project.get(userId);
-    if (!userConnections) {
-        userConnections = new Set<Response>();
-        project.set(userId, userConnections);
-    }
-    userConnections.add(response);
-    const unsubscribe = async () => {
-        if (closed)
-            return;
-        closed = true;
-        clearInterval(lease);
-        userConnections?.delete(response);
-        if (userConnections?.size === 0)
-            project?.delete(userId);
-        if (project?.size === 0)
-            connections.delete(projectId);
-        await db.prepare("DELETE FROM project_presence WHERE connection_id=?").run(connectionId);
-        if (redisTransportConfigured)
-            await redisPresence(projectId, redisMember).catch(() => undefined);
-        if (project?.size)
-            await broadcastPresence(projectId);
-    };
-    // A client may disconnect while the initial asynchronous lease is being created.
-    response.once("close", () => { void unsubscribe().catch(() => undefined); });
     try {
+        if (response.destroyed || response.writableEnded) { await unsubscribe(); return unsubscribe; }
+        await renew();
+        if (closed || response.destroyed || response.writableEnded) { await unsubscribe(); return unsubscribe; }
+        project = connections.get(projectId);
+        if (!project) { project = new Map<string, Set<Response>>(); connections.set(projectId, project); }
+        userConnections = project.get(userId);
+        if (!userConnections) { userConnections = new Set<Response>(); project.set(userId, userConnections); }
+        userConnections.add(response);
+        lease = setInterval(() => {
+            void renew().catch(() => broadcast(projectId, "transport-status", { backend: redisTransportConfigured ? "redis-rest" : "database", degraded: true }));
+        }, 15000);
+        lease.unref?.();
+        await broadcastPresence(projectId);
         if (response.destroyed || response.writableEnded) await unsubscribe();
-        else await broadcastPresence(projectId);
     }
     catch (error) {
         await unsubscribe().catch(() => undefined);
@@ -193,10 +214,12 @@ export async function replayProjectEvents(projectId: string, response: Response,
         revision: number;
         created_at: number;
     }[];
+    let cursor = afterId;
     for (const row of rows) {
-        writeEvent(response, "collaboration", { id: row.id, projectId, type: row.event_type, revision: row.revision, createdAt: row.created_at, actorId: row.user_id }, row.id);
+        if (!writeEvent(response, "collaboration", { id: row.id, projectId, type: row.event_type, revision: row.revision, createdAt: row.created_at, actorId: row.user_id }, row.id)) break;
+        cursor = row.id;
     }
-    return rows[rows.length - 1]?.id ?? afterId;
+    return cursor;
 }
 export function collaborationItemId() {
     return randomId();

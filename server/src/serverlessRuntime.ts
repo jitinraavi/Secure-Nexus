@@ -56,6 +56,9 @@ export function vercelRequestContext(env: Environment): RequestHandler {
       const origin = req.get("Origin");
       const webhook = req.method === "POST" && req.path === "/payments/webhook";
       if (webhook && !origin) { next(); return; }
+      // Exact machine-only paths; their router requires a separate bearer token.
+      if (!origin && req.method === "POST" && req.path === "/ops/backup-report") { next(); return; }
+      if (!origin && req.method === "PATCH" && /^\/ops\/flags\/(assistant|uploads|collaboration|native|render)$/.test(req.path)) { next(); return; }
       let source = origin;
       if (!source) {
         try { source = new URL(req.get("Referer") || "").origin; } catch { source = undefined; }

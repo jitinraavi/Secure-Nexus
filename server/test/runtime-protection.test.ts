@@ -1,0 +1,44 @@
+import assert from "node:assert/strict";
+import { test, after } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import dotenv from "dotenv";
+import type { Request, Response } from "express";
+import { writeSse } from "../src/sse.js";
+dotenv.config = () => ({ parsed: {} });
+const directory = mkdtempSync(join(tmpdir(), "groundwork-runtime-protection-"));
+Object.assign(process.env, { NODE_ENV: "test", DATABASE_PROVIDER: "sqlite", DATABASE_URL: "", SUPABASE_DB_URL: "", GROUNDWORK_DATA_DIR: directory, DB_PATH: "", MASTER_KEY: Buffer.alloc(32, 48).toString("base64") });
+const { sharedRateLimiter } = await import("../src/sharedRateLimit.js");
+const { db } = await import("../src/db.js");
+after(async () => { await db.close(); rmSync(directory, { recursive: true, force: true }); });
+test("separate limiter instances share atomic counters and preserve privacy", async () => {
+  let time = 50_000;
+  const options = { namespace: "test", limit: 10, windowMs: 60_000, message: "slow", clock: () => time };
+  const first = sharedRateLimiter(options), second = sharedRateLimiter(options);
+  const calls = Array.from({ length: 25 }, (_, i) => new Promise<number>((resolve) => {
+    let status = 200;
+    const response = { setHeader() {}, status(value: number) { status = value; return this; }, json() { resolve(status); } };
+    void (i % 2 ? first : second)({ ip: "203.0.113.4", socket: {} } as Request, response as unknown as Response, () => resolve(status));
+  }));
+  const statuses = await Promise.all(calls);
+  assert.equal(statuses.filter((value) => value === 200).length, 10);
+  assert.equal(statuses.filter((value) => value === 429).length, 15);
+  const rows = await db.prepare("SELECT bucket_key,hits FROM runtime_rate_windows").all();
+  assert.equal(rows.length, 1); assert.equal((rows[0] as { hits: number }).hits, 25);
+  assert.doesNotMatch(JSON.stringify(rows), /203\.0\.113\.4/);
+  time = 120_000;
+  await new Promise<void>((resolve) => { void first({ ip: "203.0.113.4", socket: {} } as Request, { setHeader() {}, status() { throw new Error("Unexpected denial"); } } as unknown as Response, () => resolve()); });
+});
+test("slow SSE consumers close after one bounded frame and reconnect for replay", () => {
+  let ended = false; const frames: string[] = [];
+  const response = { destroyed: false, writableEnded: false, writableLength: 0, write(frame: unknown) { frames.push(String(frame)); return false; }, end() { ended = true; } };
+  assert.equal(writeSse(response as unknown as Response, "collaboration", { revision: 2 }, 7), false);
+  assert.equal(ended, true); assert.equal(frames.length, 1); assert.match(frames[0], /^id: 7\nevent: collaboration\n/);
+  ended = false; frames.length = 0; response.writableLength = 128 * 1024 + 1;
+  assert.equal(writeSse(response as unknown as Response, "presence", {}), false);
+  assert.equal(ended, true); assert.equal(frames.length, 0);
+  response.writableLength = 0; ended = false;
+  assert.equal(writeSse(response as unknown as Response, "presence", { value: "x".repeat(65_536) }), false);
+  assert.equal(ended, true); assert.equal(frames.length, 0);
+});

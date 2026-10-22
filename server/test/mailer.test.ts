@@ -42,9 +42,10 @@ nodemailer.createTransport = ((options: Record<string, unknown>) => {
 }) as typeof nodemailer.createTransport;
 const { MAIL } = await import("../src/config.js");
 const { sendMail, sendOtpEmail, testMailConnection } = await import("../src/mailer.js");
-after(() => {
+after(async () => {
   nodemailer.createTransport = originalCreate;
   globalThis.fetch = originalFetch;
+  await (await import("../src/db.js")).db.close();
   rmSync(fixture, { recursive: true, force: true });
 });
 

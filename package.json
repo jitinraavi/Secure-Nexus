@@ -1,6 +1,6 @@
 {
   "name": "groundwork",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Groundwork Design Studio — encrypted design workspace with 3D editor, Google Maps site location, infrastructure wizards, CAD/OBJ/GLB export, payments and audit logging",
   "workspaces": [
@@ -16,14 +16,20 @@
     "test:deployment": "node --disable-warning=ExperimentalWarning --import tsx --test server/test/studio-routing.test.ts",
     "check:deployment": "node scripts/deployment-preflight.mjs --check-build",
     "check:build": "node scripts/deployment-preflight.mjs --build-only",
-    "test": "npm test -w server && npm test -w client && npm run test:studio && npm run test:mail-setup",
+    "test": "npm test -w server && npm test -w client && npm run test:studio && npm run test:mail-setup && npm run test:operations",
     "test:mail-setup": "node --test scripts/mail-environment.test.mjs",
     "mail:setup": "node scripts/configure-gmail.mjs",
     "mail:verify": "node scripts/configure-gmail.mjs --verify",
     "db:migrate": "node --disable-warning=ExperimentalWarning server/dist/databaseCommand.js migrate",
     "db:import": "node --disable-warning=ExperimentalWarning server/dist/databaseCommand.js import",
     "db:verify": "node --disable-warning=ExperimentalWarning server/dist/databaseCommand.js verify",
-    "test:postgres-flow": "node --disable-warning=ExperimentalWarning --import tsx scripts/postgres-integration-check.cjs"
+    "test:postgres-flow": "node --disable-warning=ExperimentalWarning --import tsx scripts/postgres-integration-check.cjs",
+    "test:operations": "node --test scripts/operational-tools.test.mjs scripts/backup-tools.test.mjs scripts/release-readiness.test.mjs scripts/deploy-after-ci.test.mjs",
+    "ops:health": "node scripts/operational-health.mjs",
+    "ops:performance": "node scripts/operational-performance.mjs",
+    "backup:export": "node scripts/backup-export.mjs",
+    "backup:verify": "node scripts/backup-verify.mjs",
+    "release:check": "node scripts/release-readiness.mjs"
   },
   "engines": {
     "node": ">=22.12.0"

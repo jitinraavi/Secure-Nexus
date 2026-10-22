@@ -1,5 +1,7 @@
 import zlib from "node:zlib";
-import { providerLimits, readProviderBody, renderOutputBytes, withProviderDeadline } from "./providerBudget.js";
+import { providerLimits, renderOutputBytes, withProviderDeadline } from "./providerBudget.js";
+import { outboundRequest, OutboundRequestError, type OutboundResponse } from "./outbound.js";
+import { CircuitOpenError } from "./runtimeResilience.js";
 
 export interface RenderProviderParams {
   prompt: string;
@@ -311,23 +313,24 @@ export class GeminiImagenRenderProvider implements RenderProvider {
       },
     };
 
-    let response: globalThis.Response;
+    let response: OutboundResponse;
     try {
-      response = await fetch(endpoint, {
+      response = await outboundRequest(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
         signal,
-      });
+      }, { service: "gemini-render", allowedOrigins: ["https://generativelanguage.googleapis.com"], timeoutMs: providerLimits("render").timeoutMs, maximumBytes: Math.ceil(renderOutputBytes() * 4 / 3) + 65_536, errorMaximumBytes: 16_384, safeToRetry: false });
     } catch (error) {
       if ((error as { name?: string }).name === "AbortError") {
         throw error;
       }
       if (signal.aborted) throw signal.reason;
+      if (error instanceof OutboundRequestError || error instanceof CircuitOpenError) throw new RenderProviderError(error.status, error.message, error.code);
       throw new RenderProviderError(502, "Failed to reach Gemini rendering service", "UPSTREAM_CONNECTION_FAILED");
     }
 
-    const body = await readProviderBody(response, response.ok ? Math.ceil(renderOutputBytes() * 4 / 3) + 65_536 : 16_384, signal);
+    const body = response.text;
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
         throw new RenderProviderError(502, "Gemini API authentication failed", "INVALID_API_KEY");

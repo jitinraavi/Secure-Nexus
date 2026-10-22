@@ -12,6 +12,6 @@ export async function logAudit(userId: string | null, action: string, detail: Au
         });
     }
     catch {
-        // Audit failures must never break the request.
+        console.error(JSON.stringify({ type: "audit.write_failed", action: /^[a-z0-9._-]{1,80}$/.test(action) ? action : "unknown" }));
     }
 }

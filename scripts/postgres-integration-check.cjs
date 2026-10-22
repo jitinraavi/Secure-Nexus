@@ -47,6 +47,7 @@ async function run() {
     'MAIL_HOST','MAIL_USER','MAIL_PASS','RESEND_API_KEY']) delete process.env[key];
   try {
     await engine.exec(fs.readFileSync(path.join(root, 'server/supabase/migrations/20261019191555_groundwork_private_database.sql'), 'utf8'));
+    await engine.exec(fs.readFileSync(path.join(root, 'server/supabase/migrations/20261021153936_engineering_runtime.sql'), 'utf8'));
     await engine.exec('SET ROLE groundwork_runtime');
     const load = file => import(pathToFileURL(path.join(root, file)).href);
     const [{ app }, { db, now }, { hashPassword }] = await Promise.all([
@@ -110,6 +111,7 @@ async function run() {
     console.log('PostgreSQL API checks passed: committed sign-in, encrypted project save/reload, history, sharing, tenant isolation, binary upload, provider budget, audit, managed backup response and logout. All data was synthetic.');
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
+    if (database) await (await import('../server/src/telemetry.ts')).drainTelemetry();
     await database?.close(); await engine.close();
     const canonical=fs.realpathSync(directory);
     assert(path.dirname(canonical).toLowerCase()===fs.realpathSync(os.tmpdir()).toLowerCase()&&path.basename(canonical).startsWith('groundwork-postgres-flow-'));

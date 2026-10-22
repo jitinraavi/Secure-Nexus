@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { DATABASE } from "./config.js";
 import { runCommitEffects, type CommitEffect } from "./databaseEffects.js";
+import { withOperationalSpan } from "./telemetry.js";
 
 export interface RunResult { changes: number; lastInsertRowid: number | bigint; }
 export interface Statement {
@@ -91,7 +92,18 @@ const adapter: DatabaseAdapter = DATABASE.provider === "supabase"
   ? await (await import("./postgresDatabase.js")).createPostgresAdapter(DATABASE)
   : createSqliteAdapter((await import("./sqliteDatabase.js")).db);
 
-export const db = adapter.db;
+export const db: Db = {
+  prepare(sql) {
+    const statement = adapter.db.prepare(sql);
+    return {
+      get: (...values) => withOperationalSpan("db.get", () => statement.get(...values)),
+      all: (...values) => withOperationalSpan("db.all", () => statement.all(...values)),
+      run: (...values) => withOperationalSpan("db.run", () => statement.run(...values)),
+    };
+  },
+  exec: (sql) => withOperationalSpan("db.exec", () => adapter.db.exec(sql)),
+  close: () => adapter.db.close(),
+};
 export const withTransaction = adapter.withTransaction;
 export const afterCommit = adapter.afterCommit;
 export function now(): number { return Math.floor(Date.now() / 1000); }

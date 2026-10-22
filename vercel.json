@@ -1,7 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "buildCommand": "npm run build",
+  "buildCommand": "node scripts/deploy-after-ci.mjs --build-guard && npm run build",
+  "git": { "deploymentEnabled": { "main": false } },
+  "crons": [{ "path": "/api/ops/check", "schedule": "0 8 * * *" }],
   "installCommand": "npm ci --include=dev",
   "outputDirectory": "client/dist",
   "regions": [
