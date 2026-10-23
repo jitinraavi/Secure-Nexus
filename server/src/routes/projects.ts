@@ -107,6 +107,7 @@ const projectMetaSchema = z.object({
 const designSchema = z.object({
   designData: z.string().min(2).max(4_000_000),
 });
+const baseRevisionSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1);
 
 const revisionSchema = z.object({ name: z.string().trim().min(1).max(80), designData: z.string().min(2).max(4_000_000).optional() });
 const shareLinkSchema = z.object({ expiresInHours: z.number().int().min(1).max(24 * 30).default(24 * 7) });
@@ -292,13 +293,8 @@ router.patch(
       return;
     }
 
-    const hasDesign = typeof parsedBody.designData === "string";
+    const hasDesign = Object.prototype.hasOwnProperty.call(parsedBody, "designData");
     const expectedRevision = typeof parsedBody.baseRevision === "number" ? parsedBody.baseRevision : null;
-    const current = { revision: row.revision };
-    if (expectedRevision !== null && expectedRevision !== current.revision) {
-      res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: current.revision });
-      return;
-    }
     const meta = projectMetaSchema.partial().safeParse(parsedBody);
     if (!meta.success) {
       res.status(400).json({ error: meta.error.issues[0]?.message || "Invalid project metadata" });
@@ -311,18 +307,19 @@ router.patch(
     }
 
     let designPayload: string | null = null;
+    let nextDesign: unknown;
     if (hasDesign) {
       const parsed = designSchema.safeParse(parsedBody);
       if (!parsed.success) {
         res.status(400).json({ error: "Design data is invalid" });
         return;
       }
-      const nextDesign = parseDesignInput(parsed.data.designData);
-      const stored = (await db.prepare("SELECT design_data FROM projects WHERE id = ?").get(req.params.id)) as { design_data: string | null };
-      const before: unknown = stored.design_data ? JSON.parse(decryptForUser(stored.design_data, access.ownerId)) : null;
-      const lockedObject = (await conflictingDesignLock(req.params.id, req.user!.id, before, nextDesign));
-      if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
+      nextDesign = parseDesignInput(parsed.data.designData);
       designPayload = encryptForUser(parsed.data.designData, access.ownerId);
+    }
+    if ((hasDesign || parsedBody.baseRevision !== undefined) && !baseRevisionSchema.safeParse(parsedBody.baseRevision).success) {
+      res.status(400).json({ error: "A valid baseRevision is required for design changes", code: "BASE_REVISION_REQUIRED" });
+      return;
     }
 
     const fields: string[] = [];
@@ -365,17 +362,31 @@ router.patch(
     values.push(req.params.id);
 
     fields.push("revision = revision + 1");
-    const result = (await withTransaction(async () => {
-      const libraryState = (await db.prepare("SELECT archived FROM projects WHERE id = ?").get(req.params.id)) as { archived: number } | undefined;
-      if (libraryState?.archived && meta.data.archived === false && !(await canAddActiveProject(access.ownerId))) return null;
-      return (await db.prepare(
-        `UPDATE projects SET ${fields.join(", ")} WHERE id = ?${expectedRevision !== null ? " AND revision = ?" : ""}`,
-      ).run(...values, ...(expectedRevision !== null ? [expectedRevision] : [])));
-    }));
-    if (!result) { res.status(403).json({ error: ACTIVE_PROJECT_LIMIT, code: "ACTIVE_PROJECT_LIMIT" }); return; }
-    if (!result.changes) {
-      const latest = (await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.id)) as { revision: number };
-      res.status(409).json({ error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision });
+    const result = await withTransaction(async () => {
+      const currentAccess = await getProjectAccess(req.params.id, req.user!.id);
+      if (!currentAccess || !await canWriteProject(currentAccess)) return { status: currentAccess ? 403 : 404, error: currentAccess ? "Editor access required" : "Project not found" };
+      if (hasLibraryMetadata && !canManageProject(currentAccess)) return { status: 403, error: "Owner access required to organize, archive or designate templates" };
+      const stored = await db.prepare("SELECT archived,revision,design_data FROM projects WHERE id = ?").get(req.params.id) as { archived: number; revision: number; design_data: string | null };
+      if (expectedRevision !== null && stored.revision !== expectedRevision) return { status: 409, error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: stored.revision };
+      if (!Number.isSafeInteger(stored.revision) || stored.revision >= Number.MAX_SAFE_INTEGER) return { status: 409, error: "Project revision capacity reached", code: "REVISION_CAPACITY", currentRevision: stored.revision };
+      if (stored.archived && meta.data.archived === false && !await canAddActiveProject(access.ownerId)) return { status: 403, error: ACTIVE_PROJECT_LIMIT, code: "ACTIVE_PROJECT_LIMIT" };
+      if (designPayload !== null) {
+        const before: unknown = stored.design_data ? JSON.parse(decryptForUser(stored.design_data, access.ownerId)) : null;
+        const lockedObject = await conflictingDesignLock(req.params.id, req.user!.id, before, nextDesign);
+        if (lockedObject) return { status: 423, error: "Object is locked by another editor", objectId: lockedObject };
+      }
+      const updated = await db.prepare(`UPDATE projects SET ${fields.join(", ")} WHERE id = ? AND revision = ?`).run(...values, stored.revision);
+      if (!updated.changes) {
+        const latest = await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.id) as { revision: number };
+        return { status: 409, error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision };
+      }
+      const revision = stored.revision + 1;
+      await emitProjectEvent(req.params.id, req.user!.id, designPayload !== null ? "design.updated" : "snapshot.created", revision, { designChanged: designPayload !== null });
+      return { status: 200, revision };
+    });
+    if (result.status !== 200) {
+      const { status, ...body } = result;
+      res.status(status).json(body);
       return;
     }
 
@@ -385,9 +396,8 @@ router.patch(
     if (hasLibraryMetadata) {
       (await logAudit(req.user!.id, "project.library_updated", { projectId: req.params.id, folder: meta.data.folder, archived: meta.data.archived, isTemplate: meta.data.isTemplate }, req));
     }
-    const revision = current.revision + 1;
+    const revision = result.revision!;
     if (access.organizationId) (await organizationAudit(access.organizationId, req.user!.id, "project.updated", { projectId: req.params.id, revision, designChanged: designPayload !== null }));
-    (await emitProjectEvent(req.params.id, req.user!.id, designPayload !== null ? "design.updated" : "snapshot.created", revision, { designChanged: designPayload !== null }));
     res.json({ ok: true, revision });
   }),
 );
@@ -438,28 +448,37 @@ router.post("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
 
 /* POST /api/projects/:id/revisions/:revisionId/restore */
 router.post("/:id/revisions/:revisionId/restore", asyncHandler(async (req: AuthedRequest, res) => {
-  const project = (await projectForUser(req.params.id, req.user!.id));
-  const access = (await getProjectAccess(req.params.id, req.user!.id));
-  const revision = (await db.prepare(
-    "SELECT * FROM project_revisions WHERE id = ? AND project_id = ?",
-  ).get(req.params.revisionId, req.params.id)) as {
-    id: string; name: string; design_data: string; project_type: string; width_mm: number; depth_mm: number;
-  } | undefined;
-  if (!project || !revision || !(await canWriteProject(access))) {
-    res.status(access && !(await canWriteProject(access)) ? 403 : 404).json({ error: access && !(await canWriteProject(access)) ? "Editor access required" : "Project or snapshot not found" });
+  const parsed = z.object({ baseRevision: baseRevisionSchema }).safeParse(req.body || {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "A valid baseRevision is required to restore a snapshot", code: "BASE_REVISION_REQUIRED" });
     return;
   }
-  // Keep the encrypted payload intact; it remains bound to the project owner's vault AAD.
-  const before = project.design_data ? JSON.parse(decryptForUser(project.design_data, project.ownerId)) : null;
-  const restored = parseDesignInput(decryptForUser(revision.design_data, project.ownerId));
-  const lockedObject = (await conflictingDesignLock(project.id, req.user!.id, before, restored));
-  if (lockedObject) { res.status(423).json({ error: "Object is locked by another editor", objectId: lockedObject }); return; }
-  (await db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
-    .run(revision.design_data, revision.project_type, revision.width_mm, revision.depth_mm, now(), project.id));
-  const nextRevision = project.revision + 1;
-  (await emitProjectEvent(project.id, req.user!.id, "design.updated", nextRevision, { restoredRevisionId: revision.id }));
-  (await logAudit(req.user!.id, "project.revision_restored", { projectId: project.id, revisionId: revision.id }, req));
-  res.json({ ok: true, revision: nextRevision, name: revision.name, projectType: revision.project_type, widthMm: revision.width_mm, depthMm: revision.depth_mm, design: JSON.parse(decryptForUser(revision.design_data, project.ownerId)) });
+  const outcome = await withTransaction(async () => {
+    const project = await projectForUser(req.params.id, req.user!.id);
+    const access = await getProjectAccess(req.params.id, req.user!.id);
+    if (!access || !await canWriteProject(access)) return { status: access ? 403 : 404, body: { error: access ? "Editor access required" : "Project or snapshot not found" } };
+    const revision = await db.prepare("SELECT * FROM project_revisions WHERE id = ? AND project_id = ?").get(req.params.revisionId, req.params.id) as {
+      id: string; name: string; design_data: string; project_type: string; width_mm: number; depth_mm: number;
+    } | undefined;
+    if (!project || !revision) return { status: 404, body: { error: "Project or snapshot not found" } };
+    if (project.revision !== parsed.data.baseRevision) return { status: 409, body: { error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: project.revision } };
+    const before = project.design_data ? JSON.parse(decryptForUser(project.design_data, project.ownerId)) : null;
+    const restored = parseDesignInput(decryptForUser(revision.design_data, project.ownerId));
+    const lockedObject = await conflictingDesignLock(project.id, req.user!.id, before, restored);
+    if (lockedObject) return { status: 423, body: { error: "Object is locked by another editor", objectId: lockedObject } };
+    // Reseal a restored snapshot using the current configured key as well.
+    const updated = await db.prepare("UPDATE projects SET design_data = ?, project_type = ?, width_mm = ?, depth_mm = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?")
+      .run(encryptForUser(JSON.stringify(restored), project.ownerId), revision.project_type, revision.width_mm, revision.depth_mm, now(), project.id, parsed.data.baseRevision);
+    if (!updated.changes) {
+      const latest = await db.prepare("SELECT revision FROM projects WHERE id = ?").get(project.id) as { revision: number };
+      return { status: 409, body: { error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision } };
+    }
+    const nextRevision = project.revision + 1;
+    await emitProjectEvent(project.id, req.user!.id, "design.updated", nextRevision, { restoredRevisionId: revision.id });
+    await logAudit(req.user!.id, "project.revision_restored", { projectId: project.id, revisionId: revision.id }, req);
+    return { status: 200, body: { ok: true, revision: nextRevision, name: revision.name, projectType: revision.project_type, widthMm: revision.width_mm, depthMm: revision.depth_mm, design: restored } };
+  });
+  res.status(outcome.status).json(outcome.body);
 }));
 
 /* GET /api/projects/:id/share-links */

@@ -21,12 +21,38 @@ import type {
   ProjectObjectLock,
 } from "./types";
 import type { NativeCapability } from "./lib/jobsApi";
+import { readResponseJson, retryAfterDelay, withRequestTimeout } from "./lib/requestResilience";
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, public readonly retryAfterMs?: number) {
     super(message);
     this.status = status;
+  }
+}
+
+const HOSTED_REQUEST_MAX_BYTES = 4_000_000;
+
+/** Leave room beneath the hosting platform limit for multipart boundaries and headers. */
+export function assertHostedRequestSize(
+  body: BodyInit | null | undefined,
+  method: string,
+  hostingMode: string | undefined,
+): void {
+  if (hostingMode !== "vercel" || !["POST", "PUT", "PATCH"].includes(method.toUpperCase()) || body == null) return;
+  const encodedBytes = (value: string) => new TextEncoder().encode(value).byteLength;
+  let bytes = 0;
+  if (body instanceof FormData) {
+    bytes = 8 * 1024;
+    for (const [name, value] of body.entries()) {
+      bytes += encodedBytes(name) + (typeof value === "string" ? encodedBytes(value) : value.size);
+    }
+  } else if (typeof body === "string") bytes = encodedBytes(body);
+  else if (body instanceof Blob) bytes = body.size;
+  else if (body instanceof URLSearchParams) bytes = encodedBytes(body.toString());
+  else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) bytes = body.byteLength;
+  if (bytes > HOSTED_REQUEST_MAX_BYTES) {
+    throw new ApiError(413, "This hosted demo accepts requests up to 4 MB. Use a smaller file or design and try again.");
   }
 }
 
@@ -88,11 +114,12 @@ export function applyAssistantPlanPreview(preview: AssistantPlanPreview, apply: 
   apply([...preview.plan.actions]);
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init: RequestInit = {},
   opts: { skipCsrf?: boolean } = {},
 ): Promise<T> {
+  assertHostedRequestSize(init.body, init.method || "GET", import.meta.env?.VITE_HOSTING_MODE);
   const headers: Record<string, string> = {
     ...((init.headers as Record<string, string>) || {}),
   };
@@ -103,18 +130,18 @@ async function request<T>(
   if (needsCsrf && csrfToken) {
     headers["x-csrf-token"] = csrfToken;
   }
-  const res = await fetch(path, { ...init, headers, credentials: "same-origin" });
-  if (!res.ok) {
-    let message = `Request failed (${res.status})`;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) message = body.error;
-    } catch {
-      /* no json body */
+  return withRequestTimeout(async signal => {
+    const res = await fetch(path, { ...init, headers, credentials: "same-origin", signal });
+    if (!res.ok) {
+      let message = `Request failed (${res.status})`;
+      try {
+        const body = await readResponseJson<{ error?: string }>(res, signal);
+        if (body.error) message = body.error;
+      } catch (error) { if (signal.aborted) throw error; /* no json body */ }
+      throw new ApiError(res.status, message, retryAfterDelay(res.headers.get("retry-after")));
     }
-    throw new ApiError(res.status, message);
-  }
-  return (await res.json()) as T;
+    return readResponseJson<T>(res, signal);
+  }, init.signal);
 }
 
 /* ---------------------------------- Auth ---------------------------------- */
@@ -481,9 +508,9 @@ export function createProjectRevision(id: string, name: string, designData?: str
   return request<ProjectRevision>(`/api/projects/${id}/revisions`, { method: "POST", body: JSON.stringify({ name, designData }) });
 }
 
-export function restoreProjectRevision(id: string, revisionId: string) {
+export function restoreProjectRevision(id: string, revisionId: string, baseRevision: number) {
   return request<{ ok: boolean; revision: number; name: string; projectType: string; widthMm: number; depthMm: number; design: Design | null }>(
-    `/api/projects/${id}/revisions/${revisionId}/restore`, { method: "POST", body: "{}" },
+    `/api/projects/${id}/revisions/${revisionId}/restore`, { method: "POST", body: JSON.stringify({ baseRevision }) },
   );
 }
 

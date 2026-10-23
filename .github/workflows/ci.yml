@@ -3,16 +3,27 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -46,3 +57,67 @@ jobs:
 
       - name: Test private mail setup
         run: npm run test:mail-setup
+
+      - name: Test operational safety and release gating
+        run: node --test scripts/operational*.test.mjs scripts/backup*.test.mjs scripts/release*.test.mjs scripts/deploy-after-ci.test.mjs
+
+      - name: Rehearse bounded local capacity and disconnected-stream cleanup
+        run: |
+          npm run test:capacity
+          npm run test:capacity:postgres
+
+      - name: Save synthetic performance evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: engineering-capacity-${{ github.sha }}
+          path: artifacts/engineering-capacity*.json
+          retention-days: 14
+          if-no-files-found: error
+
+  backup-drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-only
+          POSTGRES_DB: groundwork_restore_source
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install matching PostgreSQL clients
+        run: bash scripts/install-postgres-client.sh
+      - name: Create empty isolated restore target
+        run: createdb --host=127.0.0.1 --username=postgres groundwork_restore_drill
+        env:
+          PGPASSWORD: synthetic-ci-only
+      - name: Export, authenticate, restore and compare synthetic rows
+        run: node scripts/backup-postgres-check.mjs
+        env:
+          OPERATIONS_POSTGRES_TEST_URL: postgresql://postgres:synthetic-ci-only@127.0.0.1:5432/groundwork_restore_source
+          OPERATIONS_POSTGRES_RESTORE_URL: postgresql://postgres:synthetic-ci-only@127.0.0.1:5432/groundwork_restore_drill
+
+  release-gate:
+    if: always()
+    needs: [verify, backup-drill]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require all verification jobs
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          BACKUP_RESULT: ${{ needs.backup-drill.result }}
+        run: |
+          test "$VERIFY_RESULT" = success
+          test "$BACKUP_RESULT" = success

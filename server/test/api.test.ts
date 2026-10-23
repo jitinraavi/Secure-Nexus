@@ -325,7 +325,7 @@ test("roadmap API integration slice", async (t) => {
                 }>;
                 note: string;
             };
-        }>(`/api/projects/${projectId}/revisions/${snapshotId}/restore`, jsonInit("POST", {}, csrfToken));
+        }>(`/api/projects/${projectId}/revisions/${snapshotId}/restore`, jsonInit("POST", { baseRevision: 2 }, csrfToken));
         assert.equal(restored.response.status, 200);
         assert.equal(restored.body.ok, true);
         assert.equal(restored.body.revision, 3);

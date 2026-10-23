@@ -1,5 +1,6 @@
 import { countryInfo, localPriceMinor } from "./pricing.js";
 import { IS_PROD, PAYMENTS_MODE } from "../config.js";
+import { outboundRequest } from "../outbound.js";
 
 export interface Plan {
   id: string;
@@ -83,7 +84,7 @@ const razorpayProvider: Provider = {
   async createPayment(p) {
     if (!RAZORPAY_BASE64) throw new Error("Razorpay keys are not configured");
     const amount = localPriceMinor(p.country, p.plan.id);
-    const resp = await fetch(`${RAZORPAY_BASE}/payment_links`, {
+    const resp = await outboundRequest(`${RAZORPAY_BASE}/payment_links`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${RAZORPAY_BASE64}`,
@@ -98,8 +99,10 @@ const razorpayProvider: Provider = {
         notes: { order_id: p.orderId, user_id: p.userId },
         reference_id: p.orderId,
       }),
-    });
-    const body = (await resp.json()) as { id?: string; short_url?: string; error?: { description?: string } };
+    }, { service: "razorpay", allowedOrigins: ["https://api.razorpay.com"], safeToRetry: false });
+    // A reference_id alone does not establish durable provider idempotency.
+    // Ambiguous creation failures must be reconciled instead of replayed.
+    const body = JSON.parse(resp.text) as { id?: string; short_url?: string; error?: { description?: string } };
     if (!resp.ok || !body.id) {
       throw new Error(body.error?.description || "Razorpay order creation failed");
     }
@@ -128,26 +131,27 @@ const paypalProvider: Provider = {
     const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
     if (!clientId || !clientSecret) throw new Error("PayPal credentials are not configured");
 
-    const authRes = await fetch(`${PAYPAL_BASE}/v1/oauth2/token`, {
+    const authRes = await outboundRequest(`${PAYPAL_BASE}/v1/oauth2/token`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: "grant_type=client_credentials",
-    });
-    const auth = (await authRes.json()) as { access_token?: string };
-    if (!auth.access_token) throw new Error("PayPal authentication failed");
+    }, { service: "paypal-auth", allowedOrigins: [PAYPAL_BASE], safeToRetry: true });
+    const auth = JSON.parse(authRes.text) as { access_token?: string };
+    if (!authRes.ok || !auth.access_token) throw new Error("PayPal authentication failed");
 
     const info = countryInfo(p.country);
     const amountMinor = localPriceMinor(p.country, p.plan.id);
     const value = (amountMinor / Math.pow(10, info.digits)).toFixed(info.digits);
 
-    const res = await fetch(`${PAYPAL_BASE}/v2/checkout/orders`, {
+    const res = await outboundRequest(`${PAYPAL_BASE}/v2/checkout/orders`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${auth.access_token}`,
         "Content-Type": "application/json",
+        "PayPal-Request-Id": p.orderId,
       },
       body: JSON.stringify({
         intent: "CAPTURE",
@@ -165,8 +169,8 @@ description: `Groundwork ${p.plan.name} plan`,
           user_action: "PAY_NOW",
         },
       }),
-    });
-    const order = (await res.json()) as { id?: string; links?: { rel: string; href: string }[] };
+    }, { service: "paypal-orders", allowedOrigins: [PAYPAL_BASE], safeToRetry: false });
+    const order = JSON.parse(res.text) as { id?: string; links?: { rel: string; href: string }[] };
     if (!res.ok || !order.id) {
       throw new Error("PayPal order creation failed");
     }
@@ -248,14 +252,14 @@ export function supportsMethod(method: PaymentMethod, country: string | undefine
 export async function createTenantSeatLink(p: { orderId: string; userId: string; organizationId: string; email: string; amount: number; expireBy: number }): Promise<CreatedPayment> {
   const key = process.env.RAZORPAY_KEY_ID, secret = process.env.RAZORPAY_KEY_SECRET;
   if (process.env.PAYMENTS_MODE !== "live" || !key?.startsWith("rzp_live_") || !secret) throw new Error("Live tenant checkout is not configured");
-  const response = await fetch(`${RAZORPAY_BASE}/payment_links`, {
-    method: "POST", signal: AbortSignal.timeout(20000),
+  const response = await outboundRequest(`${RAZORPAY_BASE}/payment_links`, {
+    method: "POST",
     headers: { Authorization: `Basic ${Buffer.from(`${key}:${secret}`).toString("base64")}`, "Content-Type": "application/json" },
     body: JSON.stringify({ amount: p.amount, currency: "INR", accept_partial: false, reference_id: p.orderId, expire_by: p.expireBy,
       description: "Groundwork prepaid organization seat term", customer: { email: p.email },
       notes: { order_id: p.orderId, user_id: p.userId, organization_id: p.organizationId } }),
-  });
-  const result = await response.json() as { id?: unknown; short_url?: unknown; amount?: unknown; currency?: unknown; reference_id?: unknown; accept_partial?: unknown };
+  }, { service: "razorpay", allowedOrigins: ["https://api.razorpay.com"], timeoutMs: 20_000, safeToRetry: false });
+  const result = JSON.parse(response.text) as { id?: unknown; short_url?: unknown; amount?: unknown; currency?: unknown; reference_id?: unknown; accept_partial?: unknown };
   if (!response.ok || typeof result.id !== "string" || !/^plink_[A-Za-z0-9]+$/.test(result.id) || result.amount !== p.amount ||
     result.currency !== "INR" || result.reference_id !== p.orderId || result.accept_partial !== false || typeof result.short_url !== "string") {
     throw new Error("Provider checkout response does not match the priced intent");

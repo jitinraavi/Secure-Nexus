@@ -1,0 +1,48 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { allowedOrigin, probe, alert, backupFreshness } from './operational-health.mjs';
+import { measure, percentile } from './operational-performance.mjs';
+
+test('operational probes require exact allowlisted origins and isolated performance targets', async () => {
+  assert.equal(allowedOrigin('https://fixture.example', 'https://fixture.example'), 'https://fixture.example');
+  for (const value of ['https://fixture.example/path', 'https://u:p@fixture.example', 'http://fixture.example', 'https://fixture.example.evil']) assert.throws(() => allowedOrigin(value, 'https://fixture.example'));
+  assert.throws(() => allowedOrigin('https://fixture.example', 'https://fixture.example', { isolated: true }));
+  await assert.rejects(measure({}), /acknowledgment/);
+  await assert.rejects(measure({ OPS_PERF_ACK: 'isolated-target-no-production', OPS_PERF_ORIGIN: 'http://127.0.0.1:4242', OPS_PERF_ALLOWED_ORIGINS: 'http://127.0.0.1:4242', OPS_PERF_ISOLATED_ORIGIN: 'http://127.0.0.1:4242', OPS_PRODUCTION_ORIGINS: 'http://127.0.0.1:4242' }), /Production/);
+});
+test('health probe rejects HTML, false health, oversized responses and network failure', async () => {
+  const check = response => probe('https://fixture.example', { fetcher: async () => response });
+  assert.equal((await check(Response.json({ ok: true }))).ok, true);
+  assert.equal((await check(Response.json({ ok: false }))).ok, false);
+  assert.equal((await check(new Response('<html>login</html>'))).ok, false);
+  assert.equal((await check(Response.json({ ok: true, data: 'x'.repeat(9000) }))).ok, false);
+  assert.equal((await probe('https://fixture.example', { fetcher: async () => { throw Error('secret'); } })).reason, 'network_or_invalid_health');
+});
+test('operational alerts are opt-in, TLS-only and never send during tests', async () => {
+  let message, config, closed = false;
+  const factory = value => { config = value; return { async sendMail(mail) { message = mail; }, close() { closed = true; } }; };
+  const report = { origin: 'https://fixture.example', checkedAt: '2026-10-21T00:00:00Z', samples: [{ reason: 'health_state' }] };
+  assert.equal((await alert(report, {}, () => assert.fail('disabled alert attempted SMTP'))).sent, false);
+  await assert.rejects(alert(report, { OPS_SEND_ALERTS: '1' }, factory), /authorized/);
+  await alert(report, { OPS_SEND_ALERTS: '1', OPS_ALERT_TO: 'owner@example.test', MAIL_FROM: 'ops@example.test', MAIL_HOST: 'smtp.example.test', MAIL_USER: 'synthetic', MAIL_PASS: 'synthetic', MAIL_PORT: '587' }, factory);
+  assert.equal(config.requireTLS, true); assert.equal(config.tls.rejectUnauthorized, true);
+  assert.equal(message.to, 'owner@example.test'); assert.equal(message.text.includes('synthetic'), false); assert.equal(closed, true);
+});
+test('p99 uses nearest rank over all observed samples', () => {
+  const values = Array.from({ length: 100 }, (_, index) => index + 1);
+  assert.equal(percentile(values.reverse(), 0.99), 99);
+  assert.equal(percentile([1, 100], 0.99), 100);
+  assert.throws(() => percentile([], 0.99));
+});
+
+test('backup freshness requires recent successful run and an unexpired nonempty encrypted artifact', async () => {
+  const now = Date.parse('2026-10-21T03:00:00Z');
+  const env = { OPS_BACKUP_ENABLED: 'true', GITHUB_REPOSITORY: 'fixture/repo', GITHUB_TOKEN: 'synthetic', OPS_DEFAULT_BRANCH: 'main' };
+  const run = { id: 123, head_branch: 'main', event: 'schedule', created_at: '2026-10-21T02:41:00Z', run_attempt: 1 };
+  const fixture = (updates = {}, artifacts = [{ name: 'groundwork-encrypted-123-1', expired: false, size_in_bytes: 100 }]) => async url => Response.json(url.includes('/artifacts?') ? { artifacts } : { workflow_runs: [{ ...run, ...updates }] });
+  assert.equal((await backupFreshness(env, fixture(), now)).ok, true);
+  assert.equal((await backupFreshness(env, fixture({ created_at: '2026-10-19T02:41:00Z' }), now)).reason, 'backup_stale');
+  assert.equal((await backupFreshness(env, fixture({}, []), now)).reason, 'backup_artifact_missing');
+  assert.equal((await backupFreshness(env, fixture({ head_branch: 'preview' }), now)).ok, false);
+  assert.equal((await backupFreshness({}, () => assert.fail('disabled freshness performed network access'), now)).enabled, false);
+});

@@ -206,6 +206,7 @@ test("provider admission, persistent quotas, render reservations and deadlines",
         assert.equal(cancelled, true);
     });
     await t.test("Gemini adapter rejects oversized responses using an isolated fetch stub", async () => {
+        process.env.RENDER_PROVIDER_TIMEOUT_MS = "1000";
         const original = globalThis.fetch;
         globalThis.fetch = async () => new Response("too large", { headers: { "content-length": "999999999" } });
         try {

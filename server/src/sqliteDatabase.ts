@@ -1,8 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { DB_PATH } from "./config.js";
 import { migrateTotpSeeds } from "./mfa.js";
+import { ENGINEERING_SCHEMA_SQLITE } from "./engineeringSchema.js";
 
 const raw = new DatabaseSync(DB_PATH);
+raw.exec(ENGINEERING_SCHEMA_SQLITE);
 
 raw.exec("PRAGMA journal_mode = WAL;");
 raw.exec("PRAGMA foreign_keys = ON;");

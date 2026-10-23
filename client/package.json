@@ -1,12 +1,12 @@
 {
   "name": "@groundwork/client",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
-    "test": "node --import tsx --test test/browser-security.test.ts",
+    "test": "node --import tsx --test test/browser-security.test.ts test/request-resilience.test.ts",
     "preview": "vite preview",
     "test:studio": "node --test test/studio/*.test.js"
   },

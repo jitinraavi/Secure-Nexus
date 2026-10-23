@@ -73,17 +73,16 @@ function escapedHtml(text: string): string {
 }
 
 async function sendResend(to: string, subject: string, text: string, html: string): Promise<void> {
-  const response = await fetch("https://api.resend.com/emails", {
+  const { outboundRequest } = await import("./outbound.js");
+  const response = await outboundRequest("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${MAIL.resendKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ from: MAIL.from, to: [to], subject, text, html }),
-    signal: AbortSignal.timeout(20_000),
-  });
+  }, { service: "mail", allowedOrigins: ["https://api.resend.com"], safeToRetry: false, timeoutMs: 20_000, maximumBytes: 64 * 1024 });
   if (!response.ok) {
-    await response.body?.cancel();
     throw { mailErrorCode: response.status === 401 ? "auth" : response.status === 403 ? "sender" : "service" };
   }
-  const result: unknown = await response.json();
+  const result: unknown = JSON.parse(response.text);
   if (!result || typeof result !== "object" || typeof (result as { id?: unknown }).id !== "string" || !(result as { id: string }).id) {
     throw { mailErrorCode: "service" };
   }

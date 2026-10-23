@@ -1,5 +1,9 @@
 # Integrated Groundwork deployment
 
+For a personal non-commercial demo on Vercel Hobby, use the dedicated
+[Vercel deployment guide](VERCEL.md). It documents the serverless API entry,
+Supabase and Gmail settings, smaller request limits and disabled background jobs.
+
 Hosted deployments use **Supabase PostgreSQL**. Follow [SUPABASE.md](SUPABASE.md)
 for the dedicated runtime role, private schema, TLS certificate, one-time data
 import and rollback. Configure `DATABASE_PROVIDER=supabase` and server-only

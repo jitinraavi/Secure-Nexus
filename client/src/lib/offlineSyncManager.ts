@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { getCsrfToken } from "../api";
+import { ApiError, assertHostedRequestSize, getCsrfToken } from "../api";
 import { offlineProjectStore } from "./offlineProjectStore";
 import { offlineQueueStore, type OfflineQueueItem } from "./offlineQueue";
 import { captureLocalWrite, localWriteAllowed, subscribeLocalDataFence } from "./localDataFence";
 import type { Design, Project, ProjectType } from "../types";
+import { fetchJsonResponse, isTransientStatus, RequestTimeoutError, retryAfterDelay, syncRetryDelay } from "./requestResilience";
 
 export interface SyncManagerStatus {
   isOnline: boolean;
@@ -15,6 +16,8 @@ export interface SyncManagerStatus {
 }
 
 type SyncListener = (status: SyncManagerStatus) => void;
+const transientSyncError = (error: unknown) => error instanceof ApiError ? isTransientStatus(error.status) : error instanceof TypeError || error instanceof RequestTimeoutError;
+const responseError = (response: Response, message: string) => new ApiError(response.status, message, retryAfterDelay(response.headers.get("retry-after")));
 
 class OfflineSyncManager {
   private isOnline = typeof navigator !== "undefined" && typeof navigator.onLine === "boolean" ? navigator.onLine : true;
@@ -24,6 +27,8 @@ class OfflineSyncManager {
   private listeners = new Set<SyncListener>();
   private activeUserId: string | null = null;
   private syncController: AbortController | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private failures = 0;
 
   constructor() {
     subscribeLocalDataFence((userId, fence) => {
@@ -34,6 +39,7 @@ class OfflineSyncManager {
     if (typeof window !== "undefined") {
       window.addEventListener("online", () => {
         this.isOnline = true;
+        this.failures = 0;
         this.notify();
         if (this.activeUserId) {
           void this.synchronize(this.activeUserId);
@@ -42,13 +48,17 @@ class OfflineSyncManager {
 
       window.addEventListener("offline", () => {
         this.isOnline = false;
+        if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
         this.notify();
       });
     }
   }
 
   setActiveUser(userId: string | null): void {
-    if (userId !== this.activeUserId) this.syncController?.abort();
+    if (userId !== this.activeUserId) {
+      this.syncController?.abort(); this.failures = 0;
+      if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
+    }
     this.activeUserId = userId;
     if (userId && this.isOnline) {
       void this.synchronize(userId);
@@ -88,8 +98,10 @@ class OfflineSyncManager {
   /**
    * Run synchronization process for the given account.
    */
-  async synchronize(userId: string): Promise<void> {
+  async synchronize(userId: string, manual = false): Promise<void> {
     if (!userId || userId !== this.activeUserId || this.isSyncing || !this.isOnline || captureLocalWrite(userId) === null) return;
+    if (manual) { this.failures = 0; if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; } }
+    else if (this.retryTimer || this.failures >= 6) return;
 
     const performSync = async () => {
       const write = captureLocalWrite(userId);
@@ -105,12 +117,11 @@ class OfflineSyncManager {
 
       try {
         // 1. Re-validate authentication and session permissions
-        const authRes = await fetch("/api/auth/me", { credentials: "same-origin", signal: controller.signal });
+        const { response: authRes, data: authData } = await fetchJsonResponse<{ user?: { id: string } }>("/api/auth/me", { credentials: "same-origin", signal: controller.signal });
         assertCurrent();
         if (!authRes.ok) {
-          throw new Error("Session expired; please sign in before synchronizing");
+          throw responseError(authRes, authRes.status === 401 || authRes.status === 403 ? "Session expired; please sign in before synchronizing" : `Session check failed (${authRes.status})`);
         }
-        const authData = (await authRes.json()) as { user?: { id: string } };
         assertCurrent();
         if (authData.user?.id !== userId) {
           throw new Error("Account mismatch during synchronization");
@@ -127,8 +138,19 @@ class OfflineSyncManager {
         }
 
         this.lastSyncTime = Date.now();
+        this.failures = 0;
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : "Sync error";
+        if (!controller.signal.aborted && transientSyncError(err)) {
+          this.failures += 1;
+          const delay = syncRetryDelay(this.failures, err instanceof ApiError ? err.retryAfterMs : undefined);
+          if (this.failures < 6 && Number.isFinite(delay) && typeof window !== "undefined") {
+            this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.synchronize(userId); }, delay);
+          } else if (this.failures >= 6 || !Number.isFinite(delay)) {
+            this.failures = 6;
+            this.lastError += "; automatic retries paused. Use Sync now to retry.";
+          }
+        }
       } finally {
         if (this.syncController === controller) this.syncController = null;
         this.isSyncing = false;
@@ -163,6 +185,12 @@ class OfflineSyncManager {
       if (signal.aborted || err instanceof DOMException && err.name === "AbortError") throw err;
       assertCurrent();
       const errorMsg = err instanceof Error ? err.message : "Synchronization failed";
+      if (transientSyncError(err)) {
+        // A timed-out PATCH may have committed. The next attempt always reads
+        // the server revision again before deciding whether it can send.
+        await offlineQueueStore.updateStatus(item.id, "queued", errorMsg);
+        throw err;
+      }
       await offlineQueueStore.updateStatus(item.id, "failed", errorMsg);
     }
   }
@@ -170,7 +198,7 @@ class OfflineSyncManager {
   private async syncProjectSave(userId: string, item: OfflineQueueItem, signal: AbortSignal, assertCurrent: () => void): Promise<void> {
     assertCurrent();
     // Permission & Project verification check: inspect server state first
-    const getRes = await fetch(`/api/projects/${encodeURIComponent(item.projectId)}`, {
+    const { response: getRes, data: projectData } = await fetchJsonResponse<{ project: Project }>(`/api/projects/${encodeURIComponent(item.projectId)}`, {
       credentials: "same-origin",
       signal,
     });
@@ -188,10 +216,10 @@ class OfflineSyncManager {
     }
 
     if (!getRes.ok) {
-      throw new Error(`Failed to check project status (${getRes.status})`);
+      throw responseError(getRes, `Failed to check project status (${getRes.status})`);
     }
 
-    const { project } = (await getRes.json()) as { project: Project };
+    const { project } = projectData;
     assertCurrent();
 
     // Revision conflict detection: verify server has not moved ahead
@@ -212,7 +240,9 @@ class OfflineSyncManager {
 
     // Server revision is clean — submit save patch
     const csrfToken = getCsrfToken();
-    const patchRes = await fetch(`/api/projects/${encodeURIComponent(item.projectId)}`, {
+    const body = JSON.stringify({ ...item.payload, baseRevision: item.expectedRevision, expectedAccountId: userId });
+    assertHostedRequestSize(body, "PATCH", import.meta.env?.VITE_HOSTING_MODE);
+    const { response: patchRes, data: patchData } = await fetchJsonResponse<{ ok?: boolean; revision?: number; currentRevision?: number; code?: string; error?: string }>(`/api/projects/${encodeURIComponent(item.projectId)}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -220,12 +250,12 @@ class OfflineSyncManager {
       },
       credentials: "same-origin",
       signal,
-      body: JSON.stringify({ ...item.payload, baseRevision: item.expectedRevision, expectedAccountId: userId }),
+      body,
     });
     assertCurrent();
 
     if (patchRes.status === 409) {
-      const conflictRes = (await patchRes.json()) as { currentRevision?: number; code?: string };
+      const conflictRes = patchData;
       assertCurrent();
       if (conflictRes.code === "ACCOUNT_CHANGED") throw new Error("The signed-in account changed during synchronization. The queued body remains retained for its original account.");
       await offlineQueueStore.updateStatus(
@@ -242,12 +272,13 @@ class OfflineSyncManager {
     }
 
     if (!patchRes.ok) {
-      const errJson = (await patchRes.json().catch(() => ({}))) as { error?: string };
+      const errJson = patchData;
       assertCurrent();
-      throw new Error(errJson.error || `Save failed (${patchRes.status})`);
+      throw responseError(patchRes, errJson.error || `Save failed (${patchRes.status})`);
     }
 
-    const savedData = (await patchRes.json()) as { ok: boolean; revision: number };
+    const savedData = patchData;
+    if (savedData.ok !== true || !Number.isSafeInteger(savedData.revision) || savedData.revision! <= item.expectedRevision) throw new Error("Server returned an invalid saved revision; local changes remain retained");
     assertCurrent();
 
     // Update offline project cache with new revision and design
@@ -255,7 +286,7 @@ class OfflineSyncManager {
       ...project,
       name: (item.payload.name as string) || project.name,
       projectType: (item.payload.projectType as ProjectType) || project.projectType,
-      revision: savedData.revision,
+      revision: savedData.revision!,
       updatedAt: Date.now(),
     };
 
@@ -306,7 +337,7 @@ export function useOfflineSync(userId?: string) {
     pendingCount: counts.pending,
     conflictedCount: counts.conflicted,
     syncNow: () => {
-      if (userId) void offlineSyncManager.synchronize(userId);
+      if (userId) void offlineSyncManager.synchronize(userId, true);
     },
   };
 }

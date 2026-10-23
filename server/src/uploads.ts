@@ -1,6 +1,8 @@
 import type { Request, RequestHandler } from "express";
 import { Transform, type Writable } from "node:stream";
 import multer from "multer";
+import { SERVERLESS } from "./config.js";
+import { featureFlagGuard } from "./featureFlags.js";
 
 interface UploadOptions {
   fileSize: number;
@@ -21,8 +23,8 @@ const MAX_USER_UPLOADS = 2;
 
 /** Bound the entire wire body as well as the parts retained by Multer. */
 export function boundedUpload(fieldName: string, options: UploadOptions): RequestHandler {
-  const maximumBytes = options.maxBytes ?? options.fileSize + options.fields * options.fieldSize + 64 * 1024;
-  return (req, res, next) => {
+  const maximumBytes = Math.min(options.maxBytes ?? options.fileSize + options.fields * options.fieldSize + 64 * 1024, SERVERLESS ? 4_000_000 : Number.MAX_SAFE_INTEGER);
+  const parse: RequestHandler = (req, res, next) => {
     const userId = (req as Request & { user?: { id: string } }).user?.id;
     if (!userId) { res.status(401).json({ error: "Not authenticated", code: "SESSION_EXPIRED" }); return; }
     if (!req.is("multipart/form-data")) { res.status(400).json({ error: "Expected a multipart upload", code: "INVALID_MULTIPART" }); return; }
@@ -109,4 +111,6 @@ export function boundedUpload(fieldName: string, options: UploadOptions): Reques
       next();
     });
   };
+  const enabled = featureFlagGuard("uploads");
+  return (req, res, next) => enabled(req, res, () => parse(req, res, next));
 }

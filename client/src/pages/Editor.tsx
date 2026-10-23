@@ -666,7 +666,7 @@ export function Editor() {
             {saving ? " · saving…" : lastSaved ? " · saved" : ""}
           </p>
            <div className="flex-1" />
-           <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
+           <ProjectHistory projectId={id!} currentDesign={design} currentRevision={revisionRef.current} onRestored={onHistoryRestore} />
            <ProjectWorkspaceLinks projectId={id!} />
            <Suspense fallback={null}><ProjectEngineeringBasisControl value={design.engineeringBasis} disabled={projectRole === "viewer"} onChange={engineeringBasis => changeDesign({ ...design, engineeringBasis })} /></Suspense>
            <TeamCollaborationPanel projectId={id!} />
@@ -713,7 +713,7 @@ export function Editor() {
             {saving ? " · saving…" : lastSaved ? " · saved" : ""}
           </p>
            <div className="flex-1" />
-           <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
+           <ProjectHistory projectId={id!} currentDesign={design} currentRevision={revisionRef.current} onRestored={onHistoryRestore} />
            <ProjectWorkspaceLinks projectId={id!} />
            <Suspense fallback={null}><ProjectEngineeringBasisControl value={design.engineeringBasis} disabled={projectRole === "viewer"} onChange={engineeringBasis => changeDesign({ ...design, engineeringBasis })} /></Suspense>
            <TeamCollaborationPanel projectId={id!} />
@@ -750,7 +750,7 @@ export function Editor() {
           </p>
         </div>
 
-          <ProjectHistory projectId={id!} currentDesign={design} onRestored={onHistoryRestore} />
+          <ProjectHistory projectId={id!} currentDesign={design} currentRevision={revisionRef.current} onRestored={onHistoryRestore} />
           <ProjectWorkspaceLinks projectId={id!} />
           <Suspense fallback={null}><ProjectEngineeringBasisControl value={design.engineeringBasis} disabled={projectRole === "viewer"} onChange={engineeringBasis => changeDesign({ ...design, engineeringBasis })} /></Suspense>
            <TeamCollaborationPanel projectId={id!} />

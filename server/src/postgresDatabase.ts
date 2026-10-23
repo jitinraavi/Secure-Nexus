@@ -6,7 +6,11 @@ import type { DatabaseAdapter, Db } from "./db.js";
 import { postgresSql } from "./postgresSql.js";
 import { runCommitEffects, type CommitEffect } from "./databaseEffects.js";
 
-export const POSTGRES_SCHEMA_VERSION = "groundwork_private_v1";
+export const POSTGRES_SCHEMA_VERSION = "groundwork_engineering_v2";
+const MIGRATIONS = [
+  { version: "groundwork_private_v1", file: "20261019191555_groundwork_private_database.sql" },
+  { version: POSTGRES_SCHEMA_VERSION, file: "20261021153936_engineering_runtime.sql" },
+] as const;
 // A transaction-scoped lock preserves the existing critical-section semantics
 // for quotas, billing, TOTP replay checks, leases and optimistic revisions.
 const TRANSACTION_LOCK = "711326018359731";
@@ -162,7 +166,7 @@ export async function createPostgresAdapter(configuration: PostgresConfiguration
 }
 
 export async function postgresMigrationSql(): Promise<string> {
-  return readFile(fileURLToPath(new URL("../supabase/migrations/20261019191555_groundwork_private_database.sql", import.meta.url)), "utf8");
+  return (await Promise.all(MIGRATIONS.map(({ file }) => readFile(fileURLToPath(new URL(`../supabase/migrations/${file}`, import.meta.url)), "utf8")))).join("\n");
 }
 
 /** Explicit administrator command only. Runtime credentials do not run schema DDL. */
@@ -174,12 +178,17 @@ export async function migratePostgres(databaseUrl: string, options: { sslCa?: st
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [MIGRATION_LOCK]);
     const exists = await client.query("SELECT to_regclass('groundwork.schema_migrations') AS name");
-    if (exists.rows[0]?.name) {
-      const migration = await client.query("SELECT version FROM groundwork.schema_migrations WHERE version=$1", [POSTGRES_SCHEMA_VERSION]);
-      if (migration.rowCount === 1) { await client.query("COMMIT"); return; }
+    let initialized = Boolean(exists.rows[0]?.name);
+    for (const migration of MIGRATIONS) {
+      if (initialized) {
+        const applied = await client.query("SELECT version FROM groundwork.schema_migrations WHERE version=$1", [migration.version]);
+        if (applied.rowCount === 1) continue;
+      }
+      const sql = await readFile(fileURLToPath(new URL(`../supabase/migrations/${migration.file}`, import.meta.url)), "utf8");
+      await client.query(sql);
+      await client.query("INSERT INTO groundwork.schema_migrations(version,applied_at) VALUES($1,$2) ON CONFLICT(version) DO NOTHING", [migration.version, Math.floor(Date.now() / 1000)]);
+      initialized = true;
     }
-    await client.query(await postgresMigrationSql());
-    await client.query("INSERT INTO groundwork.schema_migrations(version,applied_at) VALUES($1,$2) ON CONFLICT(version) DO NOTHING", [POSTGRES_SCHEMA_VERSION, Math.floor(Date.now() / 1000)]);
     await client.query("COMMIT");
   } catch (error) {
     await client?.query("ROLLBACK").catch(() => undefined);

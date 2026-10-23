@@ -10,4 +10,10 @@ Apply re-fetches the remote revision. A changed revision restarts review; the sa
 
 The bounded JSON parser now accepts up to 8 MB for escaped project payloads; payment webhook bodies retain a 256 KB bound. Oversized requests return a readable 413 response.
 
-Only source files were inspected and edited. No app, browser storage, compiler, tests, builds or previews were executed. Storage quota behavior, tab races, merge semantics, navigation races and server integration remain unverified.
+Automated client recovery/sync tests and TypeScript/production builds passed in
+the engineering verification run. These tests exercise synthetic storage and
+network failure cases; real browser quota behavior, cloned-tab races and
+long-running navigation/recovery journeys still require browser verification.
+See [ENGINEERING-IMPLEMENTATION.md](ENGINEERING-IMPLEMENTATION.md) for the full
+verification boundary. This feature retains local drafts; hosted database
+backups and restore drills are covered separately in [OPERATIONS.md](OPERATIONS.md).
