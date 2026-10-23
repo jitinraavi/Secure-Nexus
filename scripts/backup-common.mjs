@@ -45,6 +45,9 @@ export function connection(value, allowedHost, { restore = false, ca } = {}) {
   };
 }
 export async function fingerprint(client) {
+  // Hosted PostgreSQL and restore runners can have different output defaults.
+  // Canonicalize within the caller's snapshot without changing pooled sessions.
+  await client.query("SELECT set_config('extra_float_digits','3',true), set_config('bytea_output','hex',true), set_config('TimeZone','UTC',true)");
   const { rows: names } = await client.query("SELECT tablename FROM pg_tables WHERE schemaname='groundwork' ORDER BY tablename");
   if (!names.length) throw new Error('Expected private groundwork tables are missing');
   const tables = [];
