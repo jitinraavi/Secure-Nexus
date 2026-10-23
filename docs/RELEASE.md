@@ -18,11 +18,15 @@ npm run lint
 npm run build
 npm run test -w server
 npm run test -w client
-node --test scripts/operational*.test.mjs scripts/backup*.test.mjs scripts/release*.test.mjs
+npm run test:operations
+npm run test:capacity
+npm run test:capacity:postgres
 ```
 
 CI additionally checks the integrated deployment output, PostgreSQL API flow,
-studio interactions and private mail setup. Its `backup-drill` job uses native
+studio interactions and private mail setup. Capacity runs use disposable
+synthetic databases; their sanitized JSON artifacts are regression evidence,
+not production load measurements. Its `backup-drill` job uses native
 PostgreSQL 17 with synthetic records to export an encrypted application archive,
 authenticate it, restore to an empty isolated database and compare all table
 fingerprints. `release-gate` succeeds only when `verify` and `backup-drill` pass.
@@ -39,26 +43,33 @@ script requires `GITHUB_REPOSITORY=owner/repository`, `RELEASE_COMMIT`, optional
 private repository. It prints a reviewable evidence summary and never deploys.
 A later failing/in-progress rerun invalidates earlier success.
 
-Have the repository owner require `release-gate` as a GitHub branch/ruleset check
-if their account/repository supports it. No branch rule or Vercel account setting
-is changed by this repository. These workflows do not by themselves stop Vercel
-Git integration from auto-deploying the production branch; review that behavior
-before describing this as an enforced production gate. Do not depend on paid
-Vercel Deployment Checks for the free-plan release procedure.
-
-A practical repository-controlled free-plan gate is to add the following to the
-existing `vercel.json` before the release commit is pushed (use the actual
-production branch). This prevents Vercel Git pushes to `main` from starting an
-automatic deployment while leaving unspecified preview branches enabled:
+The checked-in `vercel.json` disables normal Git auto-deployment of `main` while
+leaving unspecified preview branches enabled:
 
 ```json
 { "git": { "deploymentEnabled": { "main": false } } }
 ```
 
-Then release the exact tested commit explicitly with the authenticated Vercel
-CLI. This configuration is a proposal until the owner applies it; no external
-account mutation is needed. It protects the normal Git path, while anyone with
-deployment credentials can still deliberately bypass the manual procedure. See
+`.github/workflows/deploy-production.yml` responds only to a successful push-CI
+run for this repository's `main` branch. It checks out that run's SHA, rechecks
+the current branch and newest CI attempt, then calls the single project-scoped
+`VERCEL_DEPLOY_HOOK` stored privately in the `production` environment. No npm
+installation or dependency lifecycle code receives that hook. A failed or
+ambiguous hook acknowledgment is not retried automatically; inspect Vercel first.
+
+The Vercel build command runs `scripts/deploy-after-ci.mjs --build-guard` before
+building. It verifies matching repository/branch/commit metadata against current
+successful CI evidence; production requires `main`. This second check refuses
+an untested branch head if the deploy hook races a later push. CLI deployments
+must also supply matching Git metadata or the explicit
+`GROUNDWORK_RELEASE_COMMIT`/`GROUNDWORK_RELEASE_BRANCH` values. The current public
+repository requires no persistent GitHub credential in Vercel for these reads.
+
+The hook and successful workflow/build evidence must exist before this release
+path is described as activated. People with deployment or repository
+administration credentials can deliberately change/bypass these controls. Require
+`release-gate` as a branch/ruleset check if the account supports it. This setup
+does not provision paid Vercel Deployment Checks. See
 [Vercel Git configuration](https://vercel.com/docs/project-configuration/git-configuration).
 
 1. Freeze the reviewed production-branch SHA; wait for the full matching CI run.
@@ -66,8 +77,9 @@ deployment credentials can still deliberately bypass the manual procedure. See
 3. Verify target Vercel team/project, canonical origin, production environment,
    schema compatibility, stable application key, latest encrypted archive and a
    known-good rollback deployment. Keep administrator URLs out of Vercel runtime.
-4. The authorized release owner releases that exact commit through the existing
-   Vercel project. When using CLI staging, stage production without domain
+4. The authorized post-CI workflow triggers that exact tested main revision
+   through the existing Vercel project. Inspect the build guard and deployment
+   result. For an explicit authorized CLI release, stage production without domain
    assignment, test it and promote that production deployment. Promoting a
    preview can rebuild with production variables, so repeat validation if the
    released build differs. Never silently substitute a newer branch head.

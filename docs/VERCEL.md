@@ -67,9 +67,10 @@ limit. The original larger upload limits still apply on a persistent backend.
 
 Function filesystem storage is ephemeral. Supabase holds persistent project data;
 `/tmp/groundwork` must never be treated as a backup destination. Automatic hosted
-backups and restoration remain an operator responsibility. Per-process general
-request limits are supplemented by persistent account/provider limits, but do
-not constitute a distributed traffic quota or production load validation.
+backups and restoration remain an operator responsibility. General API request
+limits now use atomic shared database counters alongside persistent
+account/provider budgets. Shared admission does not establish production load
+capacity or guarantee protection from every denial-of-service pattern.
 
 The Hobby allowance limits usage. This deployment does not enable paid Vercel
 features or provision external paid AI, payments or native services.
@@ -97,8 +98,10 @@ Vercel and do not depend on an in-process timer or ephemeral function storage.
 They require privately configured credentials and successful activation evidence;
 their presence in the repository does not mean they are active.
 
-`RELEASE.md` defines an exact-commit GitHub CI gate and manual release evidence.
-It does not provision paid Deployment Checks or change Vercel account settings.
-Confirm the project's Git auto-production behavior before claiming the gate
-prevents untested production releases. `SLO.md` defines initial objectives and
-measurement limits; `INCIDENTS.md` records ownership and the recovery procedure.
+`RELEASE.md` describes the checked-in main Git auto-deployment restriction,
+post-CI deployment-hook workflow and exact-commit Vercel build guard. The private
+hook and successful workflow/build evidence are required for activation. No paid
+Deployment Checks are provisioned. The daily `/api/ops/check` cron also requires
+the privately configured `CRON_SECRET`; it does not replace external uptime
+checks. `SLO.md` defines initial objectives and measurement limits;
+`INCIDENTS.md` records ownership and the recovery procedure.

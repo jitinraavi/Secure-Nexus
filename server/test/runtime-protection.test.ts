@@ -9,9 +9,16 @@ import { writeSse } from "../src/sse.js";
 dotenv.config = () => ({ parsed: {} });
 const directory = mkdtempSync(join(tmpdir(), "groundwork-runtime-protection-"));
 Object.assign(process.env, { NODE_ENV: "test", DATABASE_PROVIDER: "sqlite", DATABASE_URL: "", SUPABASE_DB_URL: "", GROUNDWORK_DATA_DIR: directory, DB_PATH: "", MASTER_KEY: Buffer.alloc(32, 48).toString("base64") });
-const { sharedRateLimiter } = await import("../src/sharedRateLimit.js");
+const { sharedRateLimiter, rateLimitIdentity } = await import("../src/sharedRateLimit.js");
 const { db } = await import("../src/db.js");
 after(async () => { await db.close(); rmSync(directory, { recursive: true, force: true }); });
+test("IPv6 privacy addresses and equivalent IPv4 encodings cannot reset their budget", () => {
+  assert.equal(rateLimitIdentity("2001:db8:1234:ab12::1"), rateLimitIdentity("2001:0db8:1234:abfe:ffff:1:2:3"));
+  assert.notEqual(rateLimitIdentity("2001:db8:1234:ab12::1"), rateLimitIdentity("2001:db8:1234:ac12::1"));
+  assert.equal(rateLimitIdentity("::ffff:192.0.2.4"), "192.0.2.4");
+  assert.equal(rateLimitIdentity("0:0:0:0:0:ffff:c000:204"), "192.0.2.4");
+  assert.equal(rateLimitIdentity("::1"), "0:0:0:0::/56");
+});
 test("separate limiter instances share atomic counters and preserve privacy", async () => {
   let time = 50_000;
   const options = { namespace: "test", limit: 10, windowMs: 60_000, message: "slow", clock: () => time };

@@ -31,13 +31,23 @@ GitHub schedules are best effort: this low-cost monitor cannot certify continuou
 uptime or a strict detection-time guarantee. Daily inspection covers stale runs;
 continuous stale-run detection needs an independent monitor.
 
-For runtime telemetry, collect authenticated metrics/summaries from every serving
-instance and keep timestamped snapshots outside the ephemeral function lifetime.
-Do not average per-instance percentiles. Merge compatible histogram bucket
-counts before estimating quantiles, or compute nearest-rank p99 from all retained
-eligible samples. Process-local counters reset on cold starts and cannot alone
-establish a 28-day request SLO. Until complete durable collection exists, label
-runtime percentile results as partial-window observations.
+Runtime telemetry now persists minute-level route histograms and sampled
+redacted traces in the shared database with seven-day retention. Retrieve them
+through bearer-protected `/api/ops/metrics` and `/api/ops/traces`; the summary
+endpoint accepts windows up to 24 hours. Preserve compatible timestamped
+aggregates outside this retention window before claiming 28-day attainment.
+Do not average instance percentiles. Runtime p95/p99 values are histogram bucket
+upper-bound estimates; local capacity reports use nearest-rank samples.
+
+The runtime check's defaults are a 99.9% availability budget, p95 ≤750 ms, and
+at least 20 observed requests before traffic-based alerts. Set
+`SLO_AVAILABILITY_PERCENT=99.5` to align its budget with the initial API objective
+above, or record an intentionally stricter target. `SLO_P95_MS` and
+`SLO_MIN_REQUESTS` configure the other check thresholds. Runtime summaries include
+completed routes other than `/api/ops`; apply the eligibility rules above before
+reporting the interactive SLI. The p95 runtime alert does not prove the p99
+objective. Platform/network failures absent from application telemetry still
+need external observations. Keep partial-window results explicitly labelled.
 
 ## Performance rehearsal
 

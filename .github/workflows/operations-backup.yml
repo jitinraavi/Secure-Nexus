@@ -24,9 +24,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Install reviewed PostgreSQL major-version client
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client-17
-          echo '/usr/lib/postgresql/17/bin' >> "$GITHUB_PATH"
+          bash scripts/install-postgres-client.sh
       - name: Export private schema directly to authenticated ciphertext
         run: node scripts/backup-export.mjs
         env:

@@ -31,7 +31,7 @@ export async function repositoryEvidence(repositoryPath, repository, request = f
   // The fixed API host and fixed GET-only paths prevent using this as a general
   // credential-bearing proxy or a write tool.
   async function get(path) {
-    const response = await request(`https://api.github.com/repos/${repository}/${path}`, { method: 'GET', headers, redirect: 'error', signal: AbortSignal.timeout(15000) });
+    const response = await request(`https://api.github.com/repos/${repository}${path ? `/${path}` : ''}`, { method: 'GET', headers, redirect: 'error', signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error('GitHub evidence unavailable');
     return response.json();
   }

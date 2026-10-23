@@ -13,6 +13,8 @@
     "start": "npm run start -w server",
     "lint": "tsc --noEmit -p server && tsc --noEmit -p client",
     "test:studio": "npm run test:studio -w client",
+    "test:capacity": "node --expose-gc --disable-warning=ExperimentalWarning --import tsx scripts/engineering-capacity.mjs",
+    "test:capacity:postgres": "node --expose-gc --disable-warning=ExperimentalWarning --import tsx scripts/engineering-capacity.mjs --postgres-engine",
     "test:deployment": "node --disable-warning=ExperimentalWarning --import tsx --test server/test/studio-routing.test.ts",
     "check:deployment": "node scripts/deployment-preflight.mjs --check-build",
     "check:build": "node scripts/deployment-preflight.mjs --build-only",

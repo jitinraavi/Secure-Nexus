@@ -61,6 +61,19 @@ jobs:
       - name: Test operational safety and release gating
         run: node --test scripts/operational*.test.mjs scripts/backup*.test.mjs scripts/release*.test.mjs scripts/deploy-after-ci.test.mjs
 
+      - name: Rehearse bounded local capacity and disconnected-stream cleanup
+        run: |
+          npm run test:capacity
+          npm run test:capacity:postgres
+
+      - name: Save synthetic performance evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: engineering-capacity-${{ github.sha }}
+          path: artifacts/engineering-capacity*.json
+          retention-days: 14
+          if-no-files-found: error
+
   backup-drill:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -84,10 +97,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install matching PostgreSQL clients
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client-17
-          echo '/usr/lib/postgresql/17/bin' >> "$GITHUB_PATH"
+        run: bash scripts/install-postgres-client.sh
       - name: Create empty isolated restore target
         run: createdb --host=127.0.0.1 --username=postgres groundwork_restore_drill
         env:

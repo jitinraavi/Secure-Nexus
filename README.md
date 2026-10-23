@@ -19,6 +19,9 @@ The stable API prefix is `/api/v1`; installed clients may continue using `/api`.
 Design writes and snapshot restores require the last observed `baseRevision`.
 Read [operations](docs/OPERATIONS.md), [recovery](docs/DURABLE-RECOVERY.md), and
 [release controls](docs/RELEASE.md) before deploying changes or restoring data.
+The [engineering implementation record](docs/ENGINEERING-IMPLEMENTATION.md)
+maps all 111 audited topics to source changes, test evidence and remaining
+operational verification.
 
 For the product overview, competitor positioning and full verified technology
 inventory, read the [project documentation](docs/PROJECT-DOCUMENTATION.md).
@@ -46,7 +49,7 @@ The API lives in `server/`, the client in `client/`.
 
 ### Collaboration model
 
-The editor uses a server-authoritative revision protocol rather than a CRDT. Each design write includes the last revision observed by the client; a stale write receives `409 REVISION_CONFLICT` and is never applied. The client keeps local edits in place and surfaces that a remote update is available instead of replacing them blindly. Authenticated project owners, editors and viewers can subscribe to `/api/collaboration/:projectId/events` via SSE and create encrypted comments/issues. Only project owners and editors can change item status or design data; viewers cannot resolve items. Expiring public share links remain read-only and grant no collaboration membership. SSE event payloads intentionally contain metadata only, while project and item content remains encrypted at rest. This phase is single-server/in-memory for live fanout, so reconnecting clients recover state through the normal project/revision APIs and multi-instance deployments need a shared event broker for immediate fanout.
+The editor uses a server-authoritative revision protocol rather than a CRDT. Each design write and snapshot restore includes the last revision observed by the client; a stale write receives `409 REVISION_CONFLICT` and is never applied. The client retains local edits for explicit recovery. Authenticated project owners, editors and viewers can subscribe to `/api/collaboration/:projectId/events` via SSE and create encrypted comments/issues. Only project owners and editors can change item status or design data; viewers cannot resolve items. Expiring public share links remain read-only and grant no collaboration membership. SSE payloads contain metadata; project and item content remains encrypted at rest. Local connections receive immediate fanout, while persisted database events support polling/replay across function instances. Optional Redis transport requires separate configuration. Shared subscription reservations bound connection admission; slow streams close and reconnect through the durable cursor.
 
 ### Assistant configuration
 
@@ -78,7 +81,7 @@ for required mail, payment, key and provider-budget configuration. The included
 | Health check path | `/api/health` |
 | Env: `NODE_ENV` | `production` |
 | Env: `PAYMENTS_MODE` | `live` (required in production) |
-| Env: `MASTER_KEY` | **Required stable base64 32-byte secret** (must never change) |
+| Env: `MASTER_KEY` | **Required stable base64 32-byte secret**; preserve it across deploys and use the documented previous-key procedure for a planned rotation |
 | Env: `GROUNDWORK_DATA_DIR` | `/var/data` on the required persistent disk |
 
 **Persistence:** set `DATABASE_PROVIDER=supabase` and the server-only `DATABASE_URL`
@@ -99,7 +102,7 @@ Payments are stored with `status`, provider order id and provider URL. PayPal am
 - **At-rest encryption:** AES-256-GCM. The vault key is derived from `MASTER_KEY` via HKDF; each user's blobs use a domain-separated AAD (project data and photos use distinct AADs), so ciphertexts cannot be replayed across resources.
 - **Sessions:** random 256-bit tokens stored as SHA-256 hashes, absolute expiry and credential epochs. Password changes/revocation invalidate other active and pending MFA sessions and outstanding email login codes. Cookies use `SameSite=Lax`, `HttpOnly`, and `Secure` in production. Failed logout retains signed-in UI with retry.
 - **CSRF:** session-bound tokens protect authenticated mutations. Anonymous JSON authentication and verified provider webhooks have scoped exemptions. MFA setup uses POST with CSRF validation.
-- **Rate limiting:** global API limit (300/IP/15 min) before JSON parsing; SSO has a stricter IP limit. Password, email OTP and TOTP attempts have account/challenge limits. Upload and provider work have independent concurrency/resource budgets.
+- **Rate limiting:** shared database API limit (300 per normalized IP budget per 15 min) before JSON parsing; SSO has a stricter limit. IP budget keys are HMAC pseudonyms. Password, email OTP and TOTP attempts have account/challenge limits. Upload and provider work have independent concurrency/resource budgets.
 - **2FA:** TOTP (RFC 6238, SHA-1, 30 s, 6 digits), user-bound encrypted seeds, single-use timesteps, persistent throttling and enforced re-entry on login when enabled.
 - **Input:** route schemas, design byte/count/depth limits, bounded multipart parsing and sniffed photo formats (PNG/JPEG/WebP/GIF). Photos allow 25 MiB; workspace files allow 64 MiB; render sources allow 32 MiB. BCF imports use bounded worker inflation. CSP uses Helmet, `frame-ancestors none`, and strict referrer policy.
 - **Offline privacy:** sign-out defaults to keeping unsynchronized copies, offers a plaintext recovery ZIP and requires explicit acknowledgment for removal. Retained browser copies and backups are plaintext. Private render images use `private, no-store`.
@@ -135,6 +138,8 @@ SPEC.md             product specification & open questions
 
 - Server: `npm run build -w server` (tsc).
 - Client: `npm run build -w client` (tsc + vite).
+- Automated regression suites: `npm test`; PostgreSQL-compatible API flow: `npm run test:postgres-flow`.
+- Isolated read/SSE capacity rehearsal and its limits: [engineering implementation](docs/ENGINEERING-IMPLEMENTATION.md#synthetic-performance-evidence).
 - Smoke test the API flow with the built server running (`npm start`): sign up → create project → save design → upload photo → pay (demo) → export → check the audit log.
 
 ## Studio homepage and deployment readiness
