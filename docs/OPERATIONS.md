@@ -2,23 +2,35 @@
 
 The Vercel deployment persists application records in Supabase PostgreSQL's
 private `groundwork` schema. Vercel `/tmp` and local SQLite backups do not protect
-that cloud database. The workflows here are prepared tooling; a committed
-schedule is not evidence that monitoring or backups are active.
+that cloud database. Distinguish configured schedules from completed run evidence
+and from full recovery verification.
 
 ## Activation record
 
-The owner must record the canonical origin, production branch, on-call owner,
-last successful external probe, last uploaded archive, and last successful real
-restore drill. Record timestamps and workflow run URLs without credentials.
-Until those runs exist, mark the corresponding control **not activated**.
-No live database export, restore or SMTP send is part of the test suite.
+The canonical application is `https://secure-nexus-xi.vercel.app/`, with production
+source on `main` in public repository `jitinraavi/Secure-Nexus`. Main is protected
+by the required release gate. Production deploys require successful exact-source
+CI. The owner-authorized alert recipient is configured privately; runtime operation
+credentials, the daily Vercel check and existing SMTP route are configured privately.
 
-The inspected source repository `jitinraavi/Secure-Nexus` was public, its default
-branch `main` was unprotected, and its Actions repository secret/variable lists
-were empty. Consequently, the prepared private-repository backup workflow cannot
-activate there as inspected. Use an explicitly approved private recovery
-repository/storage target or an owner-approved visibility change; never silently
-change visibility or upload database archives to public-repository artifacts.
+Public external monitoring is activated. Scheduled
+[run 39949974048](https://github.com/jitinraavi/Secure-Nexus/actions/runs/39949974048)
+and manual [run 39959697259](https://github.com/jitinraavi/Secure-Nexus/actions/runs/39959697259)
+succeeded on 23 October 2026. These historical runs do not replace current
+freshness checks or prove inbox delivery during an outage.
+
+Approved private recovery repository `jitinraavi/Groundwork-recovery` is prepared
+with separate backup encryption and restricted database credentials. Its first
+real-data restore comparison exposed hosted/local floating-point serialization
+differences. A 1.1.2 canonicalization correction and fresh verification are in
+progress; private recovery scheduling remains disabled until the real comparison
+and artifact checks pass. Do not record this first attempt as a successful drill.
+No live database export, restore or SMTP send is part of the ordinary test suite.
+
+Maintain timestamps and workflow URLs for the latest probe, uploaded archive and
+successful real restore without credentials or record contents. Mark any control
+without successful activation evidence **not activated**. Never upload production
+archives to the public source repository's artifacts or silently change visibility.
 
 `node scripts/operational-github-read.mjs /absolute/path/to/repository
 owner/repository` retrieves a sanitized, GET-only readiness report using an
@@ -34,8 +46,8 @@ It rejects redirects, HTML, oversized bodies, non-200 responses, network failure
 and JSON without `ok: true`. This checks the public route and database connection;
 it does not prove password login, SMTP inbox delivery, project decryption or saves.
 
-Configure GitHub repository variables privately through Settings → Secrets and
-variables → Actions:
+For a new environment, configure GitHub repository variables privately through
+Settings → Secrets and variables → Actions; preserve the existing production values:
 
 | Variable | Value |
 | --- | --- |
@@ -61,15 +73,24 @@ unexpired, nonempty encrypted artifact. Missing/stale evidence fails the check
 and uses the same SMTP alert route. This checks uploaded-artifact freshness,
 not whether real-data restoration/decryption has been rehearsed.
 
-After activation, dispatch one normal health run and perform an owner-controlled
-failure drill against an isolated target. Confirm both the failed run and inbox
-delivery. GitHub schedules can be delayed or disabled; inspect the last run daily.
+After configuration changes, dispatch a normal health run and perform an
+owner-controlled failure drill against an isolated target. Confirm the failed
+run and inbox delivery. GitHub schedules can be delayed or disabled; inspect the last run daily.
 Set a freshness alert/process if no completed probe exists for 45 minutes.
 
 ## Encrypted offsite PostgreSQL export
 
 `operations-backup.yml` is opt-in, runs only on the default branch of a **private**
-repository, and schedules a daily export at 02:41 UTC. Configure:
+repository, and schedules a daily export at 02:41 UTC.
+
+The approved private recovery copy uses `RECOVERY_ENABLED` as its activation gate
+and `SOURCE_COMMIT` to identify reviewed tooling. Before each backup it resolves
+the current source main commit and requires its successful exact-commit CI. It
+also checks backup freshness hourly and reports accepted successful archive/restore
+evidence to the protected application operations endpoint. Activate that copy
+only after a successful first real archive/restore and artifact verification. The
+generic checked-in workflow's configuration is listed below; it remains inactive
+in the public source repository.
 
 | Type | Name | Purpose |
 | --- | --- | --- |
@@ -168,7 +189,7 @@ command, or revert to stale SQLite after new cloud writes.
 
 ## Release and routine checks
 
-Follow `RELEASE.md` for exact-commit CI evidence and manual Vercel release.
+Follow `RELEASE.md` for exact-commit CI evidence and the active post-CI Vercel release path.
 Follow `SLO.md` for SLIs and performance sampling, and `INCIDENTS.md` for ownership,
 triage and recovery decisions. Review failed scheduled runs, monitor freshness,
 backup freshness (last artifact no older than 26 hours), quota, and the latest

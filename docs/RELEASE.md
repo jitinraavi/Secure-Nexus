@@ -6,6 +6,30 @@ available for self-hosted deployments; it is not the Vercel persistence model.
 Build with `npm ci && npm run build`, and check `/api/health` after release.
 See `VERCEL.md`, `SUPABASE.md` and `OPERATIONS.md` for the hosted configuration.
 
+## Verified release history
+
+Groundwork 1.1.1 at `00d285bdf7772bd45ded63bd2366446adc0d9989` passed
+[main CI 39960744109](https://github.com/jitinraavi/Secure-Nexus/actions/runs/39960744109),
+including verify, native PostgreSQL 17 synthetic backup/restore and release-gate.
+The authorized post-CI deploy path produced READY Vercel deployment
+`dpl_DQ5dyGpQcnJgGJMnTvtPFxrnR9Ad` with that exact source SHA at
+`https://secure-nexus-xi.vercel.app/`.
+
+A disposable live smoke account passed password login, versioned session,
+encrypted project save/reload, stale-write rejection, snapshot restore, geometry
+upload, SSE abort cleanup and logout/session revocation. Fixture cleanup was
+verified. Public health/static routing and protected operations denial were also
+checked. These results do not prove OTP inbox delivery or optional provider flows.
+Public external health monitoring and the private runtime check/SMTP route are
+configured; retain their own current run and delivery evidence.
+
+The first private real-data backup comparison found hosted/local floating-point
+serialization differences. The corrective 1.1.2 release is in progress; do not
+claim a successful real-data drill or activate backup scheduling until a fresh
+encrypted archive, isolated restore, full comparison and artifact check pass.
+Each new release requires its own exact-source CI and deployment evidence; this
+historical 1.1.1 record does not certify a later patch.
+
 ## Release checks
 
 Every push and pull request runs `.github/workflows/ci.yml` with Node 22 and the
@@ -65,11 +89,12 @@ must also supply matching Git metadata or the explicit
 `GROUNDWORK_RELEASE_COMMIT`/`GROUNDWORK_RELEASE_BRANCH` values. The current public
 repository requires no persistent GitHub credential in Vercel for these reads.
 
-The hook and successful workflow/build evidence must exist before this release
-path is described as activated. People with deployment or repository
-administration credentials can deliberately change/bypass these controls. Require
-`release-gate` as a branch/ruleset check if the account supports it. This setup
-does not provision paid Vercel Deployment Checks. See
+The hook/build guard path is activated and the 1.1.1 exact-source deployment
+above passed. Main requires `release-gate` with branch protection. For a new
+environment, require matching hook/workflow/build evidence before describing
+that path as activated. People with deployment or repository administration
+credentials can deliberately change/bypass these controls. This setup does not
+provision paid Vercel Deployment Checks. See
 [Vercel Git configuration](https://vercel.com/docs/project-configuration/git-configuration).
 
 1. Freeze the reviewed production-branch SHA; wait for the full matching CI run.
