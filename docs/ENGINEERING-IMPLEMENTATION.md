@@ -13,7 +13,7 @@ not requirements to add Kubernetes, replicas, additional regions or paid service
 
 ## Verification boundary
 
-- Local verification passed: TypeScript checks, production build, 149 server
+- Local verification passed: TypeScript checks, production build, 150 server
   tests, 32 client tests, 8 studio tests, 2 mail-setup tests and 18 operational
   tooling tests. Production dependency audit reported zero known advisories.
 - The additive `groundwork_engineering_v2` migration was applied to the existing

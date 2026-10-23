@@ -2,7 +2,24 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import type { Request, Response } from "express";
-import { readServerlessMode, serverlessStreamDeadline, vercelRequestContext } from "../src/serverlessRuntime.js";
+import { bindServerlessCancellation, readServerlessMode, serverlessStreamDeadline, vercelRequestContext } from "../src/serverlessRuntime.js";
+import { readFileSync } from "node:fs";
+
+test("only collaboration events opt into cancellation and aborted streams release response listeners", () => {
+  const configuration = JSON.parse(readFileSync(new URL('../../vercel.json', import.meta.url), 'utf8'));
+  assert.equal(configuration.functions['api/collaboration.mjs'].supportsCancellation, true);
+  assert.notEqual(configuration.functions['api/index.mjs'].supportsCancellation, true);
+  const route = configuration.routes.find((value: { dest?: string }) => value.dest === '/api/collaboration');
+  assert(new RegExp(route.src).test('/api/v1/collaboration/project/events'));
+  assert(!new RegExp(route.src).test('/api/collaboration/project/operations'));
+  const request = Object.assign(new EventEmitter(), { aborted: false });
+  const response = Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false, end() { this.writableEnded = true; this.emit('finish'); } });
+  bindServerlessCancellation(request as unknown as import('node:http').IncomingMessage, response as unknown as Response);
+  request.emit('error', new Error('aborted'));
+  assert.equal(response.writableEnded, true);
+  assert.equal(request.listenerCount('error'), 0); assert.equal(request.listenerCount('aborted'), 0);
+  assert.equal(response.listenerCount('close'), 0);
+});
 
 const configuration = {
   GROUNDWORK_SERVERLESS: "vercel", VERCEL: "1", NODE_ENV: "production", DATABASE_PROVIDER: "supabase",
