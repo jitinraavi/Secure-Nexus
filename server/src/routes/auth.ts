@@ -1,3 +1,4 @@
+import { routeParam } from "../routeParams.js";
 import { Router, type Request } from "express";
 import { randomInt } from "node:crypto";
 import qrcode from "qrcode";
@@ -777,16 +778,16 @@ router.delete(
     }
     const target = (await db
       .prepare("SELECT id FROM sessions WHERE id = ? AND user_id = ?")
-      .get(req.params.id, session.user_id));
+      .get(routeParam(req, "id"), session.user_id));
     if (!target) {
       res.status(404).json({ error: "Session not found" });
       return;
     }
     (await db.prepare("UPDATE sessions SET status = 'revoked', revoked_at = ? WHERE id = ?").run(
       now(),
-      req.params.id,
+      routeParam(req, "id"),
     ));
-    (await logAudit(session.user_id, "auth.session_revoked", `Session ${req.params.id.substring(0, 8)}…`, req));
+    (await logAudit(session.user_id, "auth.session_revoked", `Session ${routeParam(req, "id").substring(0, 8)}…`, req));
     res.json({ ok: true });
   }),
 );
