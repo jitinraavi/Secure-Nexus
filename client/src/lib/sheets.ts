@@ -298,7 +298,7 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
 }
 
 /** Build a self-contained vector PDF in the browser with no server renderer. */
-export function buildSheetPdf(projectName: string, design: Design): Uint8Array {
+export function buildSheetPdf(projectName: string, design: Design): Uint8Array<ArrayBuffer> {
   const pages = buildPages(projectName || "Untitled project", design);
   const objects: string[] = [];
   const add = (value: string) => { objects.push(value); return objects.length; };
