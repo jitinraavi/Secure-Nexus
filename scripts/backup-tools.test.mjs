@@ -50,3 +50,19 @@ test('PostgreSQL row fingerprints detect changed values and preserve duplicates 
     await engine.exec('COMMIT');
   } finally { await engine.close(); }
 });
+
+test('PostgreSQL fingerprints canonicalize floating, binary and time output across source and restore sessions', async () => {
+  const engine = new PGlite();
+  try {
+    await engine.exec("CREATE SCHEMA groundwork; CREATE TABLE groundwork.schema_migrations(version text); INSERT INTO groundwork.schema_migrations VALUES ('fixture-v1'); CREATE TABLE groundwork.fixture(id int, value double precision, bytes bytea, happened_at timestamptz); INSERT INTO groundwork.fixture VALUES (1,1.2345678901234567,decode('0001ff5c','hex'),'2026-10-23T12:34:56.123456Z'); SET extra_float_digits=0; SET bytea_output='escape'; SET TimeZone='America/New_York'; BEGIN READ ONLY");
+    const { rows: [rounded] } = await engine.query('SELECT to_jsonb(value)::text AS value FROM groundwork.fixture');
+    const source = await fingerprint(engine);
+    await engine.exec("COMMIT; SET extra_float_digits=3; SET bytea_output='hex'; SET TimeZone='UTC'; BEGIN READ ONLY");
+    const { rows: [precise] } = await engine.query('SELECT to_jsonb(value)::text AS value FROM groundwork.fixture');
+    assert.notEqual(rounded.value, precise.value, 'the source setting must reproduce the floating output difference');
+    assert.deepEqual(await fingerprint(engine), source);
+    await engine.exec("COMMIT; UPDATE groundwork.fixture SET value=1.234567890123456 WHERE id=1; BEGIN READ ONLY");
+    assert.notDeepEqual(await fingerprint(engine), source);
+    await engine.exec('COMMIT');
+  } finally { await engine.close(); }
+});

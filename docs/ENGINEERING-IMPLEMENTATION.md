@@ -1,7 +1,7 @@
 # Engineering implementation and verification record
 
 This record maps the 111-topic audit dated 21 October 2026 to the engineering
-changes prepared for Groundwork 1.1. It describes the source and verification
+changes implemented for Groundwork 1.1. It describes the source and verification
 evidence available on 23 October 2026. It is not a claim that every operational
 control is active or that the application is free of vulnerabilities.
 
@@ -13,7 +13,7 @@ not requirements to add Kubernetes, replicas, additional regions or paid service
 
 ## Verification boundary
 
-- Local verification passed: TypeScript checks, production build, 149 server
+- Local verification passed: TypeScript checks, production build, 150 server
   tests, 32 client tests, 8 studio tests, 2 mail-setup tests and 18 operational
   tooling tests. Production dependency audit reported zero known advisories.
 - The additive `groundwork_engineering_v2` migration was applied to the existing
@@ -22,11 +22,25 @@ not requirements to add Kubernetes, replicas, additional regions or paid service
   returned no lints. These checks do not replace application authorization tests.
 - PostgreSQL-compatible API coverage uses PGlite locally. It does not simulate
   multiple hosted PostgreSQL connections, Vercel instances or regional latency.
-- At this record's preparation, local tests and the remote CI verification job
-  had passed. The native PostgreSQL 17 backup/restore job was being repaired and
-  rerun. Exact-commit main-branch CI, production deployment, post-deployment
-  checks, monitoring activation and a real-data recovery drill still require
-  their own successful run evidence. See the release record for later results.
+- Groundwork 1.1.1 at `00d285bdf7772bd45ded63bd2366446adc0d9989` passed
+  [main CI 39960744109](https://github.com/jitinraavi/Secure-Nexus/actions/runs/39960744109),
+  including the native PostgreSQL 17 synthetic backup/restore drill. Vercel
+  deployment `dpl_DQ5dyGpQcnJgGJMnTvtPFxrnR9Ad` reached READY with that exact SHA.
+  A disposable production smoke account passed login, versioned session,
+  encrypted save/reload, stale-write rejection, snapshot restore, geometry
+  upload, SSE disconnect cleanup and logout/session revocation. Cleanup left
+  no synthetic fixtures. These are release checks, not sustained capacity proof.
+- Public external monitoring is activated. Both a scheduled health run and
+  [manual run 39959697259](https://github.com/jitinraavi/Secure-Nexus/actions/runs/39959697259)
+  completed successfully. Runtime operation tokens, the daily Vercel check and
+  the owner's authorized SMTP alert route are configured. Inspect current run
+  freshness; inbox delivery and an isolated outage/recovery drill remain separate
+  verification requirements.
+- The first private real-data backup/restore comparison exposed different
+  floating-point serialization settings between hosted and local PostgreSQL.
+  The 1.1.2 canonicalization correction is in progress. Private backup scheduling
+  remains disabled until a new real archive, full restore comparison and artifact
+  checks succeed; no successful real-data recovery drill is claimed here.
 - Passing SMTP configuration tests does not prove that a message reaches an
   inbox. Synthetic backup tests do not prove that an actual production archive
   exists or can recover encrypted projects with separately preserved keys.
@@ -43,7 +57,7 @@ not requirements to add Kubernetes, replicas, additional regions or paid service
 | Encryption | `vaultCrypto.ts` supports previous-key decryption and compare-and-swap resealing. Render prompts and parameters are encrypted and audit records omit prompt bodies. | Vault rotation and render-input tests |
 | Observability | `telemetry.ts` generates request IDs and W3C trace context with bounded database/provider spans. `operationalRuntime.ts` persists redacted route metrics and sampled traces; no query values, bodies, cookies, emails or raw SQL are recorded. | `server/test/operational-runtime.test.ts` |
 | Operations | Bearer-protected `/api/ops` routes expose metrics/traces, checks, backup reports and revisioned flags. Flags have stable rollout buckets and audited updates; unsupported serverless workers remain disabled. | `server/test/runtime-routing-operations.test.ts` |
-| Recovery and release | Encrypted offsite export/isolated restore tools, health/performance checks, exact-SHA CI checks and a post-CI deployment workflow are provided. Secrets and real activation evidence remain separate from source. | Operational tooling tests; native PostgreSQL drill requires successful CI evidence |
+| Recovery and release | Encrypted offsite export/isolated restore tools, health/performance checks, exact-SHA CI checks and a post-CI deployment workflow are provided. Secrets remain separate from source. | 1.1.1 exact-source CI/deployment and native synthetic PostgreSQL drill passed; real-data comparison correction and rerun remain required |
 
 The database migration and SQLite schema include shared rate windows, outbound
 circuits, minute-level request histograms, bounded traces, operational state and
@@ -64,7 +78,7 @@ means no additional architecture is justified for the current demo.
 | 3 | Load balancing | Retained Vercel-managed distribution; production capacity remains unmeasured. |
 | 4 | Reverse proxies | Retained exact API routing, trusted Vercel identity and development proxy. |
 | 5 | API gateways | Implemented shared admission, tracing and centralized version alias at the existing API entry point. No separate gateway service is needed. |
-| 6 | CI/CD | Implemented exact-SHA CI/readiness checks, disabled normal main Git auto-deploy and added a CI-triggered deploy hook plus build guard. Activation and successful production run remain pending evidence. |
+| 6 | CI/CD | Implemented exact-SHA CI/readiness checks, disabled normal main Git auto-deploy and activated a CI-triggered deploy hook plus build guard. The 1.1.1 exact-source CI and production deployment passed; protected main requires the release gate. |
 | 7 | Docker | Existing container recipe retained; a successful container build/runtime rehearsal remains pending before selecting that host. Docker is not required on Vercel. |
 | 8 | Kubernetes | Conditional; current demo has no cluster requirement. |
 | 9 | Service discovery | Conditional; configured service endpoints suffice. |
@@ -79,7 +93,7 @@ means no additional architecture is justified for the current demo.
 | 18 | Distributed transactions | Conditional; use database atomicity and provider reconciliation rather than two-phase commit. |
 | 19 | Saga pattern | Conditional until an active multi-step provider workflow needs compensation. |
 | 20 | Dead letter queues | Conditional alongside future active durable jobs; no separate queue service added. |
-| 21 | Cron jobs | Implemented authenticated daily Vercel operations schedule and external health/backup workflow schedules. Successful scheduled runs and freshness monitoring need activation evidence. |
+| 21 | Cron jobs | Configured authenticated daily Vercel operations and activated public external health schedules with successful run evidence. Private backup scheduling awaits a successful real-data comparison; inspect ongoing schedule freshness. |
 | 22 | WebSockets | Conditional; current collaboration uses SSE. |
 | 23 | Long polling | Conditional; no additional fallback transport is required. |
 | 24 | Server-sent events | Retained authenticated cursor replay; added atomic shared admission, bounded writes and deterministic cleanup. |
@@ -116,7 +130,7 @@ means no additional architecture is justified for the current demo.
 | 55 | Rollbacks | Added exact-commit release/rollback procedures and known-good release evidence requirements. A real application rollback rehearsal remains pending. |
 | 56 | Health checks | Retained database readiness at `/api/health`; added external checking tools with strict JSON/status/deadline validation. |
 | 57 | Liveness and readiness | Implemented process-only `/api/live`, separate from database readiness. |
-| 58 | Monitoring | Implemented protected runtime checks and external health workflows; real schedule, outage drill and inbox evidence are activation requirements. |
+| 58 | Monitoring | Implemented protected runtime checks and activated external health workflows with successful scheduled/manual runs. Ongoing freshness checks, an isolated outage drill and inbox evidence remain required. |
 | 59 | Logging | Implemented structured redacted request outcomes/correlation IDs and audit-write failure signals; removed render prompt text from audit details. |
 | 60 | Distributed tracing | Implemented request trace context, parent/child database/provider spans, bounded sampled storage and protected retrieval. No external trace exporter is claimed. |
 | 61 | Metrics | Implemented shared minute histograms, route/error counters, latency summaries and bounded retention. Full 28-day measurement is not yet established. |
@@ -124,7 +138,7 @@ means no additional architecture is justified for the current demo.
 | 63 | SLOs | Defined internal objectives in `SLO.md`; attainment requires complete observation windows and coverage evidence. |
 | 64 | SLIs | Defined API, probe, persistence and recoverability indicators; runtime aggregation and external attempts provide distinct signals, not a single complete availability measure. |
 | 65 | Error budgets | Implemented windowed runtime availability budget summaries and documented release-response policy; full-window operational enforcement remains pending. |
-| 66 | Observability | Implemented correlated logs, spans, shared metrics and actionable check routes; external activation and ongoing review remain operational work. |
+| 66 | Observability | Implemented correlated logs, spans, shared metrics and actionable check routes; external monitoring is activated. Ongoing review and full observation windows remain operational work. |
 | 67 | Secrets management | Implemented tested previous-key vault decryption/CAS resealing. Planned key custody/rotation rehearsal across record classes remains required before rotating real keys. |
 | 68 | IAM | Retained least-privilege database roles, application ownership/tenant checks and private-schema RLS. New tables receive equivalent restricted policies. |
 | 69 | OAuth | Existing OIDC/PKCE/nonce flow retained and outbound discovery/token paths hardened. No approved provider is configured/tested by this release. |
@@ -161,7 +175,7 @@ means no additional architecture is justified for the current demo.
 | 100 | gRPC | Conditional; existing REST/JSON is appropriate. |
 | 101 | Webhooks | Signed/duplicate callback tests retained; hardened payment outbound requests. Real provider callback secrets, delayed-event and reconciliation drills remain required before paid use. |
 | 102 | API versioning | Implemented `/api/v1` contract alias, `X-API-Version: 1` and legacy `/api` compatibility; design writes/restores require revision tokens. |
-| 103 | Semantic versioning | Version 1.1.0 and documented compatibility/release policy added. |
+| 103 | Semantic versioning | Documented compatibility/release policy added; 1.1.1 production release verified, with a 1.1.2 backup comparison correction in progress. |
 | 104 | Infrastructure as code | Vercel configuration, migrations, pinned workflows and private provisioning procedures are reproducible source. Account secrets/settings are deliberately outside the repository. |
 | 105 | Terraform | Conditional until multi-environment provisioning warrants it. |
 | 106 | Helm charts | Conditional; no Kubernetes deployment is being introduced. |
@@ -198,18 +212,22 @@ npm run test:capacity
 npm run test:capacity:postgres
 ```
 
-## Operational completion evidence still required
+## Ongoing verification and recovery completion
 
-1. Record a green exact-commit main-branch CI run including the native PostgreSQL
-   export/restore job, the production deployment ID/SHA and post-release public
-   routing/authentication/save checks. Follow [RELEASE.md](RELEASE.md).
-2. Activate the external health checks, runtime check token/cron and authorized
-   SMTP alert route. Confirm an isolated failure and recovery notification, then
-   inspect schedule freshness. A Vercel daily cron is not a 15-minute uptime monitor.
-3. Use an approved private recovery target. Preserve a separate backup key and
-   application-key history, create a real encrypted archive, confirm freshness,
-   and rehearse restoration plus isolated project decryption and restored-auth
-   invalidation. Never upload production backups to public repository artifacts.
+1. For each new release, retain a green exact-commit main CI run, native synthetic
+   export/restore result, production deployment ID/SHA and post-release smoke
+   checks. The verified 1.1.1 evidence above is historical and cannot stand in for
+   a later patch's checks. Follow [RELEASE.md](RELEASE.md).
+2. Keep the activated external health checks and configured runtime token/cron
+   current. Confirm an isolated failure and recovery notification and inbox
+   delivery, then inspect schedule freshness. A daily Vercel cron does not replace
+   the external 15-minute schedule, which is subject to GitHub scheduling delay.
+3. Complete the real-data comparison correction and rerun against the approved
+   private recovery repository. Activate scheduling only after encrypted artifact
+   and full restore comparison success. Preserve portable separate copies of the
+   backup key and application-key history, then rehearse isolated project
+   decryption and restored-auth invalidation. Windows-user DPAPI alone is not a
+   portable recovery copy. Never upload production backups to public artifacts.
 4. Observe real traffic long enough to evaluate the documented SLOs. Measure
    hosted login/save/replay, aggregate pool/lock demand, browser/GPU cleanup and
    negotiated protocols before raising capacity or availability claims.

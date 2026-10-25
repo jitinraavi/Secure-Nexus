@@ -1,6 +1,7 @@
 import type { Design, DocumentationSchedule, FurnitureItem, MepDesign, ParametricFamilyMetadata } from "../types";
 import { towerMeters } from "./community";
 import { resolveDraft, resolveRoomOpening, resolveTowerOpening } from "./parametric";
+import { cadFootprintArea } from "./cadModel";
 
 export type ScheduleCell = string | number | boolean;
 export interface ScheduleRecord {
@@ -12,7 +13,7 @@ export interface ScheduleRecord {
 export interface ScheduleRow { id: string; sourceIds: string[]; cells: ScheduleCell[]; }
 export interface ScheduleResult { fields: string[]; rows: ScheduleRow[]; sourceCount: number; warnings: string[]; }
 
-export const SCHEDULE_FIELDS = ["Id", "Category", "Name", "Scope", "Quantity", "Unit", "Width m", "Depth m", "Height m", "Length m", "Area m2", "Volume m3", "Elevation m", "Level", "Floor", "Phase", "Family", "Type", "Host", "Material", "System", "Visible", "Scale", "Rated power kW"];
+export const SCHEDULE_FIELDS = ["Id", "Category", "Name", "Scope", "Quantity", "Unit", "Width m", "Depth m", "Height m", "Diameter m", "Length m", "Area m2", "Volume m3", "Elevation m", "Level", "Floor", "Phase", "Family", "Type", "Host", "Material", "System", "Visible", "Scale", "Rated power kW"];
 const key = (field: string) => field.trim().toLowerCase().replace(/\s+/g, " ");
 const finite = (value: number | undefined): ScheduleCell => typeof value === "number" && Number.isFinite(value) ? value : "";
 const product = (...values: number[]): ScheduleCell => {
@@ -75,12 +76,17 @@ export function documentationInventory(design: Design): ScheduleRecord[] {
     for (const item of community.amenities) add(item.id, "objects", "community", "amenity", item.label ?? item.kind, { type: item.kind, "width m": finite(item.w), "depth m": finite(item.d), "height m": finite(item.h), "area m2": product(item.w, item.d), phase: item.phaseId ?? "" });
     for (const item of community.exteriors) add(item.id, "objects", `tower:${item.towerId}`, "facade panel", item.material, { "width m": finite(item.w), "height m": finite(item.h), "area m2": product(item.w, item.h), material: item.material, host: item.towerId });
   }
-  for (const [scope, model] of [["community", design.community], ["infrastructure", design.infra]] as const) {
+  if (!design.community && !design.infra) for (const level of design.cad?.levels ?? []) add(level.id, "levels", "cad", "level", level.name, { "elevation m": finite(level.elevation), "height m": finite(level.floorHeight), level: level.id });
+  for (const [scope, model] of [["community", design.community], ["infrastructure", design.infra], ["cad", !design.community && !design.infra ? { drafts: design.drafts, mep: undefined } : undefined]] as const) {
     if (!model) continue;
     for (const draft of model.drafts ?? []) {
-      const resolved = resolveDraft(draft, scope === "community" ? design.community?.levels ?? [] : []);
-      const solid = ["wall", "slab", "roof", "column"].includes(draft.kind);
-      add(draft.id, "objects", scope, draft.kind, draft.label ?? draft.family?.instance ?? draft.kind, { "width m": finite(resolved.width), "depth m": finite(resolved.depth), "height m": finite(resolved.height), "area m2": solid ? product(resolved.width, resolved.depth) : "", "volume m3": solid ? product(resolved.width, resolved.depth, resolved.height) : "", "elevation m": finite(resolved.elevation), phase: draft.phaseId ?? "", material: String(draft.family?.typeParameters?.material ?? "") }, draft.family);
+      const resolved = resolveDraft(draft, scope === "community" && design.community?.levels?.length ? design.community.levels : design.cad?.levels ?? []);
+      const solid = ["wall", "slab", "roof", "column", "beam"].includes(draft.kind);
+      const circular = draft.kind === "column" && draft.family?.type === "circular-column";
+      const area = cadFootprintArea(draft, scope === "community" && design.community?.levels?.length ? design.community.levels : design.cad?.levels ?? []);
+      const voidVolume = (draft.openings ?? []).reduce((total, opening) => total + opening.widthM * opening.heightM * resolved.depth, 0);
+      add(draft.id, "objects", scope, draft.kind, draft.label ?? draft.family?.instance ?? draft.kind, { "width m": finite(resolved.width), "depth m": finite(resolved.depth), "height m": finite(resolved.height), "diameter m": circular ? finite(resolved.width) : "", "length m": solid ? finite(draft.kind === "column" ? resolved.height : resolved.width) : "", "area m2": solid ? finite(area) : "", "volume m3": solid ? finite(Math.max(0, area * resolved.height - voidVolume)) : "", "elevation m": finite(resolved.elevation), phase: draft.phaseId ?? "", material: draft.material ?? String(draft.family?.typeParameters?.material ?? ""), visible: draft.visible !== false }, draft.family);
+      for (const opening of draft.openings ?? []) add(opening.id, "objects", scope, opening.kind, `${opening.kind} in ${draft.label ?? draft.id}`, { "width m": finite(opening.widthM), "height m": finite(opening.heightM), "area m2": product(opening.widthM, opening.heightM), "elevation m": finite(resolved.elevation + opening.sillM), host: draft.id, level: draft.family?.levelId ?? "" });
     }
     mep(model.mep, scope);
   }

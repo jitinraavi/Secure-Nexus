@@ -20,6 +20,10 @@ try {
   await source.query(await readFile('server/supabase/migrations/20261021153936_engineering_runtime.sql', 'utf8'));
   await source.query("INSERT INTO groundwork.users(id,email,password_salt,password_hash,password_changed_at,created_at,updated_at) VALUES ('backup-fixture','synthetic@example.test','synthetic-salt','synthetic-hash',1,1,1)");
   await source.query("CREATE ROLE groundwork_backup_fixture LOGIN PASSWORD 'synthetic-ci-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS IN ROLE groundwork_runtime");
+  await source.query("ALTER ROLE groundwork_backup_fixture SET extra_float_digits=0");
+  await source.query("ALTER ROLE groundwork_backup_fixture SET bytea_output='escape'");
+  await source.query("ALTER ROLE groundwork_backup_fixture SET TimeZone='America/New_York'");
+  await source.query("CREATE TABLE groundwork.backup_fingerprint_fixture(id int PRIMARY KEY, value double precision, bytes bytea, happened_at timestamptz); INSERT INTO groundwork.backup_fingerprint_fixture VALUES (1,1.2345678901234567,decode('0001ff5c','hex'),'2026-10-23T12:34:56.123456Z'); GRANT SELECT ON groundwork.backup_fingerprint_fixture TO groundwork_runtime; ALTER TABLE groundwork.backup_fingerprint_fixture ENABLE ROW LEVEL SECURITY; CREATE POLICY groundwork_server ON groundwork.backup_fingerprint_fixture FOR SELECT TO groundwork_runtime USING (true)");
   const runtimeUrl = new URL(sourceUrl); runtimeUrl.username = 'groundwork_backup_fixture'; runtimeUrl.password = 'synthetic-ci-only';
   const runtime = connection(runtimeUrl.toString(), host).client;
   await runtime.connect();

@@ -65,7 +65,7 @@ const frameSchema = z.object({
   nodes: z.array(z.object({ id, xM: bounded(-1e6, 1e6), yM: bounded(-1e6, 1e6), restraints: z.tuple([z.boolean(), z.boolean(), z.boolean()]) }).strict()).min(1).max(60),
   members: z.array(z.object({ id, start: id, end: id, areaM2: bounded(1e-8, 1e4), inertiaM4: bounded(1e-14, 1e6), elasticModulusPa: bounded(1e3, 1e13), design: design.optional() }).strict()).min(1).max(120),
   loadCases: z.array(z.object({ id, nodal: z.array(z.object({ node: id, fxN: bounded(-1e15, 1e15), fyN: bounded(-1e15, 1e15), mzNm: bounded(-1e15, 1e15) }).strict()).max(1000), uniform: z.array(z.object({ member: id, axialNPerM: bounded(-1e15, 1e15), transverseNPerM: bounded(-1e15, 1e15) }).strict()).max(1000) }).strict()).min(1).max(20),
-  combinations: z.array(z.object({ id, factors: z.record(bounded(-100, 100)) }).strict()).min(1).max(20).optional(),
+  combinations: z.array(z.object({ id, factors: z.record(z.string(), bounded(-100, 100)) }).strict()).min(1).max(20).optional(),
   options: z.object({ tolerance: bounded(1e-10, 0.01).optional(), maxIterations: bounded(2, 40).int().optional() }).strict().optional(),
 }).strict();
 const solverInputSchema = z.object({ version: z.literal(1), model: frameSchema, combinationId: id.optional(), designBasis: engineeringDesignBasisSchema.optional() }).strict();

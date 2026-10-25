@@ -3,6 +3,19 @@ import type { RequestHandler, Response } from "express";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
+/** Vercel's opt-in cancellation reaches Node handlers as a request error. */
+export function bindServerlessCancellation(request: Pick<import("node:http").IncomingMessage, "once" | "off" | "aborted">, response: Pick<Response, "once" | "off" | "end" | "destroyed" | "writableEnded">): () => void {
+  const cancel = () => { if (!response.destroyed && !response.writableEnded) response.end(); };
+  const detach = () => {
+    request.off("error", cancel); request.off("aborted", cancel);
+    response.off("close", detach); response.off("finish", detach);
+  };
+  request.once("error", cancel); request.once("aborted", cancel);
+  response.once("close", detach); response.once("finish", detach);
+  if (request.aborted) cancel();
+  return detach;
+}
+
 /** An explicit deployment mode prevents accidental SQLite or worker use on ephemeral hosts. */
 export function readServerlessMode(env: Environment): boolean {
   const mode = env.GROUNDWORK_SERVERLESS || "";

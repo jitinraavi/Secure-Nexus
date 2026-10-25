@@ -1,7 +1,8 @@
-import type { Design, MepElement, ReviewMarker } from "../types";
+import type { BuildingLevel, Design, DraftElement, MepElement, ReviewMarker } from "../types";
 import { resolveDraft, resolveRoomOpening, resolveTowerOpening, parametricIssues } from "./parametric";
 import { towerMeters } from "./community";
 import { engineeringExchangeProvenance, engineeringProvenanceAscii } from "./exchangeProvenance";
+import { cadFootprintArea } from "./cadModel";
 
 export interface ExchangeEntity {
   id: string;
@@ -73,18 +74,35 @@ export function buildBimExchange(design: Design): string {
   }
   for (const element of design.mep?.elements ?? []) entities.push(mepEntity(element));
 
+  const addDraft = (draft: DraftElement, levels: BuildingLevel[]) => {
+    const resolved = resolveDraft(draft, levels);
+    const circular = draft.kind === "column" && draft.family?.type === "circular-column";
+    const openingVolume = (draft.openings ?? []).reduce((sum, opening) => sum + opening.widthM * opening.heightM * resolved.depth, 0);
+    const polygon = (draft.kind === "slab" || draft.kind === "roof") && draft.points && draft.points.length >= 3;
+    const grossVolume = cadFootprintArea(draft, levels) * resolved.height;
+    entities.push(entity(draft.id, `DRAFT_${draft.kind.toUpperCase()}`, {
+      name: draft.label, levelId: draft.family?.levelId,
+      geometry: { kind: circular ? "cylinder" : polygon ? "polygon-extrusion" : "box", points: polygon ? draft.points : undefined, xM: draft.x, zM: draft.z, widthM: resolved.width, depthM: resolved.depth, heightM: resolved.height, radiusM: circular ? resolved.width / 2 : undefined, rotationDeg: draft.rotationDeg, yM: resolved.elevation },
+      properties: { material: draft.material, visible: draft.visible !== false, locked: draft.locked === true, color: draft.color, civilKind: draft.civilKind, elevationM: resolved.elevation, gradePct: draft.gradePct, family: draft.family, hostId: draft.family?.hostId, slopePct: resolved.slope, overhangM: resolved.overhang, grossVolumeM3: grossVolume, netVolumeM3: Math.max(0, grossVolume - openingVolume), openings: draft.openings, approximation: "Parametric envelope with authored dimensions; sloped roofs, detailed build-ups and fabrication details require a downstream model. Explicit door/window hosts retain IFC void/fill relationships." },
+    }));
+    const angle = draft.rotationDeg * Math.PI / 180;
+    for (const opening of draft.openings ?? []) {
+      entities.push(entity(opening.id, opening.kind === "door" ? "DOOR" : opening.kind === "window" ? "WINDOW" : "OPENING_INTENT", {
+        name: `${opening.kind} in ${draft.label ?? draft.id}`, levelId: draft.family?.levelId,
+        geometry: { kind: "opening", xM: draft.x + opening.offsetM * Math.cos(angle), zM: draft.z - opening.offsetM * Math.sin(angle), yM: resolved.elevation + opening.sillM, widthM: opening.widthM, depthM: resolved.depth, heightM: opening.heightM, rotationDeg: draft.rotationDeg },
+        properties: { hostId: draft.id, cadHostedOpening: true, openingKind: opening.kind, approximation: opening.kind === "void" ? "Unfilled CAD void is retained as an intent proxy; an IFC host boolean void relationship is unavailable for this unfilled type." : "Authored rectangular wall opening; generic fill geometry without frame, hardware or fabrication details." },
+      }));
+    }
+    for (const message of parametricIssues(draft, levels)) entities.push(entity(`${draft.id}-validation-${message}`, "VALIDATION", { properties: { sourceId: draft.id, message } }));
+  };
+  if (!design.community && !design.infra) {
+    for (const draft of design.drafts ?? []) addDraft(draft, design.cad?.levels ?? []);
+    for (const level of design.cad?.levels ?? []) entities.push(entity(level.id, "BUILDING_STOREY", { name: level.name, properties: { elevationM: level.elevation, floorHeightM: level.floorHeight } }));
+  }
+
   for (const c of [design.community, design.infra]) {
     if (!c) continue;
-    for (const draft of c.drafts ?? []) {
-      const resolved = resolveDraft(draft, "levels" in c ? c.levels ?? [] : []);
-      entities.push(entity(draft.id, `DRAFT_${draft.kind.toUpperCase()}`, {
-        name: draft.label,
-        levelId: draft.family?.levelId,
-        geometry: { xM: draft.x, zM: draft.z, widthM: resolved.width, depthM: resolved.depth, heightM: resolved.height, rotationDeg: draft.rotationDeg, yM: resolved.elevation },
-        properties: { color: draft.color, civilKind: draft.civilKind, elevationM: resolved.elevation, gradePct: draft.gradePct, family: draft.family, hostId: draft.family?.hostId, slopePct: resolved.slope, overhangM: resolved.overhang },
-      }));
-      for (const message of parametricIssues(draft, "levels" in c ? c.levels ?? [] : [])) entities.push(entity(`${draft.id}-validation-${message}`, "VALIDATION", { properties: { sourceId: draft.id, message } }));
-    }
+    for (const draft of c.drafts ?? []) addDraft(draft, "levels" in c && c.levels?.length ? c.levels : design.cad?.levels ?? []);
     if ("amenities" in c) {
       for (const amenity of c.amenities) {
         entities.push(entity(amenity.id, "SITE_AMENITY", {
@@ -266,7 +284,7 @@ function stepFields(value: string): string[] {
 }
 
 const productTypes = new Set([
-  "IFCWALL", "IFCSLAB", "IFCROOF", "IFCCOLUMN", "IFCSPACE", "IFCDOOR", "IFCWINDOW",
+  "IFCWALL", "IFCSLAB", "IFCROOF", "IFCCOLUMN", "IFCBEAM", "IFCSPACE", "IFCDOOR", "IFCWINDOW",
   "IFCFLOWSEGMENT", "IFCUNITARYEQUIPMENT", "IFCFLOWTERMINAL", "IFCFURNISHINGELEMENT",
   "IFCBUILDINGELEMENTPROXY", "IFCOPENINGELEMENT",
 ]);
@@ -498,7 +516,7 @@ export function validateBimExchange(design: Design): BimValidationIssue[] {
 
 /**
  * IFC4 STEP coordination export. Geometry is deliberately limited to boxes
- * and swept rectangular profiles because the editor stores planning intent,
+ * and swept rectangular/circular profiles because the editor stores planning intent,
  * rather than construction-ready solids.
  */
 export function buildIfcStep(design: Design): string {
@@ -535,10 +553,11 @@ export function buildIfcStep(design: Design): string {
   ];
   const provenanceSet = add("IFCPROPERTYSET", `'${guid("engineering-basis")}',#${history},'SecureNexus Engineering Basis',$,(${provenanceProperties.map(id => `#${id}`).join(",")})`);
   add("IFCRELDEFINESBYPROPERTIES", `'${guid("engineering-basis-rel")}',#${history},'Captured engineering declaration',$,(#${project}),#${provenanceSet}`);
-  const placement = (x = 0, y = 0, z = 0, rotation = 0, parent?: number) => {
-    const point = add("IFCCARTESIANPOINT", `(${number(x).toFixed(3)},${number(y).toFixed(3)},${number(z).toFixed(3)})`);
+  const placement = (x = 0, y = 0, z = 0, rotation = 0, parent?: number, precision = 3) => {
+    const coordinate = (value: number) => precision > 3 ? value.toFixed(precision) : number(value).toFixed(3);
+    const point = add("IFCCARTESIANPOINT", `(${coordinate(x)},${coordinate(y)},${coordinate(z)})`);
     const angle = rotation ? Math.PI * rotation / 180 : 0;
-    const ref = rotation ? add("IFCDIRECTION", `(${number(Math.cos(angle)).toFixed(6)},${number(Math.sin(angle)).toFixed(6)},0.)`) : east;
+    const ref = rotation ? add("IFCDIRECTION", `(${precision > 3 ? Math.cos(angle).toFixed(9) : number(Math.cos(angle)).toFixed(6)},${precision > 3 ? Math.sin(angle).toFixed(9) : number(Math.sin(angle)).toFixed(6)},0.)`) : east;
     const axis = add("IFCAXIS2PLACEMENT3D", `#${point},#${up},#${ref}`);
     return add("IFCLOCALPLACEMENT", `${parent ? `#${parent}` : "$"},#${axis}`);
   };
@@ -567,7 +586,7 @@ export function buildIfcStep(design: Design): string {
     return id;
   };
   ensureStorey("default", "Coordination level", 0);
-  for (const level of design.community?.levels ?? []) ensureStorey(level.id, level.name, level.elevation);
+  for (const level of design.community?.levels?.length ? design.community.levels : design.cad?.levels ?? []) ensureStorey(level.id, level.name, level.elevation);
 
   const measure = (value: unknown) => Math.max(0, Number(value) || 0);
   const dimensions = (item: ExchangeEntity) => {
@@ -581,9 +600,21 @@ export function buildIfcStep(design: Design): string {
     if (!dims.width || !dims.depth || !dims.height) return undefined;
     const profilePoint = add("IFCCARTESIANPOINT", "(0.,0.)");
     const profileAxis = add("IFCAXIS2PLACEMENT2D", `#${profilePoint},$`);
-    const profile = add("IFCRECTANGLEPROFILEDEF", `.AREA.,$,#${profileAxis},${number(dims.width).toFixed(3)},${number(dims.depth).toFixed(3)}`);
+    const precise = item.type.startsWith("DRAFT_") || item.properties?.cadHostedOpening;
+    const dimension = (value: number) => precise ? value.toFixed(6) : number(value).toFixed(3);
+    let profile: number;
+    if (item.geometry?.kind === "polygon-extrusion" && Array.isArray(item.geometry.points) && item.geometry.points.length >= 3) {
+      const points = item.geometry.points as { x: number; z: number }[];
+      const boundary = points.length > 1 && points[0].x === points[points.length - 1].x && points[0].z === points[points.length - 1].z ? points.slice(0, -1) : points;
+      // IFC plan X/Y corresponds to model X/Z; product placement applies -Y rotation.
+      const pointIds = boundary.map(point => add("IFCCARTESIANPOINT", `(${dimension(point.x)},${dimension(point.z)})`));
+      const curve = add("IFCPOLYLINE", `(${[...pointIds, pointIds[0]].map(id => `#${id}`).join(",")})`);
+      profile = add("IFCARBITRARYCLOSEDPROFILEDEF", `.AREA.,$,#${curve}`);
+    } else profile = item.geometry?.kind === "cylinder"
+      ? add("IFCCIRCLEPROFILEDEF", `.AREA.,$,#${profileAxis},${dimension(Number(item.geometry.radiusM) || dims.width / 2)}`)
+      : add("IFCRECTANGLEPROFILEDEF", `.AREA.,$,#${profileAxis},${dimension(dims.width)},${dimension(dims.depth)}`);
     const solidPlacement = add("IFCAXIS2PLACEMENT3D", `#${origin},#${up},#${east}`);
-    const solid = add("IFCEXTRUDEDAREASOLID", `#${profile},#${solidPlacement},#${up},${number(dims.height).toFixed(3)}`);
+    const solid = add("IFCEXTRUDEDAREASOLID", `#${profile},#${solidPlacement},#${up},${dimension(dims.height)}`);
     const representations = [add("IFCSHAPEREPRESENTATION", `#${context},'Body','SweptSolid',(#${solid})`)];
     const points = item.geometry?.points;
     if (item.geometry?.kind === "polyline" && Array.isArray(points) && points.length > 1) {
@@ -607,12 +638,15 @@ export function buildIfcStep(design: Design): string {
     const propertyIds = values.map((value) => add("IFCPROPERTYSINGLEVALUE", value.slice(value.indexOf("(") + 1, -1)));
     const definition = add("IFCPROPERTYSET", `'${guid(`pset:${item.id}`)}',#${history},'Groundwork Source',$,(${propertyIds.map((id) => `#${id}`).join(",")})`, `pset:${item.id}`);
     add("IFCRELDEFINESBYPROPERTIES", `'${guid(`pset-rel:${item.id}`)}',#${history},'Source properties',$,(#${product}),#${definition}`, `pset-rel:${item.id}`);
+    const quantityNumber = (value: number) => item.type.startsWith("DRAFT_") ? value.toFixed(6) : number(value).toFixed(3);
+    const grossVolume = typeof item.properties?.grossVolumeM3 === "number" ? item.properties.grossVolumeM3 : item.geometry?.kind === "cylinder" ? Math.PI * dims.width ** 2 / 4 * dims.height : dims.width * dims.depth * dims.height;
     const quantities = [
-      add("IFCQUANTITYLENGTH", `'Width',$,$,${number(dims.width).toFixed(3)},$`),
-      add("IFCQUANTITYLENGTH", `'Depth',$,$,${number(dims.depth).toFixed(3)},$`),
-      add("IFCQUANTITYLENGTH", `'Height',$,$,${number(dims.height).toFixed(3)},$`),
-      add("IFCQUANTITYVOLUME", `'GrossVolume',$,$,${number(dims.width * dims.depth * dims.height).toFixed(3)},$`),
+      add("IFCQUANTITYLENGTH", `'Width',$,$,${quantityNumber(dims.width)},$`),
+      add("IFCQUANTITYLENGTH", `'Depth',$,$,${quantityNumber(dims.depth)},$`),
+      add("IFCQUANTITYLENGTH", `'Height',$,$,${quantityNumber(dims.height)},$`),
+      add("IFCQUANTITYVOLUME", `'GrossVolume',$,$,${quantityNumber(grossVolume)},$`),
     ];
+    if (typeof item.properties?.netVolumeM3 === "number") quantities.push(add("IFCQUANTITYVOLUME", `'NetVolume',$,$,${quantityNumber(item.properties.netVolumeM3)},$`));
     const quantitySet = add("IFCELEMENTQUANTITY", `'${guid(`quantity:${item.id}`)}',#${history},'Base quantities',$,$,(${quantities.map((id) => `#${id}`).join(",")})`, `quantity:${item.id}`);
     add("IFCRELDEFINESBYPROPERTIES", `'${guid(`quantity-rel:${item.id}`)}',#${history},'Base quantities',$,(#${product}),#${quantitySet}`, `quantity-rel:${item.id}`);
   };
@@ -620,6 +654,7 @@ export function buildIfcStep(design: Design): string {
     if (item.type === "WALL" || item.type === "FACADE_PANEL" || item.type === "DRAFT_WALL") return "IFCWALL";
     if (item.type === "DRAFT_SLAB") return "IFCSLAB";
     if (item.type === "DRAFT_COLUMN") return "IFCCOLUMN";
+    if (item.type === "DRAFT_BEAM") return "IFCBEAM";
     if (item.type === "DRAFT_ROOF") return "IFCROOF";
     if (item.type === "SLAB") return "IFCSLAB";
     if (item.type === "SPACE") return "IFCSPACE";
@@ -666,20 +701,21 @@ export function buildIfcStep(design: Design): string {
     const x = Number(geometry.xM ?? 0);
     const y = Number(geometry.zM ?? 0);
     const z = Number(geometry.yM ?? 0);
-    const local = placement(x, y, z - (storeyElevations.get(storey) ?? 0), Number(geometry.rotationDeg ?? 0), storeyPlacements.get(storey));
+    const rotation = Number(geometry.rotationDeg ?? 0) * (item.type.startsWith("DRAFT_") || item.properties?.cadHostedOpening ? -1 : 1);
+    const local = placement(x, y, z - (storeyElevations.get(storey) ?? 0), rotation, storeyPlacements.get(storey), item.type.startsWith("DRAFT_") || item.properties?.cadHostedOpening ? 6 : 3);
     const dims = dimensions(item);
     const shape = boxShape(item, dims);
     const description = `${item.type} intent; geometry is an approximate exchange envelope, not fabrication geometry.`;
     const type = typedClass(item);
     const base = `'${guid(`product:${item.id}`)}',#${history},${ifcText(item.name || item.type)},${ifcText(description)},$,#${local},${shape ? `#${shape}` : "$"},$`;
     const suffix = type === "IFCSPACE" ? ",.ELEMENT.,.NOTDEFINED.,$"
-      : ["IFCWALL", "IFCSLAB", "IFCROOF", "IFCCOLUMN", "IFCUNITARYEQUIPMENT"].includes(type) ? ",.NOTDEFINED."
+      : ["IFCWALL", "IFCSLAB", "IFCROOF", "IFCCOLUMN", "IFCBEAM", "IFCUNITARYEQUIPMENT"].includes(type) ? ",.NOTDEFINED."
       : type === "IFCDOOR" || type === "IFCWINDOW" ? ",$,$,.NOTDEFINED.,.NOTDEFINED.,$"
       : type === "IFCBUILDINGELEMENTPROXY" ? ",.NOTDEFINED."
       : "";
     const id = add(type, `${base}${suffix}`);
     productBySource.set(item.id, id);
-    if (item.type === "WALL" || item.type === "FACADE_PANEL") hostBySource.set(item.id, id);
+    if (item.type === "WALL" || item.type === "FACADE_PANEL" || item.type === "DRAFT_WALL") hostBySource.set(item.id, id);
     storeyProducts.get(storey)?.push(id);
     pset(id, item, dims);
     const materialName = String(item.properties?.material ?? item.properties?.color ?? "Unspecified");
@@ -691,11 +727,11 @@ export function buildIfcStep(design: Design): string {
     if (item.type !== "DOOR" && item.type !== "WINDOW") continue;
     const fill = productBySource.get(item.id);
     const wallKey = item.properties?.wall ? `room-wall-${String(item.properties.wall)}` : undefined;
-    const host = wallKey ? hostBySource.get(wallKey) : undefined;
+    const host = hostBySource.get(String(item.properties?.hostId ?? wallKey ?? ""));
     if (!fill || !host) continue;
     const openingShape = boxShape(item, dimensions(item));
     const geometry = item.geometry ?? {};
-    const openingPlacement = placement(Number(geometry.xM) || 0, Number(geometry.zM) || 0, Number(geometry.yM) || 0, Number(geometry.rotationDeg) || 0);
+    const openingPlacement = placement(Number(geometry.xM) || 0, Number(geometry.zM) || 0, Number(geometry.yM) || 0, (Number(geometry.rotationDeg) || 0) * (item.properties?.cadHostedOpening ? -1 : 1), undefined, item.properties?.cadHostedOpening ? 6 : 3);
     const opening = add("IFCOPENINGELEMENT", `'${guid(`opening:${item.id}`)}',#${history},${ifcText(`${item.name ?? item.type} void`)},'Host void is approximate',$,#${openingPlacement},${openingShape ? `#${openingShape}` : "$"},$,.OPENING.`, `opening:${item.id}`);
     pset(opening, { ...item, id: `opening:${item.id}`, type: "OPENING" }, dimensions(item));
     const openingStorey = storeyIds.get(item.levelId || "default") ?? storeyIds.get("default");

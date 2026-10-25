@@ -18,7 +18,7 @@ export const submitRenderJobSchema = z.object({
     sourceRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
     sourceImageBase64: z.string().max(Math.ceil(32 * 1024 * 1024 / 3) * 4 + 128).optional(),
     sourceImageArtifactId: artifactIdSchema.optional(),
-    parameters: z.record(z.unknown()).refine((value) => isBoundedProviderJson(value, 16384), "Parameters exceed the supported byte or complexity limits").optional(),
+    parameters: z.record(z.string(), z.unknown()).refine((value) => isBoundedProviderJson(value, 16384), "Parameters exceed the supported byte or complexity limits").optional(),
 }).strict().superRefine((val, ctx) => {
     if (!val.sourceImageBase64 && !val.sourceImageArtifactId) {
         ctx.addIssue({
