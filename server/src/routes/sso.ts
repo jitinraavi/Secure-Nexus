@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createHash, createPublicKey, timingSafeEqual, verify, constants, type JsonWebKey } from "node:crypto";
+import { createHash, createPublicKey, timingSafeEqual, verify, constants, type JsonWebKeyInput } from "node:crypto";
 import { z } from "zod";
 import { MASTER_KEY, PREVIOUS_MASTER_KEY, IS_PROD } from "../config.js";
 import { decryptAesGcm, deriveVaultKey, encryptAesGcm, randomToken, sha256Hex } from "../crypto.js";
@@ -113,7 +113,7 @@ async function verifyIdToken(token: string, metadata: Discovery, config: SsoRow,
   if (!["RS256", "PS256", "ES256"].includes(header.alg || "") || typeof header.kid !== "string" || header.crit !== undefined) throw new Error("Unsupported token signature");
   const jwks = await boundedJson(trustedUrl(metadata.jwks_uri));
   if (!Array.isArray(jwks.keys) || jwks.keys.length > 100) throw new Error("Invalid signing-key set");
-  const matching = (jwks.keys as (JsonWebKey & { kid?: string; alg?: string; use?: string; key_ops?: string[] })[]).filter((item) => item.kid === header.kid && (!item.use || item.use === "sig") && (!item.alg || item.alg === header.alg) && (!item.key_ops || item.key_ops.includes("verify")));
+  const matching = (jwks.keys as (JsonWebKeyInput["key"] & { kid?: string; alg?: string; use?: string; key_ops?: string[] })[]).filter((item) => item.kid === header.kid && (!item.use || item.use === "sig") && (!item.alg || item.alg === header.alg) && (!item.key_ops || item.key_ops.includes("verify")));
   if (matching.length !== 1) throw new Error("Token signing key is ambiguous or absent");
   const jwk = matching[0];
   if (header.alg === "ES256" ? jwk.kty !== "EC" || jwk.crv !== "P-256" : jwk.kty !== "RSA") throw new Error("Token signing key type mismatch");
