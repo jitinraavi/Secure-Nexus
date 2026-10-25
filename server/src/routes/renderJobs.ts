@@ -1,3 +1,4 @@
+import { routeParam } from "../routeParams.js";
 import { Router, type Response } from "express";
 import { z } from "zod";
 import { logAudit } from "../audit.js";
@@ -58,11 +59,11 @@ function handle(work: (req: AuthedRequest, res: Response) => void | Promise<void
 
 router.use(requireSession);
 router.use(asyncHandler(async (req: AuthedRequest, res, next) => {
-  if (!projectIdSchema.safeParse(req.params.projectId).success) {
+  if (!projectIdSchema.safeParse(routeParam(req, "projectId")).success) {
     res.status(400).json({ error: "Invalid project ID", code: "INVALID_PROJECT_ID" });
     return;
   }
-  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
+  const access = (await getProjectAccess(routeParam(req, "projectId"), req.user!.id));
   if (!access) {
     res.status(404).json({ error: "Project not found", code: "PROJECT_NOT_FOUND" });
     return;
@@ -90,7 +91,7 @@ router.get("/capabilities", (_req, res) => {
 
 // GET /api/projects/:projectId/renders
 router.get("/", handle(async (req, res) => {
-  const data = (await listRenderJobs(req.params.projectId, actor(req)));
+  const data = (await listRenderJobs(routeParam(req, "projectId"), actor(req)));
   res.json(data);
 }));
 
@@ -127,30 +128,30 @@ router.post(
       return;
     }
 
-    const job = (await submitRenderJob(req.params.projectId, actor(req), parsed.data));
-    (await logAudit(req.user?.id ?? null, "render.submit", { projectId: req.params.projectId, jobId: job.id }, req));
+    const job = (await submitRenderJob(routeParam(req, "projectId"), actor(req), parsed.data));
+    (await logAudit(req.user?.id ?? null, "render.submit", { projectId: routeParam(req, "projectId"), jobId: job.id }, req));
     res.status(201).json({ job });
   }),
 );
 
 // GET /api/projects/:projectId/renders/:jobId
 router.get("/:jobId", handle(async (req, res) => {
-  if (!jobIdSchema.safeParse(req.params.jobId).success) {
+  if (!jobIdSchema.safeParse(routeParam(req, "jobId")).success) {
     throw new WorkspaceError(400, "Invalid render job ID", "INVALID_JOB_ID");
   }
-  const job = (await getRenderJob(req.params.projectId, req.params.jobId, actor(req)));
+  const job = (await getRenderJob(routeParam(req, "projectId"), routeParam(req, "jobId"), actor(req)));
   res.json({ job });
 }));
 
 // GET /api/projects/:projectId/renders/:jobId/image
 router.get("/:jobId/image", handle(async (req, res) => {
-  if (!jobIdSchema.safeParse(req.params.jobId).success) {
+  if (!jobIdSchema.safeParse(routeParam(req, "jobId")).success) {
     throw new WorkspaceError(400, "Invalid render job ID", "INVALID_JOB_ID");
   }
   const which = req.query.type === "source" ? "source" : "output";
   const { bytes, mime, filename, sha256 } = (await getRenderJobArtifact(
-    req.params.projectId,
-    req.params.jobId,
+    routeParam(req, "projectId"),
+    routeParam(req, "jobId"),
     which,
     actor(req),
   ));
@@ -169,21 +170,21 @@ router.get("/:jobId/image", handle(async (req, res) => {
 // POST /api/projects/:projectId/renders/:jobId/retry
 router.post("/:jobId/retry", handle(async (req, res) => {
   if (SERVERLESS) throw new WorkspaceError(503, "Background image generation requires a persistent worker and is unavailable in this demo.", "SERVERLESS_BACKGROUND_UNAVAILABLE");
-  if (!jobIdSchema.safeParse(req.params.jobId).success) {
+  if (!jobIdSchema.safeParse(routeParam(req, "jobId")).success) {
     throw new WorkspaceError(400, "Invalid render job ID", "INVALID_JOB_ID");
   }
-  const job = (await retryRenderJob(req.params.projectId, req.params.jobId, actor(req)));
-  (await logAudit(req.user?.id ?? null, "render.retry", { projectId: req.params.projectId, originalJobId: req.params.jobId, newJobId: job.id }, req));
+  const job = (await retryRenderJob(routeParam(req, "projectId"), routeParam(req, "jobId"), actor(req)));
+  (await logAudit(req.user?.id ?? null, "render.retry", { projectId: routeParam(req, "projectId"), originalJobId: routeParam(req, "jobId"), newJobId: job.id }, req));
   res.status(201).json({ job });
 }));
 
 // POST /api/projects/:projectId/renders/:jobId/cancel
 router.post("/:jobId/cancel", handle(async (req, res) => {
-  if (!jobIdSchema.safeParse(req.params.jobId).success) {
+  if (!jobIdSchema.safeParse(routeParam(req, "jobId")).success) {
     throw new WorkspaceError(400, "Invalid render job ID", "INVALID_JOB_ID");
   }
-  const job = (await cancelRenderJob(req.params.projectId, req.params.jobId, actor(req)));
-  (await logAudit(req.user?.id ?? null, "render.cancel", { projectId: req.params.projectId, jobId: job.id }, req));
+  const job = (await cancelRenderJob(routeParam(req, "projectId"), routeParam(req, "jobId"), actor(req)));
+  (await logAudit(req.user?.id ?? null, "render.cancel", { projectId: routeParam(req, "projectId"), jobId: job.id }, req));
   res.json({ job });
 }));
 
