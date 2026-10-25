@@ -1,3 +1,4 @@
+import { routeParam } from "../routeParams.js";
 import { Router, type Request } from "express";
 import { boundedUpload } from "../uploads.js";
 import { logAudit } from "../audit.js";
@@ -201,7 +202,7 @@ router.post(
 
 /* GET /api/projects/:id */
 router.get("/:id", asyncHandler(async (req: AuthedRequest, res) => {
-  const row = (await projectForUser(req.params.id, req.user!.id));
+  const row = (await projectForUser(routeParam(req, "id"), req.user!.id));
   if (!row) {
     res.status(404).json({ error: "Project not found" });
     return;
@@ -234,9 +235,9 @@ router.get("/:id", asyncHandler(async (req: AuthedRequest, res) => {
 
 /* POST /api/projects/:id/duplicate — read access is required even for templates. */
 router.post("/:id/duplicate", asyncHandler(async (req: AuthedRequest, res) => {
-  const source = (await projectForUser(req.params.id, req.user!.id));
+  const source = (await projectForUser(routeParam(req, "id"), req.user!.id));
   if (!source) { res.status(404).json({ error: "Project not found" }); return; }
-  const sourceAccess = (await getProjectAccess(req.params.id, req.user!.id));
+  const sourceAccess = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
   if (sourceAccess?.organizationId) { res.status(403).json({ error: "Tenant projects cannot be duplicated into a personal workspace" }); return; }
   const parsed = z.object({ name: z.string().trim().min(1).max(80) }).safeParse(req.body || {});
   if (!parsed.success) { res.status(400).json({ error: "A project name of 1–80 characters is required" }); return; }
@@ -278,12 +279,12 @@ router.patch(
       res.status(409).json({ error: "This queued change belongs to a different signed-in account", code: "ACCOUNT_CHANGED" });
       return;
     }
-    const access = (await getProjectAccess(req.params.id, req.user!.id));
+    const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
     if (!access || !(await canWriteProject(access))) {
       res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" });
       return;
     }
-    const row = (await db.prepare("SELECT id, name, revision, archived FROM projects WHERE id = ?").get(req.params.id)) as { id: string; name: string; revision: number; archived: number };
+    const row = (await db.prepare("SELECT id, name, revision, archived FROM projects WHERE id = ?").get(routeParam(req, "id"))) as { id: string; name: string; revision: number; archived: number };
 
     let parsedBody: Record<string, unknown> = {};
     try {
@@ -359,29 +360,29 @@ router.patch(
     }
     fields.push("updated_at = ?");
     values.push(now());
-    values.push(req.params.id);
+    values.push(routeParam(req, "id"));
 
     fields.push("revision = revision + 1");
     const result = await withTransaction(async () => {
-      const currentAccess = await getProjectAccess(req.params.id, req.user!.id);
+      const currentAccess = await getProjectAccess(routeParam(req, "id"), req.user!.id);
       if (!currentAccess || !await canWriteProject(currentAccess)) return { status: currentAccess ? 403 : 404, error: currentAccess ? "Editor access required" : "Project not found" };
       if (hasLibraryMetadata && !canManageProject(currentAccess)) return { status: 403, error: "Owner access required to organize, archive or designate templates" };
-      const stored = await db.prepare("SELECT archived,revision,design_data FROM projects WHERE id = ?").get(req.params.id) as { archived: number; revision: number; design_data: string | null };
+      const stored = await db.prepare("SELECT archived,revision,design_data FROM projects WHERE id = ?").get(routeParam(req, "id")) as { archived: number; revision: number; design_data: string | null };
       if (expectedRevision !== null && stored.revision !== expectedRevision) return { status: 409, error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: stored.revision };
       if (!Number.isSafeInteger(stored.revision) || stored.revision >= Number.MAX_SAFE_INTEGER) return { status: 409, error: "Project revision capacity reached", code: "REVISION_CAPACITY", currentRevision: stored.revision };
       if (stored.archived && meta.data.archived === false && !await canAddActiveProject(access.ownerId)) return { status: 403, error: ACTIVE_PROJECT_LIMIT, code: "ACTIVE_PROJECT_LIMIT" };
       if (designPayload !== null) {
         const before: unknown = stored.design_data ? JSON.parse(decryptForUser(stored.design_data, access.ownerId)) : null;
-        const lockedObject = await conflictingDesignLock(req.params.id, req.user!.id, before, nextDesign);
+        const lockedObject = await conflictingDesignLock(routeParam(req, "id"), req.user!.id, before, nextDesign);
         if (lockedObject) return { status: 423, error: "Object is locked by another editor", objectId: lockedObject };
       }
       const updated = await db.prepare(`UPDATE projects SET ${fields.join(", ")} WHERE id = ? AND revision = ?`).run(...values, stored.revision);
       if (!updated.changes) {
-        const latest = await db.prepare("SELECT revision FROM projects WHERE id = ?").get(req.params.id) as { revision: number };
+        const latest = await db.prepare("SELECT revision FROM projects WHERE id = ?").get(routeParam(req, "id")) as { revision: number };
         return { status: 409, error: "Project changed elsewhere", code: "REVISION_CONFLICT", currentRevision: latest.revision };
       }
       const revision = stored.revision + 1;
-      await emitProjectEvent(req.params.id, req.user!.id, designPayload !== null ? "design.updated" : "snapshot.created", revision, { designChanged: designPayload !== null });
+      await emitProjectEvent(routeParam(req, "id"), req.user!.id, designPayload !== null ? "design.updated" : "snapshot.created", revision, { designChanged: designPayload !== null });
       return { status: 200, revision };
     });
     if (result.status !== 200) {
@@ -394,23 +395,23 @@ router.patch(
       (await logAudit(req.user!.id, "project.updated", { name: row.name }, req));
     }
     if (hasLibraryMetadata) {
-      (await logAudit(req.user!.id, "project.library_updated", { projectId: req.params.id, folder: meta.data.folder, archived: meta.data.archived, isTemplate: meta.data.isTemplate }, req));
+      (await logAudit(req.user!.id, "project.library_updated", { projectId: routeParam(req, "id"), folder: meta.data.folder, archived: meta.data.archived, isTemplate: meta.data.isTemplate }, req));
     }
     const revision = result.revision!;
-    if (access.organizationId) (await organizationAudit(access.organizationId, req.user!.id, "project.updated", { projectId: req.params.id, revision, designChanged: designPayload !== null }));
+    if (access.organizationId) (await organizationAudit(access.organizationId, req.user!.id, "project.updated", { projectId: routeParam(req, "id"), revision, designChanged: designPayload !== null }));
     res.json({ ok: true, revision });
   }),
 );
 
 /* GET /api/projects/:id/revisions */
 router.get("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
-  if (!(await projectForUser(req.params.id, req.user!.id))) {
+  if (!(await projectForUser(routeParam(req, "id"), req.user!.id))) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
   const rows = (await db.prepare(
     "SELECT id, name, project_type, width_mm, depth_mm, created_at FROM project_revisions WHERE project_id = ? ORDER BY created_at DESC",
-  ).all(req.params.id)) as { id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number }[];
+  ).all(routeParam(req, "id"))) as { id: string; name: string; project_type: string; width_mm: number; depth_mm: number; created_at: number }[];
   res.json({ revisions: rows.map(revisionResponse) });
 }));
 
@@ -421,8 +422,8 @@ router.post("/:id/revisions", asyncHandler(async (req: AuthedRequest, res) => {
     res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid snapshot name" });
     return;
   }
-  const project = (await projectForUser(req.params.id, req.user!.id));
-  const access = (await getProjectAccess(req.params.id, req.user!.id));
+  const project = (await projectForUser(routeParam(req, "id"), req.user!.id));
+  const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
   if (!project || !(await canWriteProject(access))) {
     res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" });
     return;
@@ -454,10 +455,10 @@ router.post("/:id/revisions/:revisionId/restore", asyncHandler(async (req: Authe
     return;
   }
   const outcome = await withTransaction(async () => {
-    const project = await projectForUser(req.params.id, req.user!.id);
-    const access = await getProjectAccess(req.params.id, req.user!.id);
+    const project = await projectForUser(routeParam(req, "id"), req.user!.id);
+    const access = await getProjectAccess(routeParam(req, "id"), req.user!.id);
     if (!access || !await canWriteProject(access)) return { status: access ? 403 : 404, body: { error: access ? "Editor access required" : "Project or snapshot not found" } };
-    const revision = await db.prepare("SELECT * FROM project_revisions WHERE id = ? AND project_id = ?").get(req.params.revisionId, req.params.id) as {
+    const revision = await db.prepare("SELECT * FROM project_revisions WHERE id = ? AND project_id = ?").get(routeParam(req, "revisionId"), routeParam(req, "id")) as {
       id: string; name: string; design_data: string; project_type: string; width_mm: number; depth_mm: number;
     } | undefined;
     if (!project || !revision) return { status: 404, body: { error: "Project or snapshot not found" } };
@@ -483,21 +484,21 @@ router.post("/:id/revisions/:revisionId/restore", asyncHandler(async (req: Authe
 
 /* GET /api/projects/:id/share-links */
 router.get("/:id/share-links", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = (await getProjectAccess(req.params.id, req.user!.id));
+  const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
   if (!canManageProject(access)) {
     res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" });
     return;
   }
   const rows = (await db.prepare("SELECT id, expires_at, revoked_at, created_at FROM project_share_links WHERE project_id = ? AND user_id = ? ORDER BY created_at DESC")
-    .all(req.params.id, access.ownerId)) as { id: string; expires_at: number; revoked_at: number | null; created_at: number }[];
+    .all(routeParam(req, "id"), access.ownerId)) as { id: string; expires_at: number; revoked_at: number | null; created_at: number }[];
   res.json({ links: rows.map((row) => ({ id: row.id, expiresAt: row.expires_at, revokedAt: row.revoked_at, createdAt: row.created_at, active: !row.revoked_at && row.expires_at > now() })) });
 }));
 
 /* POST /api/projects/:id/share-links */
 router.post("/:id/share-links", asyncHandler(async (req: AuthedRequest, res) => {
   const parsed = shareLinkSchema.safeParse(req.body || {});
-  const project = (await projectForUser(req.params.id, req.user!.id));
-  const access = (await getProjectAccess(req.params.id, req.user!.id));
+  const project = (await projectForUser(routeParam(req, "id"), req.user!.id));
+  const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
   if (!parsed.success) {
     res.status(400).json({ error: "Expiry must be between 1 hour and 30 days" });
     return;
@@ -519,15 +520,15 @@ router.post("/:id/share-links", asyncHandler(async (req: AuthedRequest, res) => 
 
 /* DELETE /api/projects/:id/share-links/:linkId */
 router.delete("/:id/share-links/:linkId", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = (await getProjectAccess(req.params.id, req.user!.id));
+  const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
   if (!canManageProject(access)) { res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" }); return; }
   const result = (await db.prepare("UPDATE project_share_links SET revoked_at = ? WHERE id = ? AND project_id = ? AND user_id = ? AND revoked_at IS NULL")
-    .run(now(), req.params.linkId, req.params.id, access.ownerId));
+    .run(now(), routeParam(req, "linkId"), routeParam(req, "id"), access.ownerId));
   if (!result.changes) {
     res.status(404).json({ error: "Share link not found" });
     return;
   }
-  (await logAudit(req.user!.id, "project.share_link_revoked", { projectId: req.params.id, linkId: req.params.linkId }, req));
+  (await logAudit(req.user!.id, "project.share_link_revoked", { projectId: routeParam(req, "id"), linkId: routeParam(req, "linkId") }, req));
   res.json({ ok: true });
 }));
 
@@ -535,7 +536,7 @@ router.delete("/:id/share-links/:linkId", asyncHandler(async (req: AuthedRequest
 router.post(
   "/:id/photo",
   asyncHandler(async (req: AuthedRequest, res, next) => {
-    const access = (await getProjectAccess(req.params.id, req.user!.id));
+    const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
     if (!access || !(await canWriteProject(access))) {
       res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return;
     }
@@ -543,7 +544,7 @@ router.post(
   }),
   uploadPhoto,
   asyncHandler(async (req: AuthedRequest, res) => {
-    const access = (await getProjectAccess(req.params.id, req.user!.id));
+    const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
     if (!access || !(await canWriteProject(access))) {
       res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" });
       return;
@@ -570,14 +571,14 @@ router.post(
 
     const oldFile = (
       (await db.prepare("SELECT photo_file_id FROM projects WHERE id = ?").get(
-        req.params.id,
+        routeParam(req, "id"),
       )) as { photo_file_id: string | null }
     ).photo_file_id;
 
     (await db.prepare("UPDATE projects SET photo_file_id = ?, updated_at = ? WHERE id = ?").run(
       fileId,
       now(),
-      req.params.id,
+      routeParam(req, "id"),
     ));
 
     if (oldFile) {
@@ -590,12 +591,12 @@ router.post(
 
 /* GET /api/projects/:id/photo */
 router.get("/:id/photo", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = (await getProjectAccess(req.params.id, req.user!.id));
+  const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
   if (!canReadProject(access)) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
-  const row = (await db.prepare("SELECT photo_file_id FROM projects WHERE id = ?").get(req.params.id)) as { photo_file_id: string | null } | undefined;
+  const row = (await db.prepare("SELECT photo_file_id FROM projects WHERE id = ?").get(routeParam(req, "id"))) as { photo_file_id: string | null } | undefined;
   if (!row?.photo_file_id) {
     res.status(404).json({ error: "No photo" });
     return;
@@ -617,9 +618,9 @@ router.get("/:id/photo", asyncHandler(async (req: AuthedRequest, res) => {
 router.post(
   "/:id/export",
   asyncHandler(async (req: AuthedRequest, res) => {
-    const access = (await getProjectAccess(req.params.id, req.user!.id));
+    const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
     if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
-    const row = (await db.prepare("SELECT name FROM projects WHERE id = ?").get(req.params.id)) as { name: string };
+    const row = (await db.prepare("SELECT name FROM projects WHERE id = ?").get(routeParam(req, "id"))) as { name: string };
     const format =
       typeof req.body?.format === "string" && /^[a-z0-9-]{1,20}$/i.test(req.body.format)
         ? String(req.body.format).toUpperCase()
@@ -633,17 +634,17 @@ router.post(
 router.delete(
   "/:id",
   asyncHandler(async (req: AuthedRequest, res) => {
-    const access = (await getProjectAccess(req.params.id, req.user!.id));
+    const access = (await getProjectAccess(routeParam(req, "id"), req.user!.id));
     if (!canManageProject(access)) {
       res.status(access ? 403 : 404).json({ error: access ? "Owner access required" : "Project not found" });
       return;
     }
-    const row = (await db.prepare("SELECT id, name, photo_file_id FROM projects WHERE id = ?").get(req.params.id)) as { id: string; name: string; photo_file_id: string | null };
+    const row = (await db.prepare("SELECT id, name, photo_file_id FROM projects WHERE id = ?").get(routeParam(req, "id"))) as { id: string; name: string; photo_file_id: string | null };
     if (row.photo_file_id) {
       (await db.prepare("DELETE FROM files WHERE id = ? AND user_id = ?").run(row.photo_file_id, access.ownerId));
     }
-    (await db.prepare("DELETE FROM projects WHERE id = ?").run(req.params.id));
-    if (access.organizationId) (await organizationAudit(access.organizationId, req.user!.id, "project.deleted", { projectId: req.params.id, name: row.name }));
+    (await db.prepare("DELETE FROM projects WHERE id = ?").run(routeParam(req, "id")));
+    if (access.organizationId) (await organizationAudit(access.organizationId, req.user!.id, "project.deleted", { projectId: routeParam(req, "id"), name: row.name }));
     (await logAudit(req.user!.id, "project.deleted", { name: row.name }, req));
     res.json({ ok: true });
   }),

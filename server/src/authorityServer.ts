@@ -7,6 +7,7 @@ import cookieParser from "cookie-parser";
 import multer from "multer";
 import { IS_PROD, NODE_ENV, PORT, BIND_HOST, SERVERLESS, isLoopbackAddress } from "./config.js";
 import { DesignInputError } from "./designValidation.js";
+import { RouteParameterError } from "./routeParams.js";
 import { db, now } from "./db.js";
 import { hashPassword } from "./crypto.js";
 import { passwordSchema } from "./validate.js";
@@ -178,7 +179,7 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
-    if (err instanceof DesignInputError) {
+    if (err instanceof DesignInputError || err instanceof RouteParameterError) {
       res.status(err.status).json({ error: err.message, code: err.code }); return;
     }
     console.error("[groundwork] Unhandled request error", { type: err instanceof Error ? err.name : "UnknownError", requestId: res.getHeader("x-request-id") });

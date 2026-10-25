@@ -76,6 +76,12 @@ function jsonInit(method: string, body: unknown, csrfToken?: string): RequestIni
         body: JSON.stringify(body),
     };
 }
+test("invalid decoded route IDs reach the application's safe 400 error handler", async () => {
+    const response = await fetch(`${baseUrl}/api/share/secret%00suffix`);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "Invalid route parameter", code: "INVALID_ROUTE_PARAMETER" });
+});
+
 test("workspace multipart uploads accept exactly a file and kind", async (t) => {
     const client = new CookieClient();
     const email = `workspace-${randomBytes(6).toString("hex")}@example.test`;
