@@ -1,9 +1,16 @@
 # Groundwork on Vercel Hobby
 
 This configuration hosts the public studio and React application as static Vite
-assets and the existing Express API as one Node.js function. It is intended for a
+assets and the existing Express API in Node.js functions. It is intended for a
 personal non-commercial demo. Vercel Hobby does not permit commercial use; see
 [the Hobby plan](https://vercel.com/docs/plans/hobby).
+
+Collaboration event streams use a separate `api/collaboration.mjs` entry point
+with `supportsCancellation: true`. The Node request cancellation event ends the
+response, and a promise registered with `waitUntil` completes lease cleanup.
+Ordinary API writes retain the default cancellation behavior so browser
+disconnects do not interrupt their transactions. This follows Vercel's
+[Node cancellation guidance](https://vercel.com/docs/functions/runtimes/node-js#cancelled-requests).
 
 ## Runtime and project configuration
 

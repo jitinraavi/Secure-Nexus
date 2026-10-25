@@ -4,9 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
-import dotenv from 'dotenv';
-import nodemailer from 'nodemailer';
+import { createRequire } from 'node:module';
 import { mergeMailEnvironment } from './mail-environment.mjs';
+
+const serverRequire = createRequire(new URL('../server/package.json', import.meta.url));
+const dotenv = serverRequire('dotenv');
+const nodemailer = serverRequire('nodemailer');
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const filename = path.join(repository, 'server/.env');

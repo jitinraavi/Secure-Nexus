@@ -1,7 +1,8 @@
-import type { Design, DraftElement, FurnitureItem, MepElement } from "../types";
+import type { BuildingLevel, Design, DraftElement, FurnitureItem, MepElement } from "../types";
 import { catalogEntry } from "./catalog";
 import { engineeringProvenanceAscii } from "./exchangeProvenance";
 import { dxfLineweightHundredthsMm, formatDimensionMetres, technicalGraphicsSettings } from "./technicalGraphics";
+import { resolveDraft } from "./parametric";
 
 type Point = [number, number];
 
@@ -51,7 +52,7 @@ export function buildDxf(design: Design): string {
   if (!Number.isFinite(roomWidth) || !Number.isFinite(roomDepth) || roomWidth <= 0 || roomDepth <= 0) throw new Error("DXF export requires positive, finite room dimensions.");
   const entities: string[] = [];
   const graphics = technicalGraphicsSettings(design.technicalGraphics);
-  const layerNames = ["0", "WALLS", "COLUMNS", "SLABS", "ROOFS", "DIMENSIONS", "TEXT", "FURNITURE", "CURTAINS", "MEP_DUCT", "MEP_PIPE", "MEP_CABLE", "MEP_EQUIPMENT", "DRAFTING", "FACILITIES", "SITE", "STRUCTURAL_GRID"];
+  const layerNames = ["0", "WALLS", "COLUMNS", "BEAMS", "SLABS", "ROOFS", "OPENINGS", "DIMENSIONS", "TEXT", "FURNITURE", "CURTAINS", "MEP_DUCT", "MEP_PIPE", "MEP_CABLE", "MEP_EQUIPMENT", "DRAFTING", "FACILITIES", "SITE", "STRUCTURAL_GRID"];
   // Fixed table/block handles and ordered entity handles make repeated exports deterministic.
   let nextHandle = 0x20 + layerNames.length;
   const handle = () => (nextHandle++).toString(16).toUpperCase();
@@ -120,7 +121,7 @@ export function buildDxf(design: Design): string {
 
   const layerWeight = (name: string) => {
     if (name === "WALLS") return graphics.lineweights.walls;
-    if (name === "COLUMNS" || name === "SLABS" || name === "ROOFS" || name === "STRUCTURAL_GRID") return graphics.lineweights.structure;
+    if (name === "COLUMNS" || name === "BEAMS" || name === "SLABS" || name === "ROOFS" || name === "STRUCTURAL_GRID") return graphics.lineweights.structure;
     if (name.startsWith("MEP_")) return graphics.lineweights.mep;
     if (name === "FURNITURE" || name === "CURTAINS") return graphics.lineweights.furniture;
     if (name === "DIMENSIONS") return graphics.lineweights.dimensions;
@@ -144,39 +145,52 @@ export function buildDxf(design: Design): string {
     text("TEXT", 0, 0, `CURTAINS (${cur.style})`, 90);
   }
 
-  const addDraft = (draft: DraftElement) => {
-    const layer = draft.kind === "wall" ? "WALLS" : draft.kind === "column" ? "COLUMNS" : draft.kind === "slab" ? "SLABS" : draft.kind === "roof" ? "ROOFS" : "DRAFTING";
+  const addDraft = (draft: DraftElement, levels: BuildingLevel[]) => {
+    const resolved = resolveDraft(draft, levels);
+    const layer = draft.kind === "wall" ? "WALLS" : draft.kind === "column" ? "COLUMNS" : draft.kind === "beam" ? "BEAMS" : draft.kind === "slab" ? "SLABS" : draft.kind === "roof" ? "ROOFS" : "DRAFTING";
     const x = draft.x * 1000;
     const y = draft.z * 1000;
     const angle = (draft.rotationDeg * Math.PI) / 180;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const localToWorld = (point: { x: number; z: number }): Point => [
-      x + (point.x * cos - point.z * sin) * 1000,
-      y + (point.x * sin + point.z * cos) * 1000,
+      x + (point.x * cos + point.z * sin) * 1000,
+      y + (-point.x * sin + point.z * cos) * 1000,
     ];
-    if (draft.kind === "circle") {
-      circle(layer, x, y, draft.w * 500);
+    if (draft.kind === "circle" || draft.kind === "column" && draft.family?.type === "circular-column") {
+      circle(layer, x, y, resolved.width * 500);
     } else if (draft.kind === "arc") {
-      arc(layer, x, y, Math.max(draft.radiusM ?? draft.w / 2, 0.05) * 1000, (draft.startAngleDeg ?? 0) + draft.rotationDeg, (draft.endAngleDeg ?? 180) + draft.rotationDeg);
+      arc(layer, x, y, Math.max(draft.radiusM ?? resolved.width / 2, 0.05) * 1000, (draft.startAngleDeg ?? 0) - draft.rotationDeg, (draft.endAngleDeg ?? 180) - draft.rotationDeg);
+    } else if ((draft.kind === "slab" || draft.kind === "roof") && draft.points && draft.points.length >= 3) {
+      polyline(layer, draft.points.map(localToWorld), true);
     } else if (draft.kind === "polyline" || draft.kind === "spline") {
-      const points = (draft.points?.length ? draft.points : [{ x: -draft.w / 2, z: 0 }, { x: draft.w / 2, z: 0 }]).map(localToWorld);
+      const points = (draft.points?.length ? draft.points : [{ x: -resolved.width / 2, z: 0 }, { x: resolved.width / 2, z: 0 }]).map(localToWorld);
       polyline(layer, points, false);
     } else if (draft.kind === "dimension") {
-      const half = draft.w * 500;
-      const a = localToWorld({ x: -draft.w / 2, z: 0 });
-      const b = localToWorld({ x: draft.w / 2, z: 0 });
+      const half = resolved.width * 500;
+      const a = localToWorld({ x: -resolved.width / 2, z: 0 });
+      const b = localToWorld({ x: resolved.width / 2, z: 0 });
       dimension(a[0], a[1], b[0], b[1], draft.label || formatDimensionMetres(half * 2 / 1000, graphics.dimensionStyle));
     } else if (draft.kind === "line") {
-      const a = localToWorld({ x: -draft.w / 2, z: 0 });
-      const b = localToWorld({ x: draft.w / 2, z: 0 });
+      const a = localToWorld({ x: -resolved.width / 2, z: 0 });
+      const b = localToWorld({ x: resolved.width / 2, z: 0 });
       line(layer, a[0], a[1], b[0], b[1]);
     } else {
-      box(layer, rotatedBox(x, y, draft.w * 1000, Math.max(draft.d * 1000, 50), draft.rotationDeg));
+      box(layer, rotatedBox(x, y, resolved.width * 1000, resolved.depth * 1000, -draft.rotationDeg));
+    }
+    // Registered XDATA retains stable object identity without conflating DXF handles with model IDs.
+    ent("1001", "GROUNDWORK", "1000", dxfText(draft.id), "1000", dxfText(draft.kind), "1040", String(design.cad?.revision ?? 0));
+    for (const opening of draft.openings ?? []) {
+      const middle = localToWorld({ x: opening.offsetM, z: 0 });
+      box("OPENINGS", rotatedBox(middle[0], middle[1], opening.widthM * 1000, resolved.depth * 1000, -draft.rotationDeg));
+      ent("1001", "GROUNDWORK", "1000", dxfText(opening.id), "1000", dxfText(`host:${draft.id}`));
+      text("TEXT", middle[0], middle[1], `${opening.kind} H=${opening.heightM}m sill=${opening.sillM}m [plan opening]`, 70);
     }
     if (draft.label) text("TEXT", x, y, draft.label, 90);
   };
-  for (const draft of [...(design.community?.drafts ?? []), ...(design.infra?.drafts ?? [])]) addDraft(draft);
+  for (const draft of design.community?.drafts ?? []) addDraft(draft, design.community?.levels?.length ? design.community.levels : design.cad?.levels ?? []);
+  for (const draft of design.infra?.drafts ?? []) addDraft(draft, design.cad?.levels ?? []);
+  if (!design.community && !design.infra) for (const draft of design.drafts ?? []) addDraft(draft, design.cad?.levels ?? []);
 
   const addMep = (element: MepElement) => {
     const layer = element.kind === "duct" ? "MEP_DUCT" : element.kind === "pipe" ? "MEP_PIPE" : element.kind === "cable-tray" ? "MEP_CABLE" : "MEP_EQUIPMENT";
@@ -215,6 +229,8 @@ export function buildDxf(design: Design): string {
     out("2", name, "70", "0", "62", name === "0" ? "7" : String(((index - 1) % 7) + 1), "6", "CONTINUOUS", "370", String(dxfLineweightHundredthsMm(layerWeight(name))));
   });
   out("0", "ENDTAB");
+  table("APPID", "D", 1);
+  record("APPID", "E", "D", "AcDbRegAppTableRecord"); out("2", "GROUNDWORK", "70", "0", "0", "ENDTAB");
   table("STYLE", "4", 1);
   record("STYLE", "5", "4", "AcDbTextStyleTableRecord");
   out("2", "STANDARD", "70", "0", "40", "0.000", "41", "1.000", "50", "0.000", "71", "0", "42", "2.500", "3", "txt", "4", "", "0", "ENDTAB");

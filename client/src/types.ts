@@ -421,7 +421,7 @@ export interface AmenityData {
   phaseId?: string;
 }
 
-export type DraftElementKind = "line" | "polyline" | "arc" | "spline" | "rectangle" | "circle" | "dimension" | "wall" | "slab" | "column" | "roof";
+export type DraftElementKind = "line" | "polyline" | "arc" | "spline" | "rectangle" | "circle" | "dimension" | "wall" | "slab" | "column" | "beam" | "roof";
 
 export type ParametricConstraintKind = "alignment" | "coincident" | "collinear" | "parallel" | "perpendicular" | "level" | "equal";
 
@@ -486,6 +486,12 @@ export interface DraftElement {
   locks?: ParametricLocks;
   constraints?: ParametricConstraint[];
   phaseId?: string;
+  /** Optional CAD visibility/locking. Visibility never changes engineering quantities. */
+  visible?: boolean;
+  locked?: boolean;
+  material?: string;
+  /** Rectangular through-openings in a wall's local X/Y plane; all measurements in metres. */
+  openings?: { id: string; kind: "door" | "window" | "void"; offsetM: number; widthM: number; heightM: number; sillM: number }[];
 }
 
 export interface DraftingSettings {
@@ -1008,6 +1014,33 @@ export interface Design {
   engineeringBasis?: EngineeringDesignBasis;
   technicalGraphics?: TechnicalGraphicsSettings;
   visualization?: VisualizationSettings;
+  /** Architectural CAD objects for room projects. Community/infra projects retain their existing drafts arrays. */
+  drafts?: DraftElement[];
+  /** Additive CAD metadata. Geometry remains in the existing drafts and MEP records. */
+  cad?: CadWorkspaceState;
+  /** Explicit connector, circuit and system topology; legacy MEP geometry stays in MepDesign. */
+  cadNetworks?: import("./lib/cadNetworks").CadNetworkState;
+}
+
+export interface CadAnalysisRecord {
+  id: string;
+  sourceObjectIds: string[];
+  sourceRevision: number;
+  status: "current" | "needs-recalculation" | "incomplete" | "unsupported";
+  method: string;
+  units: string;
+  inputs: Record<string, unknown>;
+  assumptions: string[];
+  designBasis: string;
+  result?: Record<string, unknown>;
+}
+
+export interface CadWorkspaceState {
+  version: 1;
+  revision: number;
+  levels?: BuildingLevel[];
+  displayUnits?: "m" | "mm" | "ft";
+  analyses?: CadAnalysisRecord[];
 }
 
 /* AI plans are proposals only. Applying them remains a client/editor decision. */

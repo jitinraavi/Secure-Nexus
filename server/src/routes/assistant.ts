@@ -50,7 +50,7 @@ const planSchema = z.object({
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
-  context: z.record(z.unknown()).refine((value) => isBoundedProviderJson(value, 200_000), "Context exceeds the supported byte or complexity limits"),
+  context: z.record(z.string(), z.unknown()).refine((value) => isBoundedProviderJson(value, 200_000), "Context exceeds the supported byte or complexity limits"),
 }).strict();
 
 const SAFETY = "Structural and MEP suggestions are preliminary coordination concepts only and require review by qualified licensed professionals before use.";

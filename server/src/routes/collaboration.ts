@@ -12,6 +12,7 @@ import { validateDesignComplexity, MAX_DESIGN_BYTES } from "../designValidation.
 import syncRouter from "./sync.js";
 import { readRedisProjectEvents, redisPresence, redisTransportConfigured } from "../redisTransport.js";
 import { serverlessStreamDeadline } from "../serverlessRuntime.js";
+import { waitUntil } from "@vercel/functions";
 
 const router = Router();
 const vaultKey = deriveVaultKey(MASTER_KEY);
@@ -82,13 +83,20 @@ router.get("/:projectId/events", asyncHandler(async (req: AuthedRequest, res) =>
   let replay: ReturnType<typeof setInterval> | undefined;
   let stopDeadline = () => {};
   let cleaned = false;
+  let cleanupFinished!: () => void;
+  const cleanupCompletion = new Promise<void>((resolve) => { cleanupFinished = resolve; });
+  // Register while the invocation is active: cancellation may suspend all work
+  // except waitUntil promises. Lease deletion must still finish after close.
+  if (SERVERLESS) waitUntil(cleanupCompletion);
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
     if (heartbeat) clearInterval(heartbeat);
     if (replay) clearInterval(replay);
     stopDeadline();
-    void unsubscribe().catch(() => {});
+    void Promise.resolve().then(() => unsubscribe()).catch(() => {
+      console.error(JSON.stringify({ type: "collaboration.cleanup_failed" }));
+    }).finally(cleanupFinished);
   };
   res.once("close", cleanup);
   res.once("finish", cleanup);
