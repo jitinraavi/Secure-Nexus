@@ -1,3 +1,4 @@
+import { routeParam } from "../routeParams.js";
 import { Router, type ErrorRequestHandler } from "express";
 import crypto from "node:crypto";
 import { logAudit } from "../audit.js";
@@ -72,7 +73,7 @@ router.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     const row = (await db
       .prepare("SELECT * FROM payments WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id));
+      .get(routeParam(req, "id"), req.user!.id));
     if (!row) {
       res.status(404).json({ error: "Payment not found" });
       return;

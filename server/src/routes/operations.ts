@@ -1,3 +1,4 @@
+import { routeParam } from "../routeParams.js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
@@ -51,7 +52,7 @@ router.post("/backup-report", requireOperationsToken, asyncHandler(async (req, r
 }));
 router.get("/flags", requireOperationsToken, asyncHandler(async (_req, res) => { res.json({ flags: await listFeatureFlags() }); }));
 router.patch("/flags/:name", requireOperationsToken, asyncHandler(async (req, res) => {
-  const name = z.enum(FEATURE_NAMES).safeParse(req.params.name);
+  const name = z.enum(FEATURE_NAMES).safeParse(routeParam(req, "name"));
   const input = z.object({ enabled: z.boolean(), rolloutPercent: z.number().int().min(0).max(100), baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1) }).strict().safeParse(req.body);
   if (!name.success || !input.success) { res.status(400).json({ error: "Invalid feature flag update" }); return; }
   res.json(await updateFeatureFlag(name.data, input.data));

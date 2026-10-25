@@ -1,3 +1,4 @@
+import { routeParam } from "../routeParams.js";
 import { Router } from "express";
 import { z } from "zod";
 import { MASTER_KEY, PREVIOUS_MASTER_KEY } from "../config.js";
@@ -67,13 +68,13 @@ redis.call('HSET',KEYS[1],ARGV[1],cjson.encode(result));return cjson.encode(resu
 `;
 interface WireRegister extends Omit<Register, "value"> { valueEncrypted: string; actorId: string; }
 router.get("/", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
+  const access = (await getProjectAccess(routeParam(req, "projectId"), req.user!.id));
   if (!canReadProject(access)) { res.status(404).json({ error: "Project not found" }); return; }
   const after = Number(req.query.after || 0);
   if (!Number.isSafeInteger(after) || after < 0) { res.status(400).json({ error: "Invalid operation cursor" }); return; }
   let rows: WireRegister[], cursor: number, maxClock: number;
   if (redisTransportConfigured) {
-    const base = `${redisProjectKey(req.params.projectId)}:sync`;
+    const base = `${redisProjectKey(routeParam(req, "projectId"))}:sync`;
     if (req.query.snapshot === "1") {
       const snapshot = JSON.parse(await redisCommand<string>(["EVAL", "return cjson.encode({rows=redis.call('HVALS',KEYS[1]),cursor=redis.call('LLEN',KEYS[2]),clock=tonumber(redis.call('GET',KEYS[3]) or '0')})", 3, `${base}:registers`, `${base}:log`, `${base}:clock`])) as { rows: unknown; cursor: number; clock: number };
       // Redis Lua CJSON represents an empty HVALS table as {}, not [].
@@ -92,19 +93,19 @@ router.get("/", asyncHandler(async (req: AuthedRequest, res) => {
     const snapshot = (await withTransaction(async () => {
     const source = req.query.snapshot === "1" ? "project_sync_registers" : "project_sync_operations";
     const raw = (await db.prepare(`SELECT entity_id,field,logical_clock,client_id,operation_id,value_encrypted,sequence FROM ${source} WHERE project_id=?${source === "project_sync_operations" ? " AND sequence>?" : ""} ORDER BY sequence LIMIT ${source === "project_sync_operations" ? 200 : 1000}`)
-      .all(req.params.projectId, ...(source === "project_sync_operations" ? [after] : []))) as { entity_id: string; field: Operation["field"]; logical_clock: number; client_id: string; operation_id: string; value_encrypted: string; sequence: number }[];
+      .all(routeParam(req, "projectId"), ...(source === "project_sync_operations" ? [after] : []))) as { entity_id: string; field: Operation["field"]; logical_clock: number; client_id: string; operation_id: string; value_encrypted: string; sequence: number }[];
     const records = raw.map((row) => ({ entityId: row.entity_id, field: row.field, logicalClock: row.logical_clock, clientId: row.client_id, operationId: row.operation_id, valueEncrypted: row.value_encrypted, sequence: row.sequence, actorId: "" }));
-    const latest = (await db.prepare("SELECT COALESCE(MAX(sequence),0) AS sequence,COALESCE(MAX(logical_clock),0) AS clock FROM project_sync_operations WHERE project_id=?").get(req.params.projectId)) as { sequence: number; clock: number };
+    const latest = (await db.prepare("SELECT COALESCE(MAX(sequence),0) AS sequence,COALESCE(MAX(logical_clock),0) AS clock FROM project_sync_operations WHERE project_id=?").get(routeParam(req, "projectId"))) as { sequence: number; clock: number };
     return { records, cursor: req.query.snapshot === "1" ? latest.sequence : records[records.length - 1]?.sequence ?? after, maxClock: latest.clock };
     }));
     rows = snapshot.records; cursor = snapshot.cursor; maxClock = snapshot.maxClock;
   }
-  if ((await resolveSession(req))?.status !== "active" || !canReadProject((await getProjectAccess(req.params.projectId, req.user!.id)))) { res.status(403).json({ error: "Project access changed during synchronization" }); return; }
+  if ((await resolveSession(req))?.status !== "active" || !canReadProject((await getProjectAccess(routeParam(req, "projectId"), req.user!.id)))) { res.status(403).json({ error: "Project access changed during synchronization" }); return; }
   res.set("Cache-Control", "private, no-store");
-  res.json({ registers: rows.map(({ valueEncrypted, actorId: _actor, ...row }) => ({ ...row, value: decrypt(valueEncrypted, req.params.projectId, access.ownerId) })), cursor, maxClock, backend: redisTransportConfigured ? "redis-rest" : "sqlite", scope: "coordination-sidecar" });
+  res.json({ registers: rows.map(({ valueEncrypted, actorId: _actor, ...row }) => ({ ...row, value: decrypt(valueEncrypted, routeParam(req, "projectId"), access.ownerId) })), cursor, maxClock, backend: redisTransportConfigured ? "redis-rest" : "sqlite", scope: "coordination-sidecar" });
 }));
 router.post("/", asyncHandler(async (req: AuthedRequest, res) => {
-  const access = (await getProjectAccess(req.params.projectId, req.user!.id));
+  const access = (await getProjectAccess(routeParam(req, "projectId"), req.user!.id));
   if (!access || !(await canWriteProject(access))) { res.status(access ? 403 : 404).json({ error: access ? "Editor access required" : "Project not found" }); return; }
   const parsed = operationSchema.safeParse(req.body);
   if (!parsed.success || !validField(parsed.data)) { res.status(400).json({ error: "Invalid coordination register operation" }); return; }
@@ -113,50 +114,50 @@ router.post("/", asyncHandler(async (req: AuthedRequest, res) => {
   // impersonation from being used to overwrite an accepted idempotency key.
   const clientId = `${req.user!.id}:${op.clientId}`;
   const fingerprint = sha256Hex(JSON.stringify({ ...op, actorId: req.user!.id }));
-  const valueEncrypted = encrypt(op.value, req.params.projectId, access.ownerId);
+  const valueEncrypted = encrypt(op.value, routeParam(req, "projectId"), access.ownerId);
   let result: { error?: string; sequence?: number; applied?: boolean; duplicate?: boolean; maxClock?: number };
   if (redisTransportConfigured) {
-    const base = `${redisProjectKey(req.params.projectId)}:sync`;
+    const base = `${redisProjectKey(routeParam(req, "projectId"))}:sync`;
     const record: Omit<WireRegister, "sequence"> = { entityId: op.entityId, field: op.field, logicalClock: op.logicalClock, clientId, operationId: op.operationId, valueEncrypted, actorId: req.user!.id };
     result = JSON.parse(await redisCommand<string>(["EVAL", redisApply, 5, `${base}:ids`, `${base}:log`, `${base}:registers`, `${base}:clock`, `${base}:bytes`, op.operationId, fingerprint, op.logicalClock, `${op.entityId}|${op.field}`, JSON.stringify(record)])) as typeof result;
   } else result = (await withTransaction(async () => {
-    if (!(await canWriteProject((await getProjectAccess(req.params.projectId, req.user!.id))))) return { error: "ACCESS_REVOKED" };
-    const previous = (await db.prepare("SELECT sequence,value_hash FROM project_sync_operations WHERE project_id=? AND operation_id=?").get(req.params.projectId, op.operationId)) as { sequence: number; value_hash: string } | undefined;
+    if (!(await canWriteProject((await getProjectAccess(routeParam(req, "projectId"), req.user!.id))))) return { error: "ACCESS_REVOKED" };
+    const previous = (await db.prepare("SELECT sequence,value_hash FROM project_sync_operations WHERE project_id=? AND operation_id=?").get(routeParam(req, "projectId"), op.operationId)) as { sequence: number; value_hash: string } | undefined;
     if (previous) return previous.value_hash === fingerprint ? { sequence: previous.sequence, duplicate: true } : { error: "ID_REUSED" };
-    const stats = (await db.prepare("SELECT COUNT(*) AS count,COALESCE(MAX(logical_clock),0) AS clock FROM project_sync_operations WHERE project_id=?").get(req.params.projectId)) as { count: number; clock: number };
+    const stats = (await db.prepare("SELECT COUNT(*) AS count,COALESCE(MAX(logical_clock),0) AS clock FROM project_sync_operations WHERE project_id=?").get(routeParam(req, "projectId"))) as { count: number; clock: number };
     if (stats.count >= 50000) return { error: "LOG_FULL" };
     if (op.logicalClock > stats.clock + 10000) return { error: "CLOCK_AHEAD" };
-    const previousRegister = (await db.prepare("SELECT logical_clock,client_id,operation_id,value_encrypted FROM project_sync_registers WHERE project_id=? AND entity_id=? AND field=?").get(req.params.projectId, op.entityId, op.field)) as { logical_clock: number; client_id: string; operation_id: string; value_encrypted: string } | undefined;
+    const previousRegister = (await db.prepare("SELECT logical_clock,client_id,operation_id,value_encrypted FROM project_sync_registers WHERE project_id=? AND entity_id=? AND field=?").get(routeParam(req, "projectId"), op.entityId, op.field)) as { logical_clock: number; client_id: string; operation_id: string; value_encrypted: string } | undefined;
     if (!previousRegister) {
-      const count = (await db.prepare("SELECT COUNT(*) AS count FROM project_sync_registers WHERE project_id=?").get(req.params.projectId)) as { count: number };
+      const count = (await db.prepare("SELECT COUNT(*) AS count FROM project_sync_registers WHERE project_id=?").get(routeParam(req, "projectId"))) as { count: number };
       if (count.count >= 1000) return { error: "REGISTER_FULL" };
     }
     const old = previousRegister;
     const applied = !old || op.logicalClock > old.logical_clock || (op.logicalClock === old.logical_clock && (clientId > old.client_id || (clientId === old.client_id && op.operationId > old.operation_id)));
     if (applied) {
-      const bytes = (await db.prepare("SELECT COALESCE(SUM(LENGTH(value_encrypted)),0) AS bytes FROM project_sync_registers WHERE project_id=?").get(req.params.projectId)) as { bytes: number };
+      const bytes = (await db.prepare("SELECT COALESCE(SUM(LENGTH(value_encrypted)),0) AS bytes FROM project_sync_registers WHERE project_id=?").get(routeParam(req, "projectId"))) as { bytes: number };
       if (bytes.bytes - (old?.value_encrypted.length ?? 0) + valueEncrypted.length > 2500000) return { error: "REGISTER_FULL" };
     }
     const sequence = Number((await db.prepare("INSERT INTO project_sync_operations (project_id,actor_id,operation_id,client_id,logical_clock,entity_id,field,value_encrypted,value_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-      .run(req.params.projectId, req.user!.id, op.operationId, clientId, op.logicalClock, op.entityId, op.field, valueEncrypted, fingerprint, now())).lastInsertRowid);
+      .run(routeParam(req, "projectId"), req.user!.id, op.operationId, clientId, op.logicalClock, op.entityId, op.field, valueEncrypted, fingerprint, now())).lastInsertRowid);
     if (applied) (await db.prepare(`INSERT INTO project_sync_registers (project_id,entity_id,field,logical_clock,client_id,operation_id,value_encrypted,sequence) VALUES (?,?,?,?,?,?,?,?)
       ON CONFLICT(project_id,entity_id,field) DO UPDATE SET logical_clock=excluded.logical_clock,client_id=excluded.client_id,operation_id=excluded.operation_id,value_encrypted=excluded.value_encrypted,sequence=excluded.sequence`)
-      .run(req.params.projectId, op.entityId, op.field, op.logicalClock, clientId, op.operationId, valueEncrypted, sequence));
+      .run(routeParam(req, "projectId"), op.entityId, op.field, op.logicalClock, clientId, op.operationId, valueEncrypted, sequence));
     return { sequence, applied, duplicate: false, maxClock: Math.max(stats.clock, op.logicalClock) };
   }));
   if (result.error) { res.status(result.error === "ACCESS_REVOKED" ? 403 : result.error === "ID_REUSED" ? 409 : 422).json({ error: result.error === "ACCESS_REVOKED" ? "Project access was revoked" : result.error === "ID_REUSED" ? "Operation ID was reused with different content" : "Synchronization capacity or logical-clock limit reached", code: result.error }); return; }
-  if ((await resolveSession(req))?.status !== "active" || !canReadProject((await getProjectAccess(req.params.projectId, req.user!.id)))) { res.status(403).json({ error: "Project access changed during synchronization" }); return; }
+  if ((await resolveSession(req))?.status !== "active" || !canReadProject((await getProjectAccess(routeParam(req, "projectId"), req.user!.id)))) { res.status(403).json({ error: "Project access changed during synchronization" }); return; }
   let register: Register;
   if (redisTransportConfigured) {
-    const text = await redisCommand<string>(["HGET", `${redisProjectKey(req.params.projectId)}:sync:registers`, `${op.entityId}|${op.field}`]);
+    const text = await redisCommand<string>(["HGET", `${redisProjectKey(routeParam(req, "projectId"))}:sync:registers`, `${op.entityId}|${op.field}`]);
     const { valueEncrypted: encrypted, actorId: _actor, ...row } = JSON.parse(text) as WireRegister;
-    register = { ...row, value: decrypt(encrypted, req.params.projectId, access.ownerId) };
+    register = { ...row, value: decrypt(encrypted, routeParam(req, "projectId"), access.ownerId) };
   } else {
-    const row = (await db.prepare("SELECT * FROM project_sync_registers WHERE project_id=? AND entity_id=? AND field=?").get(req.params.projectId, op.entityId, op.field)) as { entity_id: string; field: Operation["field"]; logical_clock: number; client_id: string; operation_id: string; value_encrypted: string; sequence: number };
-    register = { entityId: row.entity_id, field: row.field, logicalClock: row.logical_clock, clientId: row.client_id, operationId: row.operation_id, sequence: row.sequence, value: decrypt(row.value_encrypted, req.params.projectId, access.ownerId) };
+    const row = (await db.prepare("SELECT * FROM project_sync_registers WHERE project_id=? AND entity_id=? AND field=?").get(routeParam(req, "projectId"), op.entityId, op.field)) as { entity_id: string; field: Operation["field"]; logical_clock: number; client_id: string; operation_id: string; value_encrypted: string; sequence: number };
+    register = { entityId: row.entity_id, field: row.field, logicalClock: row.logical_clock, clientId: row.client_id, operationId: row.operation_id, sequence: row.sequence, value: decrypt(row.value_encrypted, routeParam(req, "projectId"), access.ownerId) };
   }
-  if ((await resolveSession(req))?.status !== "active" || !canReadProject((await getProjectAccess(req.params.projectId, req.user!.id)))) { res.status(403).json({ error: "Project access changed during synchronization" }); return; }
-  if (access.organizationId && !result.duplicate) (await organizationAudit(access.organizationId, req.user!.id, "coordination.operation", { projectId: req.params.projectId, entityId: op.entityId, field: op.field, sequence: result.sequence }));
+  if ((await resolveSession(req))?.status !== "active" || !canReadProject((await getProjectAccess(routeParam(req, "projectId"), req.user!.id)))) { res.status(403).json({ error: "Project access changed during synchronization" }); return; }
+  if (access.organizationId && !result.duplicate) (await organizationAudit(access.organizationId, req.user!.id, "coordination.operation", { projectId: routeParam(req, "projectId"), entityId: op.entityId, field: op.field, sequence: result.sequence }));
   res.status(result.duplicate ? 200 : 201).json({ sequence: result.sequence, applied: result.applied, duplicate: result.duplicate, maxClock: result.maxClock, register });
 }));
 export default router;
