@@ -12,6 +12,12 @@ A deployable, full-stack design studio for interior designers, architects and si
 
 Stack: Node 22 · Express · Supabase PostgreSQL (SQLite local/test fallback) · React 18 · Vite · Tailwind v4 · three.js.
 
+Release 1.2 opens projects in a canvas-first CAD workspace with semantic architectural
+objects, model-space face grips, exact dimensions, transactional undo/redo, explicit
+electrical/plumbing connectivity and geometry-linked calculations. Existing project
+modules remain accessible from the workspace. Read the [CAD workflow and supported
+engineering scope](docs/CAD-WORKSPACE.md) before authoring or exchanging models.
+
 Release 1.1 adds shared request limits and circuit breakers, revision-safe saves and restores,
 atomic collaboration leases, bounded SSE streams, encrypted render inputs, key rotation,
 redacted tracing, SLO metrics, operational alerts and audited feature controls.

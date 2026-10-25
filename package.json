@@ -1,6 +1,6 @@
 {
   "name": "groundwork",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": true,
   "description": "Groundwork Design Studio — encrypted design workspace with 3D editor, Google Maps site location, infrastructure wizards, CAD/OBJ/GLB export, payments and audit logging",
   "workspaces": [
@@ -40,5 +40,10 @@
     "@electric-sql/pglite": "0.5.10",
     "concurrently": "^9.1.0",
     "supabase": "2.121.0"
+  },
+  "overrides": {
+    "@vercel/cli-config": {
+      "zod": "4.6.7"
+    }
   }
 }
