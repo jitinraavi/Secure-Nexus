@@ -1,3 +1,4 @@
+import { routeParam } from "../routeParams.js";
 import { Router, type ErrorRequestHandler } from "express";
 import { z } from "zod";
 import { randomId } from "../crypto.js";
@@ -21,7 +22,7 @@ const router = Router();
 router.use(requireSession);
 const roleSchema = z.enum(["admin", "editor", "viewer"]);
 const seatEntitlement = organizationBaseSeats();
-const admin = async (req: AuthedRequest) => (await organizationAdmin(req.params.organizationId, req.user!.id));
+const admin = async (req: AuthedRequest) => (await organizationAdmin(routeParam(req, "organizationId"), req.user!.id));
 function summary(row: { id: string; name: string; seat_limit: number; audit_retention_days: number; role: OrganizationRole; seats_used: number }) {
   return { id: row.id, name: row.name, seatLimit: row.seat_limit, seatsUsed: Number(row.seats_used), auditRetentionDays: row.audit_retention_days, role: row.role };
 }
@@ -52,30 +53,30 @@ router.get("/personal-projects", asyncHandler(async (req: AuthedRequest, res) =>
   res.json({ projects });
 }));
 router.get("/:organizationId", asyncHandler(async (req: AuthedRequest, res) => {
-  const role = (await organizationRole(req.params.organizationId, req.user!.id));
+  const role = (await organizationRole(routeParam(req, "organizationId"), req.user!.id));
   if (!role) { res.status(404).json({ error: "Organization not found" }); return; }
   const row = (await db.prepare("SELECT *, (SELECT COUNT(*) FROM organization_members WHERE organization_id=organizations.id) AS seats_used FROM organizations WHERE id=?")
-    .get(req.params.organizationId)) as Omit<Parameters<typeof summary>[0], "role">;
+    .get(routeParam(req, "organizationId"))) as Omit<Parameters<typeof summary>[0], "role">;
   const members = (await db.prepare("SELECT m.user_id AS userId,m.role,u.email,u.username FROM organization_members m JOIN users u ON u.id=m.user_id WHERE m.organization_id=? ORDER BY m.created_at LIMIT 10000")
-    .all(req.params.organizationId));
+    .all(routeParam(req, "organizationId")));
   const projects = (await db.prepare("SELECT id,name,project_type AS projectType,revision FROM projects WHERE organization_id=? ORDER BY updated_at DESC LIMIT 1000")
-    .all(req.params.organizationId));
-  const entitlement = (await getOrganizationEntitlement(req.params.organizationId));
+    .all(routeParam(req, "organizationId")));
+  const entitlement = (await getOrganizationEntitlement(routeParam(req, "organizationId")));
   res.json({ organization: summary({ ...row, role }), members, projects, seatEntitlement: entitlement.totalSeats, entitlement });
 }));
 router.patch("/:organizationId", asyncHandler(async (req: AuthedRequest, res) => {
-  if ((await organizationRole(req.params.organizationId, req.user!.id)) !== "owner") { res.status(403).json({ error: "Organization owner access required" }); return; }
+  if ((await organizationRole(routeParam(req, "organizationId"), req.user!.id)) !== "owner") { res.status(403).json({ error: "Organization owner access required" }); return; }
   const parsed = z.object({ name: z.string().trim().min(1).max(80), seatLimit: z.number().int().min(1).max(10000), auditRetentionDays: z.number().int().min(30).max(3650) }).strict().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid organization settings or seat entitlement exceeded" }); return; }
   const changed = (await withTransaction(async () => {
-    (await assertOrganizationOwnerSession(req.params.organizationId, req.user!.id, req.session!.id));
-    const current = (await getOrganizationEntitlement(req.params.organizationId));
+    (await assertOrganizationOwnerSession(routeParam(req, "organizationId"), req.user!.id, req.session!.id));
+    const current = (await getOrganizationEntitlement(routeParam(req, "organizationId")));
     if (!current.validEntitlement || parsed.data.seatLimit > current.totalSeats) return false;
-    const seats = (await db.prepare("SELECT COUNT(*) AS count FROM organization_members WHERE organization_id=?").get(req.params.organizationId)) as { count: number };
+    const seats = (await db.prepare("SELECT COUNT(*) AS count FROM organization_members WHERE organization_id=?").get(routeParam(req, "organizationId"))) as { count: number };
     if (seats.count > parsed.data.seatLimit) return false;
     (await db.prepare("UPDATE organizations SET name=?,seat_limit=?,audit_retention_days=?,updated_at=? WHERE id=?")
-      .run(parsed.data.name, parsed.data.seatLimit, parsed.data.auditRetentionDays, now(), req.params.organizationId));
-    (await organizationAudit(req.params.organizationId, req.user!.id, "organization.settings", parsed.data));
+      .run(parsed.data.name, parsed.data.seatLimit, parsed.data.auditRetentionDays, now(), routeParam(req, "organizationId")));
+    (await organizationAudit(routeParam(req, "organizationId"), req.user!.id, "organization.settings", parsed.data));
     return true;
   }));
   if (!changed) { res.status(409).json({ error: "Seat limit must cover current members and fit the current verified entitlement. Remove excess members before reducing it." }); return; }
@@ -83,17 +84,17 @@ router.patch("/:organizationId", asyncHandler(async (req: AuthedRequest, res) =>
 }));
 router.get("/:organizationId/billing", asyncHandler(async (req: AuthedRequest, res) => {
   if (!(await admin(req))) { res.status(403).json({ error: "Organization administrator access required" }); return; }
-  const entitlement = (await getOrganizationEntitlement(req.params.organizationId));
-  const subscription = (await getOrganizationSubscription(req.params.organizationId));
+  const entitlement = (await getOrganizationEntitlement(routeParam(req, "organizationId")));
+  const subscription = (await getOrganizationSubscription(routeParam(req, "organizationId")));
   res.set("Cache-Control", "private, no-store");
   const transitions = (await db.prepare(
     "SELECT id, idempotency_key AS idempotencyKey, action, previous_state AS previousState, new_state AS newState, details, created_at AS createdAt FROM billing_transitions WHERE organization_id = ? ORDER BY created_at DESC LIMIT 50"
-  ).all(req.params.organizationId)) as { id: string; idempotencyKey: string; action: string; previousState: string; newState: string; details: string; createdAt: number }[];
+  ).all(routeParam(req, "organizationId"))) as { id: string; idempotencyKey: string; action: string; previousState: string; newState: string; details: string; createdAt: number }[];
   res.json({
     entitlement,
     subscription,
     configuration: tenantBillingConfiguration(),
-    orders: (await listTenantBillingOrders(req.params.organizationId)),
+    orders: (await listTenantBillingOrders(routeParam(req, "organizationId"))),
     transitions: transitions.map((t) => ({
       ...t,
       previousState: JSON.parse(t.previousState || "{}"),
@@ -103,7 +104,7 @@ router.get("/:organizationId/billing", asyncHandler(async (req: AuthedRequest, r
   });
 }));
 router.post("/:organizationId/billing/seats", asyncHandler(async (req: AuthedRequest, res) => {
-  if ((await organizationRole(req.params.organizationId, req.user!.id)) !== "owner") {
+  if ((await organizationRole(routeParam(req, "organizationId"), req.user!.id)) !== "owner") {
     res.status(403).json({ error: "Organization owner access required" });
     return;
   }
@@ -116,7 +117,7 @@ router.post("/:organizationId/billing/seats", asyncHandler(async (req: AuthedReq
   try {
     const result = await createTenantSeatCheckout({
       idempotencyKey: parsed.data.idempotencyKey,
-      organizationId: req.params.organizationId,
+      organizationId: routeParam(req, "organizationId"),
       userId: req.user!.id, sessionId: req.session!.id,
       targetPaidSeats: parsed.data.targetPaidSeats,
     });
@@ -126,17 +127,17 @@ router.post("/:organizationId/billing/seats", asyncHandler(async (req: AuthedReq
   }
 }));
 router.post("/:organizationId/billing/subscribe", asyncHandler(async (req: AuthedRequest, res) => {
-  if ((await organizationRole(req.params.organizationId, req.user!.id)) !== "owner") {
+  if ((await organizationRole(routeParam(req, "organizationId"), req.user!.id)) !== "owner") {
     res.status(403).json({ error: "Organization owner access required" });
     return;
   }
   (await withTransaction(async () => {
-    (await assertOrganizationOwnerSession(req.params.organizationId, req.user!.id, req.session!.id));
+    (await assertOrganizationOwnerSession(routeParam(req, "organizationId"), req.user!.id, req.session!.id));
   }));
   res.status(409).json({ error: "Direct plan activation is unavailable. Use the configured prepaid seat checkout. Enterprise and PayPal tenant products are not configured.", code: "payment_required" });
 }));
 router.post("/:organizationId/billing/cancel", asyncHandler(async (req: AuthedRequest, res) => {
-  if ((await organizationRole(req.params.organizationId, req.user!.id)) !== "owner") {
+  if ((await organizationRole(routeParam(req, "organizationId"), req.user!.id)) !== "owner") {
     res.status(403).json({ error: "Organization owner access required" });
     return;
   }
@@ -146,7 +147,7 @@ router.post("/:organizationId/billing/cancel", asyncHandler(async (req: AuthedRe
   if (!parsed.success) { res.status(400).json({ error: "idempotencyKey required" }); return; }
   const result = (await applyBillingTransition({
     idempotencyKey: parsed.data.idempotencyKey,
-    organizationId: req.params.organizationId,
+    organizationId: routeParam(req, "organizationId"),
     userId: req.user!.id,
     sessionId: req.session!.id,
     action: "cancel",
@@ -154,7 +155,7 @@ router.post("/:organizationId/billing/cancel", asyncHandler(async (req: AuthedRe
   res.json(result);
 }));
 router.post("/:organizationId/billing/reactivate", asyncHandler(async (req: AuthedRequest, res) => {
-  if ((await organizationRole(req.params.organizationId, req.user!.id)) !== "owner") {
+  if ((await organizationRole(routeParam(req, "organizationId"), req.user!.id)) !== "owner") {
     res.status(403).json({ error: "Organization owner access required" });
     return;
   }
@@ -164,7 +165,7 @@ router.post("/:organizationId/billing/reactivate", asyncHandler(async (req: Auth
   if (!parsed.success) { res.status(400).json({ error: "idempotencyKey required" }); return; }
   const result = (await applyBillingTransition({
     idempotencyKey: parsed.data.idempotencyKey,
-    organizationId: req.params.organizationId,
+    organizationId: routeParam(req, "organizationId"),
     userId: req.user!.id,
     sessionId: req.session!.id,
     action: "reactivate",
@@ -175,11 +176,11 @@ router.post("/:organizationId/members", asyncHandler(async (req: AuthedRequest, 
   if (!(await admin(req))) { res.status(403).json({ error: "Organization administrator access required" }); return; }
   const parsed = z.object({ identifier: z.string().trim().min(3).max(254), role: roleSchema }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid member and role" }); return; }
-  if (parsed.data.role === "admin" && (await organizationRole(req.params.organizationId, req.user!.id)) !== "owner") { res.status(403).json({ error: "Only the owner may appoint administrators" }); return; }
+  if (parsed.data.role === "admin" && (await organizationRole(routeParam(req, "organizationId"), req.user!.id)) !== "owner") { res.status(403).json({ error: "Only the owner may appoint administrators" }); return; }
   const target = (await db.prepare("SELECT id FROM users WHERE email=? COLLATE NOCASE OR username=? COLLATE NOCASE LIMIT 1")
     .get(parsed.data.identifier, parsed.data.identifier)) as { id: string } | undefined;
   if (!target) { res.status(404).json({ error: "Registered user not found" }); return; }
-  const entitlement = (await getOrganizationEntitlement(req.params.organizationId));
+  const entitlement = (await getOrganizationEntitlement(routeParam(req, "organizationId")));
   if (!entitlement.canAddMember) {
     res.status(409).json({
       error: entitlement.isDelinquent
@@ -189,13 +190,13 @@ router.post("/:organizationId/members", asyncHandler(async (req: AuthedRequest, 
     return;
   }
   const result = (await withTransaction(async () => {
-    if (!(await admin(req)) || (parsed.data.role === "admin" && (await organizationRole(req.params.organizationId, req.user!.id)) !== "owner")) return "forbidden";
-    if ((await organizationRole(req.params.organizationId, target.id))) return "exists";
-    const currentEntitlement = (await getOrganizationEntitlement(req.params.organizationId));
+    if (!(await admin(req)) || (parsed.data.role === "admin" && (await organizationRole(routeParam(req, "organizationId"), req.user!.id)) !== "owner")) return "forbidden";
+    if ((await organizationRole(routeParam(req, "organizationId"), target.id))) return "exists";
+    const currentEntitlement = (await getOrganizationEntitlement(routeParam(req, "organizationId")));
     if (!currentEntitlement.canAddMember) return "full";
     (await db.prepare("INSERT INTO organization_members (organization_id,user_id,role,created_at) VALUES (?,?,?,?)")
-      .run(req.params.organizationId, target.id, parsed.data.role, now()));
-    (await organizationAudit(req.params.organizationId, req.user!.id, "member.added", { userId: target.id, role: parsed.data.role }));
+      .run(routeParam(req, "organizationId"), target.id, parsed.data.role, now()));
+    (await organizationAudit(routeParam(req, "organizationId"), req.user!.id, "member.added", { userId: target.id, role: parsed.data.role }));
     return "ok";
   }));
   if (result !== "ok") { res.status(result === "forbidden" ? 403 : 409).json({ error: result === "forbidden" ? "Organization access changed" : result === "exists" ? "User is already a member" : "Organization seat limit reached" }); return; }
@@ -204,46 +205,46 @@ router.post("/:organizationId/members", asyncHandler(async (req: AuthedRequest, 
 router.patch("/:organizationId/members/:userId", asyncHandler(async (req: AuthedRequest, res) => {
   if (!(await admin(req))) { res.status(403).json({ error: "Organization administrator access required" }); return; }
   const parsed = z.object({ role: roleSchema }).safeParse(req.body);
-  const targetRole = (await organizationRole(req.params.organizationId, req.params.userId));
-  const actorRole = (await organizationRole(req.params.organizationId, req.user!.id));
+  const targetRole = (await organizationRole(routeParam(req, "organizationId"), routeParam(req, "userId")));
+  const actorRole = (await organizationRole(routeParam(req, "organizationId"), req.user!.id));
   if (!parsed.success || !targetRole) { res.status(400).json({ error: "Invalid member and role" }); return; }
   if (targetRole === "owner" || (actorRole !== "owner" && (targetRole === "admin" || parsed.data.role === "admin"))) { res.status(403).json({ error: "Owner role is protected; only the owner may manage administrators" }); return; }
   const updated = (await withTransaction(async () => {
-    const currentActor = (await organizationRole(req.params.organizationId, req.user!.id)), currentTarget = (await organizationRole(req.params.organizationId, req.params.userId));
+    const currentActor = (await organizationRole(routeParam(req, "organizationId"), req.user!.id)), currentTarget = (await organizationRole(routeParam(req, "organizationId"), routeParam(req, "userId")));
     if (!(await admin(req)) || !currentTarget || currentTarget === "owner" || (currentActor !== "owner" && (currentTarget === "admin" || parsed.data.role === "admin"))) return false;
-    (await db.prepare("UPDATE organization_members SET role=? WHERE organization_id=? AND user_id=?").run(parsed.data.role, req.params.organizationId, req.params.userId));
-    if (parsed.data.role === "viewer") (await db.prepare("DELETE FROM project_locks WHERE user_id=? AND project_id IN (SELECT id FROM projects WHERE organization_id=?)").run(req.params.userId, req.params.organizationId));
-    (await organizationAudit(req.params.organizationId, req.user!.id, "member.role_changed", { userId: req.params.userId, role: parsed.data.role }));
+    (await db.prepare("UPDATE organization_members SET role=? WHERE organization_id=? AND user_id=?").run(parsed.data.role, routeParam(req, "organizationId"), routeParam(req, "userId")));
+    if (parsed.data.role === "viewer") (await db.prepare("DELETE FROM project_locks WHERE user_id=? AND project_id IN (SELECT id FROM projects WHERE organization_id=?)").run(routeParam(req, "userId"), routeParam(req, "organizationId")));
+    (await organizationAudit(routeParam(req, "organizationId"), req.user!.id, "member.role_changed", { userId: routeParam(req, "userId"), role: parsed.data.role }));
     return true;
   }));
   if (!updated) { res.status(403).json({ error: "Organization access changed" }); return; }
   res.json({ ok: true });
 }));
 router.delete("/:organizationId/members/:userId", asyncHandler(async (req: AuthedRequest, res) => {
-  const actorRole = (await organizationRole(req.params.organizationId, req.user!.id));
-  const targetRole = (await organizationRole(req.params.organizationId, req.params.userId));
+  const actorRole = (await organizationRole(routeParam(req, "organizationId"), req.user!.id));
+  const targetRole = (await organizationRole(routeParam(req, "organizationId"), routeParam(req, "userId")));
   if (!(await admin(req)) || targetRole === "owner" || (targetRole === "admin" && actorRole !== "owner")) { res.status(403).json({ error: "Owner role is protected; administrator management requires the owner" }); return; }
   const removed = (await withTransaction(async () => {
-    const currentActor = (await organizationRole(req.params.organizationId, req.user!.id)), currentTarget = (await organizationRole(req.params.organizationId, req.params.userId));
+    const currentActor = (await organizationRole(routeParam(req, "organizationId"), req.user!.id)), currentTarget = (await organizationRole(routeParam(req, "organizationId"), routeParam(req, "userId")));
     if (!(await admin(req)) || currentTarget === "owner" || (currentTarget === "admin" && currentActor !== "owner")) return false;
-    (await db.prepare("DELETE FROM organization_members WHERE organization_id=? AND user_id=?").run(req.params.organizationId, req.params.userId));
-    (await db.prepare("DELETE FROM organization_sso_identities WHERE organization_id=? AND user_id=?").run(req.params.organizationId, req.params.userId));
-    (await db.prepare("DELETE FROM project_locks WHERE user_id=? AND project_id IN (SELECT id FROM projects WHERE organization_id=?)").run(req.params.userId, req.params.organizationId));
-    (await organizationAudit(req.params.organizationId, req.user!.id, "member.removed", { userId: req.params.userId }));
+    (await db.prepare("DELETE FROM organization_members WHERE organization_id=? AND user_id=?").run(routeParam(req, "organizationId"), routeParam(req, "userId")));
+    (await db.prepare("DELETE FROM organization_sso_identities WHERE organization_id=? AND user_id=?").run(routeParam(req, "organizationId"), routeParam(req, "userId")));
+    (await db.prepare("DELETE FROM project_locks WHERE user_id=? AND project_id IN (SELECT id FROM projects WHERE organization_id=?)").run(routeParam(req, "userId"), routeParam(req, "organizationId")));
+    (await organizationAudit(routeParam(req, "organizationId"), req.user!.id, "member.removed", { userId: routeParam(req, "userId") }));
     return true;
   }));
   if (!removed) { res.status(403).json({ error: "Organization access changed" }); return; }
   res.json({ ok: true });
 }));
 router.post("/:organizationId/transfer-owner", asyncHandler(async (req: AuthedRequest, res) => {
-  if ((await organizationRole(req.params.organizationId, req.user!.id)) !== "owner") { res.status(403).json({ error: "Organization owner access required" }); return; }
+  if ((await organizationRole(routeParam(req, "organizationId"), req.user!.id)) !== "owner") { res.status(403).json({ error: "Organization owner access required" }); return; }
   const parsed = z.object({ userId: z.string().min(1).max(120) }).safeParse(req.body);
-  if (!parsed.success || parsed.data.userId === req.user!.id || !(await organizationRole(req.params.organizationId, parsed.data.userId))) { res.status(400).json({ error: "Select a different existing organization member" }); return; }
+  if (!parsed.success || parsed.data.userId === req.user!.id || !(await organizationRole(routeParam(req, "organizationId"), parsed.data.userId))) { res.status(400).json({ error: "Select a different existing organization member" }); return; }
   const transferred = (await withTransaction(async () => {
-    if ((await organizationRole(req.params.organizationId, req.user!.id)) !== "owner" || !(await organizationRole(req.params.organizationId, parsed.data.userId))) return false;
-    (await db.prepare("UPDATE organization_members SET role='admin' WHERE organization_id=? AND user_id=?").run(req.params.organizationId, req.user!.id));
-    (await db.prepare("UPDATE organization_members SET role='owner' WHERE organization_id=? AND user_id=?").run(req.params.organizationId, parsed.data.userId));
-    (await organizationAudit(req.params.organizationId, req.user!.id, "organization.owner_transferred", { userId: parsed.data.userId }));
+    if ((await organizationRole(routeParam(req, "organizationId"), req.user!.id)) !== "owner" || !(await organizationRole(routeParam(req, "organizationId"), parsed.data.userId))) return false;
+    (await db.prepare("UPDATE organization_members SET role='admin' WHERE organization_id=? AND user_id=?").run(routeParam(req, "organizationId"), req.user!.id));
+    (await db.prepare("UPDATE organization_members SET role='owner' WHERE organization_id=? AND user_id=?").run(routeParam(req, "organizationId"), parsed.data.userId));
+    (await organizationAudit(routeParam(req, "organizationId"), req.user!.id, "organization.owner_transferred", { userId: parsed.data.userId }));
     return true;
   }));
   if (!transferred) { res.status(403).json({ error: "Organization access changed" }); return; }
@@ -259,11 +260,11 @@ router.post("/:organizationId/projects", asyncHandler(async (req: AuthedRequest,
     // Personal ownership is required to donate a project to a tenant. Moving an
     // already-bound project through another tenant cannot bypass its controls.
     if (!project || project.user_id !== req.user!.id || project.organization_id) return false;
-    (await db.prepare("UPDATE projects SET organization_id=?,revision=revision+1,updated_at=? WHERE id=?").run(req.params.organizationId, now(), parsed.data.projectId));
+    (await db.prepare("UPDATE projects SET organization_id=?,revision=revision+1,updated_at=? WHERE id=?").run(routeParam(req, "organizationId"), now(), parsed.data.projectId));
     (await db.prepare("UPDATE project_share_links SET revoked_at=? WHERE project_id=? AND revoked_at IS NULL").run(now(), parsed.data.projectId));
     (await db.prepare("DELETE FROM project_members WHERE project_id=?").run(parsed.data.projectId));
     (await db.prepare("DELETE FROM project_locks WHERE project_id=?").run(parsed.data.projectId));
-    (await organizationAudit(req.params.organizationId, req.user!.id, "project.bound", { projectId: parsed.data.projectId }));
+    (await organizationAudit(routeParam(req, "organizationId"), req.user!.id, "project.bound", { projectId: parsed.data.projectId }));
     return true;
   }));
   if (!bound) { res.status(409).json({ error: "Choose an unbound personal project you own" }); return; }
@@ -273,10 +274,10 @@ router.get("/:organizationId/audit", asyncHandler(async (req: AuthedRequest, res
   if (!(await admin(req))) { res.status(403).json({ error: "Organization administrator access required" }); return; }
   const before = Number(req.query.beforeId || Number.MAX_SAFE_INTEGER);
   if (!Number.isSafeInteger(before) || before < 1) { res.status(400).json({ error: "Invalid audit cursor" }); return; }
-  const policy = (await db.prepare("SELECT audit_retention_days FROM organizations WHERE id=?").get(req.params.organizationId)) as { audit_retention_days: number };
-  (await db.prepare("DELETE FROM organization_audit WHERE organization_id=? AND created_at<?").run(req.params.organizationId, now() - policy.audit_retention_days * 86400));
+  const policy = (await db.prepare("SELECT audit_retention_days FROM organizations WHERE id=?").get(routeParam(req, "organizationId"))) as { audit_retention_days: number };
+  (await db.prepare("DELETE FROM organization_audit WHERE organization_id=? AND created_at<?").run(routeParam(req, "organizationId"), now() - policy.audit_retention_days * 86400));
   const events = (await db.prepare("SELECT id,actor_id AS actorId,action,detail,created_at AS createdAt FROM organization_audit WHERE organization_id=? AND id<? ORDER BY id DESC LIMIT 500")
-    .all(req.params.organizationId, before)) as { id: number; actorId: string | null; action: string; detail: string; createdAt: number }[];
+    .all(routeParam(req, "organizationId"), before)) as { id: number; actorId: string | null; action: string; detail: string; createdAt: number }[];
   res.set("Cache-Control", "private, no-store");
   res.json({ events: events.map((event) => ({ ...event, detail: JSON.parse(event.detail) as unknown })), nextBeforeId: events.length === 500 ? events[events.length - 1].id : null });
 }));
