@@ -17,6 +17,18 @@ production data and real customer accounts were not used for fixture edits.
 | Production client/API build | Passed |
 | Integrated build preflight | Passed |
 
+The release dependency gate identified newly published advisories after the previous
+deployment. Production packages now resolve Express 4.22.3 / body-parser 1.20.9,
+Multer 2.5.0, Nodemailer 10.1.4 and Zod 4.6.7. Three server record schemas use explicit
+string-key validation for Zod 4. Vercel's CLI-config dependency pins an older Zod 4;
+the root override updates that one compatible transitive dependency to 4.6.7 while
+retaining the current Functions SDK. The regenerated lockfile and installed tree
+both report zero dependency vulnerabilities. The security gate remains enabled.
+
+Upstream references: [Zod advisory](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5),
+[Multer advisory](https://github.com/advisories/GHSA-q7qp-rjg7-q26m),
+[body-parser advisory](https://github.com/advisories/GHSA-27r3-jxmh-p828).
+
 The provider response-limit test encountered a local deadline failure during an
 earlier concurrent run. Its isolated rerun and the subsequent full server suite
 passed. The release gate additionally runs the exact pushed source in Linux CI,

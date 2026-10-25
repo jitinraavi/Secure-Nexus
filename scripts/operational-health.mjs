@@ -1,7 +1,10 @@
 import { performance } from 'node:perf_hooks';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import nodemailer from 'nodemailer';
+import { createRequire } from 'node:module';
+
+// Resolve the mail transport from its owning workspace, including nested installs.
+const nodemailer = createRequire(new URL('../server/package.json', import.meta.url))('nodemailer');
 
 export function allowedOrigin(value, allowlist, { isolated = false } = {}) {
   let url;
