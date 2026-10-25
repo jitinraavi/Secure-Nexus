@@ -42,6 +42,7 @@ const InfraEditor = lazy(() => import("./InfraEditor").then((module) => ({ defau
 const MepPanel = lazy(() => import("../components/MepPanel").then((module) => ({ default: module.MepPanel })));
 const DesignExportMenu = lazy(() => import("../components/DesignExportMenu").then((module) => ({ default: module.DesignExportMenu })));
 const ProjectEngineeringBasisControl = lazy(() => import("../components/ProjectEngineeringBasisControl").then(module => ({ default: module.ProjectEngineeringBasisControl })));
+const CadWorkspace = lazy(() => import("../components/CadWorkspace").then(module => ({ default: module.CadWorkspace })));
 
 const SWATCHES = [
   "#7c8a99", "#a4714f", "#8a6a45", "#5d7b8a", "#6b5542", "#4c7a9c",
@@ -80,6 +81,7 @@ export function Editor() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [recoveryWarning, setRecoveryWarning] = useState("");
   const [projectRole, setProjectRole] = useState<"owner" | "editor" | "viewer">("viewer");
+  const [cadWorkspaceActive, setCadWorkspaceActive] = useState(true);
 
   const [name, setName] = useState("");
   const [design, setDesign] = useState<Design>(defaultDesign);
@@ -652,6 +654,14 @@ export function Editor() {
   const infraKind = isInfraType(model) ? (model as InfraKind) : null;
   const infraActive = loaded && infraKind && design.infra?.kind === infraKind;
 
+  if (loaded && cadWorkspaceActive) {
+    return <Suspense fallback={<div className="flex min-h-[65vh] items-center justify-center"><Spinner className="h-7 w-7" /></div>}>
+      <CadWorkspace key={id} design={design} onChange={changeDesign} projectName={name} readOnly={projectRole === "viewer"} saving={saving} saved={!pendingDraft} remoteRevision={remoteRevision}
+        onSave={() => scheduleSave(design)} onLegacy={() => setCadWorkspaceActive(false)}
+        projectControls={<><CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} /><ProjectHistory projectId={id!} currentDesign={design} currentRevision={revisionRef.current} onRestored={onHistoryRestore} />{recoveryControls}<Suspense fallback={null}><ProjectEngineeringBasisControl value={design.engineeringBasis} disabled={projectRole === "viewer"} onChange={engineeringBasis => changeDesign({ ...design, engineeringBasis })} /></Suspense></>} />
+    </Suspense>;
+  }
+
   if (communityActive && community) {
     return (
       <div className="gw-editor-workspace relative flex flex-col">
@@ -661,6 +671,7 @@ export function Editor() {
           meta={<>{PROJECT_TYPE_LABELS[projectType] ?? projectType} · {saving ? "Saving" : lastSaved ? "Saved" : "Draft"} · <CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} />{remoteRevision ? " · Remote update available" : ""}</>}
         />
         <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
+          <Button size="sm" onClick={() => setCadWorkspaceActive(true)}>CAD workspace</Button>
           <p className="text-xs text-slate-500">
             {landDimensionText(community)}
             {saving ? " · saving…" : lastSaved ? " · saved" : ""}
@@ -699,6 +710,7 @@ export function Editor() {
       <div className="gw-editor-workspace relative flex flex-col">
          <SheetHeader eyebrow="Project sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={<>{INFRA_LABELS[infraKind]} · {saving ? "Saving" : lastSaved ? "Saved" : "Draft"} · <CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} />{remoteRevision ? " · Remote update available" : ""}</>} tone="amber" />
         <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
+          <Button size="sm" onClick={() => setCadWorkspaceActive(true)}>CAD workspace</Button>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -743,6 +755,7 @@ export function Editor() {
     <div className="gw-editor-workspace relative flex flex-col">
         <SheetHeader eyebrow="Interior sheet" title={<input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => scheduleSave(design)} className="w-full max-w-xs rounded-lg border border-transparent bg-transparent px-1 py-0.5 text-base font-semibold text-slate-100 outline-none hover:border-slate-700 focus:border-emerald-500" aria-label="Project title" />} meta={<>{PROJECT_TYPE_LABELS[projectType] ?? projectType} · {saving ? "Saving" : lastSaved ? "Saved" : "Draft"} · <CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} />{remoteRevision ? " · Remote update available" : ""}</>} />
        <div className="gw-sheet-toolbar mb-3 mt-2 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3">
+         <Button size="sm" onClick={() => setCadWorkspaceActive(true)}>CAD workspace</Button>
          <div className="min-w-0 flex-1">
           <p className="mt-0.5 text-xs text-slate-500">
             {design.room.widthMm / 1000} × {design.room.depthMm / 1000} m · {design.furniture.length} item(s)

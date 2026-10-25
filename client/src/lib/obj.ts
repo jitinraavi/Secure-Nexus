@@ -1,5 +1,9 @@
 import type { Design } from "../types";
 import { catalogEntry } from "./catalog";
+import * as THREE from "three";
+import { cadLevels, cadObjects } from "./cadModel";
+import { cadMep, cadNetworkState } from "./cadNetworks";
+import { cadMepGeometry, cadObjectGeometry, disposeCadObject } from "./cadViewportGeometry";
 
 const m = (v: number) => (v / 1000).toFixed(4);
 
@@ -83,6 +87,33 @@ export function buildObjMtl(design: Design): { obj: string; mtl: string } {
     );
   }
 
+  // Authored CAD/MEP uses the viewport geometry, including rotations, circular
+  // sections, polygon footprints and real opening voids. Visibility is not scope.
+  const appendMesh = (root: THREE.Group, id: string, color: string) => {
+    try {
+      root.updateMatrixWorld(true);
+      const label = `cad_${id.replace(/[^A-Za-z0-9_.-]/g, "_")}`;
+      const rgb = hexToRgbFloat(color);
+      obj.push(`# Groundwork source ${id} revision ${design.cad?.revision ?? 0} units m`, `o ${label}`, `usemtl ${label}`);
+      mtl.push(`newmtl ${label}`, `Kd ${rgb.map(value => value.toFixed(4)).join(" ")}`, "Ka 0.05 0.05 0.05", "Ks 0.1 0.1 0.1", "Ns 10");
+      root.traverse(node => {
+        if (!(node instanceof THREE.Mesh) || node.userData.cadDecoration) return;
+        const positions = node.geometry.getAttribute("position"), index = node.geometry.getIndex();
+        if (!positions) return;
+        const point = new THREE.Vector3();
+        for (let i = 0; i < positions.count; i++) {
+          point.fromBufferAttribute(positions, i).applyMatrix4(node.matrixWorld);
+          obj.push(`v ${point.x.toFixed(7)} ${point.y.toFixed(7)} ${point.z.toFixed(7)}`);
+        }
+        const count = index?.count ?? positions.count;
+        for (let i = 0; i + 2 < count; i += 3) obj.push(`f ${[0,1,2].map(offset => nextBase + (index ? index.getX(i + offset) : i + offset) + 1).join(" ")}`);
+        nextBase += positions.count;
+      });
+    } finally { disposeCadObject(root); }
+  };
+  for (const object of cadObjects(design)) appendMesh(cadObjectGeometry(object, cadLevels(design)), object.id, object.color);
+  const orientations = new Map(cadNetworkState(design).equipment.map(item => [item.elementId, item.mountingRotationDeg ?? 0]));
+  for (const element of cadMep(design).elements) appendMesh(cadMepGeometry(element, orientations.get(element.id) ?? 0), element.id, element.color);
   return { obj: obj.join("\n"), mtl: mtl.join("\n") };
 }
 

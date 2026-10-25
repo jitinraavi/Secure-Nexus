@@ -1,0 +1,144 @@
+.cad-workspace {
+  --cad-bg: var(--studio-bg, #111614); --cad-panel: var(--studio-surface, #171d19);
+  --cad-raised: var(--studio-surface-raised, #1c241e); --cad-line: var(--studio-border, #2b352e);
+  --cad-ink: var(--studio-text, #eeeae0); --cad-muted: var(--studio-muted, #97a397);
+  --cad-accent: #baca98; --cad-active: #baca981c; --cad-warn: #d9b677;
+  display: grid; grid-template-columns: 216px minmax(260px, 1fr) 286px;
+  grid-template-rows: 45px 35px 61px minmax(420px, 1fr) 32px;
+  width: 100%; height: calc(100dvh - 108px); min-height: 610px; overflow: hidden;
+  color: var(--cad-ink); background: var(--cad-bg); border: 1px solid var(--cad-line);
+  border-radius: 3px; font-size: 12px; line-height: 1.45; isolation: isolate;
+}
+[data-theme="light"] .cad-workspace { --cad-accent: #496335; --cad-active: #54743a12; --cad-warn: #8e601d; }
+.cad-workspace * { box-sizing: border-box; }
+.cad-workspace :is(button, input, select, textarea) { font: inherit; }
+.cad-workspace button { cursor: pointer; }
+.cad-workspace button:disabled { cursor: default; opacity: .42; }
+.cad-workspace button:focus-visible, .cad-workspace :is(input, select):focus-visible { outline: 2px solid var(--cad-accent); outline-offset: -1px; }
+.cad-projectbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 18px; padding: 0 13px; border-bottom: 1px solid var(--cad-line); background: var(--cad-panel); }
+.cad-wordmark { display: flex; align-items: center; gap: 7px; flex-shrink: 0; letter-spacing: .13em; font-size: 11px; font-weight: 650; }
+.cad-wordmark > span { color: var(--cad-accent); font-size: 20px; }
+.cad-wordmark small { border-left: 1px solid var(--cad-line); padding-left: 10px; margin-left: 3px; color: var(--cad-muted); font-size: 9px; font-weight: 400; letter-spacing: .08em; }
+.cad-project-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 220px; }
+.cad-project-actions { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+.cad-save-state { color: var(--cad-muted); font-size: 10px; white-space: nowrap; }
+.cad-save-state::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--cad-accent); display: inline-block; margin-right: 5px; }
+.cad-conflict { color: var(--cad-warn); }
+.cad-disciplines { grid-column: 1 / -1; display: flex; align-items: stretch; gap: 6px; padding: 0 12px; border-bottom: 1px solid var(--cad-line); background: var(--cad-panel); }
+.cad-disciplines > button { color: var(--cad-muted); border: 0; border-bottom: 2px solid transparent; background: none; padding: 0 13px; font-size: 11px; white-space: nowrap; }
+.cad-disciplines > button.active { color: var(--cad-accent); border-bottom-color: var(--cad-accent); }
+.cad-disciplines > span { margin-left: auto; align-self: center; color: var(--cad-muted); font-size: 10px; }
+.cad-toolbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid var(--cad-line); padding: 5px 9px; overflow-x: auto; background: var(--cad-panel); }
+.cad-tool-group { display: flex; align-items: stretch; gap: 2px; border-right: 1px solid var(--cad-line); padding-right: 8px; flex-shrink: 0; }
+.cad-toolbar-end { border: 0; margin-left: auto; }
+.cad-tool-group button { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px; min-width: 42px; padding: 3px 6px; border: 1px solid transparent; border-radius: 3px; color: var(--cad-muted); background: transparent; font-size: 10px; white-space: nowrap; }
+.cad-tool-group button > span { font-size: 19px; line-height: 20px; color: var(--cad-ink); }
+.cad-tool-group button:hover { background: var(--cad-raised); color: var(--cad-ink); }
+.cad-tool-group button.active { border-color: var(--cad-accent); background: var(--cad-active); color: var(--cad-accent); }
+.cad-explorer, .cad-inspector { min-width: 0; background: var(--cad-panel); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--cad-line) transparent; }
+.cad-explorer { grid-column: 1; grid-row: 4; border-right: 1px solid var(--cad-line); }
+.cad-inspector { grid-column: 3; grid-row: 4; border-left: 1px solid var(--cad-line); }
+.cad-panel-title { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--cad-line); font-size: 9px; letter-spacing: .1em; min-height: 37px; }
+.cad-panel-title strong { font-weight: 500; }
+.cad-panel-title button { color: var(--cad-muted); background: transparent; border: 0; font-size: 20px; line-height: 1; }
+.cad-explorer-meta { display: flex; justify-content: space-between; padding: 9px 12px; color: var(--cad-muted); font-size: 9px; }
+.cad-group { padding: 13px 12px; border-bottom: 1px solid var(--cad-line); }
+.cad-group > h3, .cad-section-title h3 { color: var(--cad-ink); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; font-weight: 600; margin: 0 0 10px; }
+.cad-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.cad-inline { color: var(--cad-accent); background: none; border: 0; padding: 2px; font-size: 10px; }
+.cad-level { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 6px; color: var(--cad-muted); border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; font-size: 10px; }
+.cad-level.active { color: var(--cad-accent); background: var(--cad-active); border-left-color: var(--cad-accent); }
+.cad-level span:last-child { font: 9px ui-monospace, monospace; }
+.cad-tree-category h3 { margin: 0; display: flex; justify-content: space-between; color: var(--cad-muted); font-size: 10px; font-weight: 500; padding: 8px 12px 4px; }
+.cad-tree-category h3 > span { font-size: 9px; }
+.cad-object-row { display: flex; align-items: center; height: 30px; padding: 0 7px 0 12px; border-left: 2px solid transparent; }
+.cad-object-row.selected { background: var(--cad-active); border-left-color: var(--cad-accent); }
+.cad-object-row > button { background: none; border: 0; color: var(--cad-muted); padding: 4px; }
+.cad-object-row > .cad-object-select { display: flex; align-items: center; gap: 7px; text-align: left; flex: 1; min-width: 0; font-size: 11px; color: var(--cad-ink); }
+.cad-object-select > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cad-object-symbol { font-size: 16px; }
+.cad-takeoff { margin-top: 16px; }
+.cad-workspace dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; font-size: 10px; }
+.cad-workspace dt { color: var(--cad-muted); }
+.cad-workspace dd { margin: 0; color: var(--cad-ink); font-family: ui-monospace, monospace; }
+.cad-muted { font-size: 10px; color: var(--cad-muted); line-height: 1.65; margin: 8px 0; }
+.cad-canvas-panel { grid-column: 2; grid-row: 4; min-width: 0; position: relative; overflow: hidden; background: #171d22; }
+[data-theme="light"] .cad-canvas-panel { background: #e6e9e9; }
+.cad-view-toolbar { position: absolute; z-index: 4; top: 0; left: 0; right: 0; height: 35px; display: flex; align-items: center; gap: 4px; padding: 0 7px; background: var(--cad-panel); border-bottom: 1px solid var(--cad-line); }
+.cad-view-toolbar :is(button, select) { border: 0; background: transparent; color: var(--cad-muted); font-size: 10px; padding: 3px 5px; height: 25px; }
+.cad-view-toolbar button[aria-pressed="true"] { color: var(--cad-accent); background: var(--cad-active); }
+.cad-view-label { margin-left: auto; font-size: 9px; color: var(--cad-muted); white-space: nowrap; }
+.cad-view-toolbar option, .cad-statusbar option { background: var(--cad-panel); color: var(--cad-ink); }
+.cad-plane-elevation { display: flex; align-items: center; gap: 3px; color: var(--cad-muted); font-size: 9px; white-space: nowrap; }
+.cad-plane-elevation input { width: 55px; border: 1px solid var(--cad-line); background: var(--cad-bg); color: var(--cad-ink); padding: 3px; font: 10px ui-monospace, monospace; }
+.cad-loading { position: absolute; inset: 35px 0 0; display: grid; place-items: center; color: var(--cad-muted); }
+.cad-canvas-panel > .cad-viewport { position: absolute; inset: 35px 0 0; }
+.cad-canvas-panel canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
+.cad-viewport-note { position: absolute; left: 12px; bottom: 12px; pointer-events: none; font-size: 10px; color: #c8d3d5; text-shadow: 0 1px 3px #000; }
+.cad-viewport-note > span { display: block; margin-top: 3px; font-size: 9px; opacity: .6; }
+.cad-dynamic-entry { position: absolute; bottom: 55px; left: 50%; transform: translateX(-50%); padding: 7px 10px; background: var(--cad-panel); border: 1px solid var(--cad-accent); border-radius: 3px; z-index: 5; box-shadow: 0 2px 12px #0003; }
+.cad-dynamic-entry label { display: flex; align-items: center; gap: 9px; font-size: 10px; }
+.cad-dynamic-entry input { width: 105px; padding: 5px; border: 1px solid var(--cad-line); background: var(--cad-bg); color: var(--cad-ink); font: 12px ui-monospace, monospace; }
+.cad-dynamic-entry > span { display: block; margin-top: 4px; font-size: 9px; color: var(--cad-muted); }
+.cad-inspector-tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--cad-line); }
+.cad-inspector-tabs > button { padding: 9px 2px; font-size: 10px; color: var(--cad-muted); background: transparent; border: 0; border-bottom: 2px solid transparent; }
+.cad-inspector-tabs > button.active { color: var(--cad-accent); border-bottom-color: var(--cad-accent); }
+.cad-inspector-content > .cad-field { margin: 12px; }
+.cad-object-heading { padding: 13px 12px 2px; }
+.cad-object-heading > span { display: block; font-size: 17px; font-weight: 500; }
+.cad-object-heading > small { display: block; margin-top: 4px; font-size: 9px; color: var(--cad-muted); overflow-wrap: anywhere; }
+.cad-field { display: block; color: var(--cad-muted); font-size: 10px; margin: 10px 0; min-width: 0; }
+.cad-field > span { float: right; font: 9px ui-monospace, monospace; }
+.cad-field :is(input, select, textarea) { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--cad-line); border-radius: 2px; background: var(--cad-bg); color: var(--cad-ink); padding: 6px 7px; min-height: 29px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.cad-field input[type="number"] { font-family: ui-monospace, monospace; }
+.cad-field input:disabled { opacity: .6; }
+.cad-field-pair { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
+.cad-check { display: flex; align-items: flex-start; gap: 6px; color: var(--cad-muted); font-size: 10px; margin: 8px 0; }
+.cad-check input { accent-color: var(--cad-accent); margin-top: 2px; }
+.cad-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 9px; min-height: 27px; color: var(--cad-ink); background: var(--cad-raised); border: 1px solid var(--cad-line); border-radius: 3px; font-size: 10px; }
+.cad-button:hover:not(:disabled) { border-color: var(--cad-muted); }
+.cad-button.cad-primary { background: var(--cad-accent); border-color: var(--cad-accent); color: var(--cad-bg); font-weight: 600; }
+.cad-opening { padding: 9px 0; border-bottom: 1px dashed var(--cad-line); margin-bottom: 9px; }
+.cad-opening > strong { text-transform: capitalize; font-size: 11px; }
+.cad-inspector-content > .cad-muted { margin: 12px; }
+.cad-issue { display: block; color: var(--cad-warn); background: #d9b67708; border: 1px solid #d9b67735; border-left: 2px solid var(--cad-warn); padding: 9px; margin: 9px 0; font-size: 10px; line-height: 1.6; }
+.cad-linked-issue { text-align: left; width: 100%; }
+.cad-linked-issue small { display: block; margin-top: 4px; opacity: .75; }
+.cad-validity { font-size: 9px; padding: 3px 5px; color: var(--cad-warn); background: #d9b67715; border-radius: 2px; }
+.cad-validity.current { color: var(--cad-accent); background: var(--cad-active); }
+.cad-result { margin-top: 13px; border-top: 1px solid var(--cad-line); padding-top: 10px; font-size: 10px; }
+.cad-result p { margin: 6px 0; }
+.cad-schedule { width: 100%; border-collapse: collapse; font-size: 10px; }
+.cad-schedule :is(th,td) { padding: 6px 4px; border-bottom: 1px solid var(--cad-line); text-align: left; }
+.cad-schedule th { font-weight: 500; color: var(--cad-muted); }
+.cad-statusbar { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; padding: 0 10px; color: var(--cad-muted); border-top: 1px solid var(--cad-line); background: var(--cad-panel); font-size: 9px; overflow: hidden; }
+.cad-command-state { color: var(--cad-accent); letter-spacing: .08em; min-width: 42px; font-weight: 600; }
+.cad-guidance { flex: 1; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cad-statusbar label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.cad-statusbar input { accent-color: var(--cad-accent); }
+.cad-statusbar select { background: transparent; color: var(--cad-ink); border: 0; font-size: 9px; }
+.cad-statusbar > span:last-child { white-space: nowrap; text-transform: capitalize; }
+.cad-left-closed { grid-template-columns: 0 minmax(260px, 1fr) 286px; }
+.cad-right-closed { grid-template-columns: 216px minmax(260px, 1fr) 0; }
+.cad-left-closed.cad-right-closed { grid-template-columns: 0 minmax(260px, 1fr) 0; }
+.cad-left-closed .cad-explorer, .cad-right-closed .cad-inspector { visibility: hidden; }
+.studio-shell:has(.cad-workspace) .studio-sidebar { width: 60px; }
+.studio-shell:has(.cad-workspace) .studio-shell-content { padding-left: 60px; }
+.studio-shell:has(.cad-workspace) .studio-main { max-width: none; margin: 0; padding: 8px 10px 0; }
+.studio-shell:has(.cad-workspace) .studio-shell-footer { display: none; }
+.studio-shell:has(.cad-workspace) .studio-sidebar .studio-nav-heading, .studio-shell:has(.cad-workspace) .studio-sidebar-note, .studio-shell:has(.cad-workspace) .studio-profile-text { display: none; }
+.studio-shell:has(.cad-workspace) .studio-sidebar-bottom { padding: 4px; }
+.studio-shell:has(.cad-workspace) .studio-profile { flex-wrap: wrap; justify-content: center; gap: 5px; padding: 5px; }
+.studio-shell:has(.cad-workspace) .cad-workspace { height: calc(100dvh - 84px); }
+.studio-shell:has(.cad-workspace) .studio-workspace-label, .studio-shell:has(.cad-workspace) .studio-sidebar .studio-nav-text, .studio-shell:has(.cad-workspace) .studio-sidebar .studio-brand-row { display: none; }
+.studio-shell:has(.cad-workspace) .studio-sidebar .studio-nav { padding: 10px 6px; }
+.studio-shell:has(.cad-workspace) .studio-nav-link { overflow: hidden; justify-content: flex-start; width: 46px; padding-left: 12px; white-space: nowrap; font-size: 0; }
+.studio-shell:has(.cad-workspace) .studio-nav-link .studio-nav-icon { min-width: 19px; }
+.studio-shell:has(.cad-workspace) .studio-sidebar .studio-sidebar-footer { overflow: hidden; padding: 5px; }
+.studio-shell:has(.cad-workspace) .studio-page-content { max-width: none; padding: 8px 12px 0; }
+@media (min-width: 1600px) { .cad-workspace { grid-template-columns: 232px minmax(300px,1fr) 310px; } .cad-left-closed { grid-template-columns: 0 minmax(300px,1fr) 310px; } .cad-right-closed { grid-template-columns: 232px minmax(300px,1fr) 0; } .cad-left-closed.cad-right-closed { grid-template-columns: 0 minmax(300px,1fr) 0; } }
+@media (max-width: 1050px) { .cad-workspace { grid-template-columns: 170px minmax(200px, 1fr) 250px; } .cad-left-closed { grid-template-columns: 0 minmax(200px,1fr) 250px; } .cad-right-closed { grid-template-columns: 170px minmax(200px,1fr) 0; } .cad-left-closed.cad-right-closed { grid-template-columns: 0 minmax(200px,1fr) 0; } .cad-wordmark small, .cad-project-name, .cad-disciplines > span, .cad-view-label { display: none; } .cad-projectbar { gap: 8px; } .cad-project-actions { gap: 3px; } .cad-project-actions > :not(button) { display: none; } .cad-statusbar { gap: 6px; } }
+@media (max-width: 760px) { .cad-workspace { height: calc(100dvh - 70px); min-height: 520px; grid-template-columns: 0 minmax(200px,1fr) 0; grid-template-rows: 42px 35px 58px minmax(350px,1fr) 32px; } .cad-explorer, .cad-inspector { position: absolute; top: 136px; bottom: 32px; z-index: 12; width: min(286px, 83vw); box-shadow: 0 8px 24px #0004; } .cad-explorer { left: 0; } .cad-inspector { right: 0; } .cad-left-closed .cad-explorer, .cad-right-closed .cad-inspector { display: none; } .cad-workspace { position: relative; } .cad-disciplines { padding: 0 3px; gap: 0; overflow-x: auto; } .cad-disciplines > button { padding: 0 9px; font-size: 10px; } .cad-wordmark { font-size: 9px; gap: 4px; } .cad-save-state { display: none; } .cad-project-actions > .cad-button { padding: 4px 6px; font-size: 9px; } .cad-statusbar > span:last-child, .cad-statusbar > label:nth-last-child(2) { display: none; } .cad-view-toolbar { gap: 0; } .cad-view-toolbar :is(button,select) { font-size: 9px; padding: 2px; } .studio-shell:has(.cad-workspace) .studio-sidebar { display: none; } .studio-shell:has(.cad-workspace) .studio-main { margin-left: 0; } .cad-viewport-note > span { max-width: 245px; } }
+@media (prefers-reduced-motion: reduce) { .cad-workspace *, .cad-workspace *::before, .cad-workspace *::after { animation: none !important; transition: none !important; } }
+@media (max-width: 1023px) { .studio-shell:has(.cad-workspace) .studio-shell-content { padding-left: 0; } .studio-shell:has(.cad-workspace) .studio-sidebar.is-open { display: flex; width: 264px; } .studio-shell:has(.cad-workspace) .studio-sidebar.is-open .studio-brand-row { display: flex; } .studio-shell:has(.cad-workspace) .studio-sidebar.is-open .studio-nav-link { width: auto; font-size: 12px; } .studio-shell:has(.cad-workspace) .studio-sidebar.is-open .studio-profile-text { display: block; } }
+@media (max-width: 760px) { .cad-explorer, .cad-inspector { grid-area: auto; top: 136px; } .cad-view-toolbar { overflow-x: auto; white-space: nowrap; } .cad-view-toolbar > * { flex-shrink: 0; } }
