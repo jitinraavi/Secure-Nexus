@@ -1,3 +1,4 @@
+import { routeParam } from "../routeParams.js";
 import { Router } from "express";
 import { logAudit } from "../audit.js";
 import { deriveVaultKey, encryptAesGcm, randomId } from "../crypto.js";
@@ -76,7 +77,7 @@ router.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     const row = (await db
       .prepare("SELECT * FROM secrets WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id)) as
+      .get(routeParam(req, "id"), req.user!.id)) as
       | { id: string; name: string; iv: string; tag: string; ciphertext: string; created_at: number }
       | undefined;
     if (!row) {
@@ -107,12 +108,12 @@ router.delete(
   asyncHandler(async (req: AuthedRequest, res) => {
     const row = (await db
       .prepare("SELECT name FROM secrets WHERE id = ? AND user_id = ?")
-      .get(req.params.id, req.user!.id)) as { name: string } | undefined;
+      .get(routeParam(req, "id"), req.user!.id)) as { name: string } | undefined;
     if (!row) {
       res.status(404).json({ error: "Secret not found" });
       return;
     }
-    (await db.prepare("DELETE FROM secrets WHERE id = ? AND user_id = ?").run(req.params.id, req.user!.id));
+    (await db.prepare("DELETE FROM secrets WHERE id = ? AND user_id = ?").run(routeParam(req, "id"), req.user!.id));
     (await logAudit(req.user!.id, "secret.deleted", { name: row.name }, req));
     res.json({ ok: true });
   }),
