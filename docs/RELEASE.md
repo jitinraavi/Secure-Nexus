@@ -89,6 +89,16 @@ must also supply matching Git metadata or the explicit
 `GROUNDWORK_RELEASE_COMMIT`/`GROUNDWORK_RELEASE_BRANCH` values. The current public
 repository requires no persistent GitHub credential in Vercel for these reads.
 
+Preview builds can start while GitHub Actions is still queued or running. The
+preview guard waits up to 30 minutes, polling only the matching push-CI workflow
+once every two minutes. It then rechecks the exact branch head, newest CI attempt
+and all three required jobs before building. Failed, cancelled, foreign or
+malformed evidence remains blocked. Production keeps the immediate strict guard
+and the existing post-CI deploy hook. Logs distinguish waiting for CI from an
+actual verification failure; a waiting preview does not need a manual redeploy.
+The bounded wait fits within Vercel's
+[45-minute build limit](https://vercel.com/docs/deployments/troubleshoot-a-build).
+
 The hook/build guard path is activated and the 1.1.1 exact-source deployment
 above passed. Main requires `release-gate` with branch protection. For a new
 environment, require matching hook/workflow/build evidence before describing

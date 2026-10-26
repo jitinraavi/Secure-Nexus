@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { approvedDeployHook, deployAfterCi, guardVercelBuild, vercelBuildTarget, DEPLOYMENT_PROJECT, DEPLOYMENT_REPOSITORY } from './deploy-after-ci.mjs';
+import { approvedDeployHook, deployAfterCi, guardVercelBuild, vercelBuildTarget, waitForPreviewCi, PREVIEW_CI_WAIT_MS, PREVIEW_CI_MAX_POLLS, DEPLOYMENT_PROJECT, DEPLOYMENT_REPOSITORY } from './deploy-after-ci.mjs';
 import { releaseReadiness, requestReleaseJson } from './release-readiness.mjs';
 
 const commit = 'a'.repeat(40), otherCommit = 'b'.repeat(40);
@@ -107,6 +107,91 @@ test('release evidence limits cover streamed response bodies after headers', asy
   assert.equal(cancelled, true);
   await assert.rejects(requestReleaseJson(async () => Response.json({ huge: 'a'.repeat(200) }), 'https://api.github.com/fixture', {}, 100), /limit/);
   await assert.rejects(releaseReadiness(environment(), async () => new Response('unavailable', { status: 503 })), /rejected/);
+});
+
+function previewFixture(sequence, { branchCommits = [commit], jobList = jobs() } = {}) {
+  const branch = 'codex/preview-fixture', calls = [], sleeps = [], progress = [];
+  let elapsed = 0, runReads = 0, branchReads = 0;
+  const request = async (url, init) => {
+    calls.push(String(url));
+    assert.equal(new Headers(init.headers).has('authorization'), false);
+    if (String(url).includes('/branches/')) return Response.json({ commit: { sha: branchCommits[Math.min(branchReads++, branchCommits.length - 1)] } });
+    if (String(url).includes('/jobs?')) return Response.json({ total_count: jobList.length, jobs: jobList });
+    const rows = sequence[Math.min(runReads++, sequence.length - 1)];
+    return Response.json({ workflow_runs: rows });
+  };
+  return { branch, calls, sleeps, progress, request,
+    target: { repository: DEPLOYMENT_REPOSITORY, commit, branch },
+    options: { now: () => elapsed, sleep: async ms => { sleeps.push(ms); elapsed += ms; }, onProgress: value => progress.push(value) },
+    run: update => run({ head_branch: branch, ...update }),
+    env: { VERCEL_ENV: 'preview', VERCEL_GIT_COMMIT_SHA: commit, VERCEL_GIT_COMMIT_REF: branch, GITHUB_TOKEN: 'must-not-leave-build' },
+  };
+}
+
+test('preview waits for CI registration and completion, then checks fresh jobs and branch evidence', async () => {
+  const branch = 'codex/preview-fixture', ready = run({ head_branch: branch });
+  const fixture = previewFixture([[], [run({ head_branch: branch, status: 'queued', conclusion: null })], [run({ head_branch: branch, status: 'in_progress', conclusion: null })], [ready]]);
+  const result = await guardVercelBuild(fixture.env, fixture.request, fixture.options);
+  assert.equal(result.buildPermitted, true);
+  assert.deepEqual(fixture.progress.map(item => item.status), ['not_registered', 'queued', 'in_progress']);
+  assert.equal(fixture.sleeps.length, 3);
+  assert.ok(fixture.sleeps.every(ms => ms >= 60_000));
+  assert.equal(fixture.calls.filter(url => url.includes('/jobs?')).length, 1);
+  assert.equal(fixture.calls.filter(url => url.includes('/branches/')).length, 3);
+  assert.equal(fixture.calls.length, 10, 'pending polls must not repeat the full five-request verification');
+});
+
+test('preview rejects failed or cancelled CI and malformed or foreign evidence without waiting', async () => {
+  const branch = 'codex/preview-fixture', ready = run({ head_branch: branch });
+  for (const rows of [
+    null, [null], [run({ head_branch: branch, id: 0 })],
+    [run({ head_branch: branch, head_repository: { full_name: 'foreign/repository' } })],
+    [run({ head_branch: branch, path: '.github/workflows/untrusted.yml' })],
+    [run({ head_branch: branch, status: 'unknown' })],
+    ...['failure', 'cancelled', 'timed_out', 'skipped'].map(conclusion => [run({ head_branch: branch, conclusion })]),
+    [ready, run({ head_branch: branch, id: 102, run_number: 6, conclusion: 'failure' })],
+  ]) {
+    const fixture = previewFixture([rows]);
+    await assert.rejects(guardVercelBuild(fixture.env, fixture.request, fixture.options));
+    assert.equal(fixture.sleeps.length, 0);
+    assert.equal(fixture.calls.some(url => url.includes('/jobs?')), false);
+  }
+});
+
+test('preview waits for the latest rerun and never uses an earlier passing attempt', async () => {
+  const branch = 'codex/preview-fixture', first = run({ head_branch: branch });
+  const pending = run({ head_branch: branch, run_attempt: 2, status: 'in_progress', conclusion: null });
+  const fixture = previewFixture([[first, pending], [run({ ...pending, status: 'completed', conclusion: 'success' })]]);
+  const result = await waitForPreviewCi(fixture.target, fixture.request, fixture.options);
+  assert.equal(result.polls, 2);
+  assert.equal(fixture.sleeps.length, 1);
+});
+
+test('preview remains bounded when CI never registers or completes', async () => {
+  for (const rows of [[], [run({ head_branch: 'codex/preview-fixture', status: 'in_progress', conclusion: null })]]) {
+    const fixture = previewFixture([rows]);
+    await assert.rejects(guardVercelBuild(fixture.env, fixture.request, fixture.options), /within 30 minutes/);
+    assert.ok(fixture.sleeps.every(ms => ms >= 60_000));
+    assert.equal(fixture.sleeps.reduce((total, ms) => total + ms, 0), PREVIEW_CI_WAIT_MS);
+    assert.ok(fixture.calls.length <= PREVIEW_CI_MAX_POLLS + 1);
+  }
+});
+
+test('preview rejects a stale branch before waiting and rechecks source and required jobs after CI', async () => {
+  const ready = run({ head_branch: 'codex/preview-fixture' });
+  for (const update of [
+    { branchCommits: [otherCommit] },
+    { branchCommits: [commit, otherCommit] },
+    { branchCommits: [commit, commit, otherCommit] },
+    { jobList: jobs({ verify: { conclusion: 'failure' } }) },
+    { jobList: jobs({ 'backup-drill': { head_sha: otherCommit } }) },
+  ]) {
+    const fixture = previewFixture([[ready]], update);
+    await assert.rejects(guardVercelBuild(fixture.env, fixture.request, fixture.options));
+    assert.equal(fixture.sleeps.length, 0);
+  }
+  const fixture = previewFixture([[ready]]);
+  await assert.rejects(waitForPreviewCi(fixture.target, async () => { throw new Error('sensitive-network-details'); }, fixture.options), error => /evidence is unavailable/.test(error.message) && !error.message.includes('sensitive'));
 });
 
 test('deployment workflow uses only completed successful main CI and keeps the hook out of dependency steps', async () => {
