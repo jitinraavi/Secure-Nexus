@@ -1,9 +1,60 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { releaseReadiness, requestReleaseJson, validateRelease } from './release-readiness.mjs';
+import { latestGate, releaseReadiness, requestReleaseJson, validateRelease } from './release-readiness.mjs';
 
 export const DEPLOYMENT_REPOSITORY = 'jitinraavi/Secure-Nexus';
 export const DEPLOYMENT_PROJECT = 'prj_1blxFgztH32acCvngFaCVr4MqdGJ';
+export const PREVIEW_CI_WAIT_MS = 30 * 60_000;
+export const PREVIEW_CI_POLL_MS = 2 * 60_000;
+export const PREVIEW_CI_MAX_POLLS = 16;
+
+export class PreviewCiWaitError extends Error {
+  constructor(message) { super(message); this.name = 'PreviewCiWaitError'; }
+}
+
+/** Git starts previews before Actions finishes. Wait on one bounded public
+ * endpoint, then perform the existing complete release verification afresh.
+ * No credential is read from the Vercel environment or forwarded to GitHub. */
+export async function waitForPreviewCi(target, request = fetch, {
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  now = Date.now,
+  onProgress = () => undefined,
+} = {}) {
+  const started = now(), deadline = started + PREVIEW_CI_WAIT_MS;
+  const headers = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'Groundwork-preview-gate' };
+  async function get(path) {
+    try { return await requestReleaseJson(request, `https://api.github.com/repos/${target.repository}/${path}`, { headers }); }
+    catch { throw new PreviewCiWaitError('Preview CI evidence is unavailable; deployment remains blocked.'); }
+  }
+  const branch = await get(`branches/${encodeURIComponent(target.branch)}`);
+  if (branch.commit?.sha !== target.commit) throw new PreviewCiWaitError('Preview commit is no longer the current branch head; deployment remains blocked.');
+  const pending = new Set(['queued', 'in_progress', 'requested', 'waiting', 'pending']);
+  const paths = new Set(['.github/workflows/ci.yml', `.github/workflows/ci.yml@${target.branch}`, `.github/workflows/ci.yml@refs/heads/${target.branch}`]);
+  for (let attempt = 1; attempt <= PREVIEW_CI_MAX_POLLS; attempt += 1) {
+    if (attempt > 1 && now() >= deadline) break;
+    const evidence = await get(`actions/workflows/ci.yml/runs?head_sha=${target.commit}&event=push&per_page=100`);
+    if (!Array.isArray(evidence.workflow_runs) || evidence.workflow_runs.length > 100) throw new PreviewCiWaitError('Preview CI evidence is malformed; deployment remains blocked.');
+    for (const item of evidence.workflow_runs) {
+      if (!item || !Number.isSafeInteger(item.id) || item.id < 1 || !Number.isSafeInteger(item.run_number) || item.run_number < 1 ||
+          !Number.isSafeInteger(item.run_attempt) || item.run_attempt < 1 || !/^[a-f0-9]{40}$/.test(item.head_sha || '') ||
+          typeof item.head_branch !== 'string' || item.event !== 'push' || !paths.has(item.path) ||
+          item.repository?.full_name?.toLowerCase() !== target.repository.toLowerCase() ||
+          item.head_repository?.full_name?.toLowerCase() !== target.repository.toLowerCase() ||
+          !(pending.has(item.status) || item.status === 'completed')) throw new PreviewCiWaitError('Preview CI evidence does not match the trusted workflow; deployment remains blocked.');
+    }
+    const run = latestGate(evidence.workflow_runs, target.commit, target.branch);
+    if (run?.status === 'completed') {
+      if (run.conclusion !== 'success') throw new PreviewCiWaitError('Latest preview CI did not pass; deployment remains blocked.');
+      return { polls: attempt, waitedMs: Math.max(0, now() - started) };
+    }
+    const remaining = deadline - now();
+    if (attempt === PREVIEW_CI_MAX_POLLS || remaining < 60_000) break;
+    const waitMs = Math.min(PREVIEW_CI_POLL_MS, remaining);
+    onProgress({ status: run?.status || 'not_registered', attempt, waitMs });
+    await sleep(waitMs);
+  }
+  throw new PreviewCiWaitError('Preview CI did not finish within 30 minutes; deployment remains blocked.');
+}
 
 export function approvedDeployHook(value) {
   let hook;
@@ -25,8 +76,9 @@ export function vercelBuildTarget(env) {
 /** Vercel executes this before building Git-hook or CLI deployments. Preview
  * commits require successful CI for their own branch; production requires main.
  * Public GitHub evidence needs no persistent Vercel-side GitHub credential. */
-export async function guardVercelBuild(env = process.env, request = fetch) {
+export async function guardVercelBuild(env = process.env, request = fetch, waitOptions = {}) {
   const target = vercelBuildTarget(env);
+  if (env.VERCEL_ENV === 'preview') await waitForPreviewCi(target, request, waitOptions);
   const evidence = await releaseReadiness({ GITHUB_REPOSITORY: target.repository, RELEASE_COMMIT: target.commit, RELEASE_BRANCH: target.branch }, request);
   return { ...evidence, environment: env.VERCEL_ENV, buildPermitted: true };
 }
@@ -47,7 +99,7 @@ export async function deployAfterCi(env = process.env, request = fetch, { checkO
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
-  const action = args.length === 1 && args[0] === '--build-guard' ? guardVercelBuild : args.length === 1 && args[0] === '--check' ? (env => deployAfterCi(env, fetch, { checkOnly: true })) : args.length === 0 ? deployAfterCi : null;
+  const action = args.length === 1 && args[0] === '--build-guard' ? (env => guardVercelBuild(env, fetch, { onProgress: ({ status }) => console.log(`Preview CI ${status}; waiting for the exact commit before building (up to 30 minutes).`) })) : args.length === 1 && args[0] === '--check' ? (env => deployAfterCi(env, fetch, { checkOnly: true })) : args.length === 0 ? deployAfterCi : null;
   if (!action) { console.error('Use --build-guard, --check, or no arguments for the authorized CI hook trigger.'); process.exitCode = 1; }
-  else action().then(result => console.log(JSON.stringify(result))).catch(() => { console.error('Deployment gate refused: exact current branch commit, latest successful CI, required verification jobs and configured target are required. Hook failures require inspection before retry.'); process.exitCode = 1; });
+  else action().then(result => console.log(JSON.stringify(result))).catch(error => { console.error(error instanceof PreviewCiWaitError ? error.message : 'Deployment gate refused: exact current branch commit, latest successful CI, required verification jobs and configured target are required. Hook failures require inspection before retry.'); process.exitCode = 1; });
 }
