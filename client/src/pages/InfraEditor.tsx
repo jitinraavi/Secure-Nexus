@@ -100,6 +100,7 @@ interface InfraEditorProps {
   kind: InfraKind;
   infra: InfraDesign;
   onChange: (infra: InfraDesign) => void;
+  initialStep?: StepId;
   projectName?: string;
   design?: import("../types").Design;
   onVisualizationChange?: (design: import("../types").Design) => void;
@@ -149,9 +150,9 @@ function Num({
   );
 }
 
-export function InfraEditor({ kind, infra, onChange, projectName, design, onVisualizationChange }: InfraEditorProps) {
+export function InfraEditor({ kind, infra, onChange, projectName, design, onVisualizationChange, initialStep }: InfraEditorProps) {
   const toast = useToast();
-  const [step, setStep] = useState<StepId>("location");
+  const [step, setStep] = useState<StepId>(initialStep ?? "location");
   const [facilityKind, setFacilityKind] = useState(FACILITY_OPTIONS[kind][0].kind);
   const [activeTool, setActiveTool] = useState<CadTool>("select");
   const [layersOpen, setLayersOpen] = useState(false);

@@ -12,12 +12,14 @@ import { buildRoomParts, buildCurtainParts } from "./Canvas3D";
 import { buildFurniture } from "../lib/catalog";
 import { buildInfraScene } from "../lib/infra";
 
+import type { CadView } from "../lib/cadWorkspaceContext";
+
 export interface CadViewportApi {
   setDragValue(value: number): void;
   commitDrag(): void;
   cancelDrag(): void;
   fit(selection?: boolean): void;
-  setView(view: "top" | "front" | "right" | "iso"): void;
+  setView(view: CadView): void;
   setProjection(projection: "perspective" | "orthographic"): void;
   exportGlb(): Promise<Blob>;
 }
@@ -226,7 +228,7 @@ export function CadViewport(props: Props) {
     const cancel=()=>endDrag(false),keyDown=(event:KeyboardEvent)=>{if(event.key==="Escape"){endDrag(false);}else if(event.key==="Enter"&&drag&&!(event.target instanceof HTMLInputElement)){event.preventDefault();endDrag(true);}};
     const suppressContext=(event:Event)=>event.preventDefault();
     function fit(selection=false){const id=latest.current.selectedId,entry=id?(entries.get(id)??routeEntries.get(id)):undefined;let box:THREE.Box3;if(selection&&entry)box=new THREE.Box3().setFromObject(entry.object);else{box=new THREE.Box3().setFromObject(geometry);if(box.isEmpty())box.setFromObject(context);}if(box.isEmpty())box.set(new THREE.Vector3(-4,0,-4),new THREE.Vector3(4,3,4));const size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3()),radius=Math.max(size.length()/2,.5);let direction=camera.position.clone().sub(controls.target).normalize();if(!direction.lengthSq())direction=new THREE.Vector3(1,1,1).normalize();controls.target.copy(center);camera.position.copy(center).addScaledVector(direction,radius/Math.sin(Math.PI/8)*1.15);orthoHalf=radius*1.3;resize();camera.lookAt(center);controls.update();redraw();}
-    function setView(view:"top"|"front"|"right"|"iso"){const distance=Math.max(camera.position.distanceTo(controls.target),1),direction=view==="top"?new THREE.Vector3(0,1,.00001):view==="front"?new THREE.Vector3(0,0,1):view==="right"?new THREE.Vector3(1,0,0):new THREE.Vector3(1,.85,1).normalize();camera.up.set(0,1,0);if(view==="top")camera.up.set(0,0,-1);camera.position.copy(controls.target).addScaledVector(direction,distance);camera.lookAt(controls.target);controls.update();redraw();}
+    function setView(view:CadView){endDrag(false);const distance=Math.max(camera.position.distanceTo(controls.target),1);const directions:Record<CadView,[number,number,number]>={top:[0,1,.00001],bottom:[0,-1,.00001],front:[0,0,1],back:[0,0,-1],left:[-1,0,0],right:[1,0,0],iso:[1,.85,1]};const direction=new THREE.Vector3(...directions[view]).normalize();camera.up.set(0,1,0);if(view==="top")camera.up.set(0,0,-1);if(view==="bottom")camera.up.set(0,0,1);camera.position.copy(controls.target).addScaledVector(direction,distance);camera.lookAt(controls.target);controls.update();redraw();}
     function setProjection(projection:"perspective"|"orthographic"){const next=projection==="orthographic"?orthographic:perspective;if(camera===next)return;const previous=camera,target=controls.target.clone(),distance=previous.position.distanceTo(target);if(next instanceof THREE.OrthographicCamera)orthoHalf=Math.max(.05,Math.tan(perspective.fov*Math.PI/360)*distance);next.position.copy(previous.position);next.quaternion.copy(previous.quaternion);next.up.copy(previous.up);controls.removeEventListener("change",redraw);controls.dispose();camera=next;controls=new OrbitControls(camera,renderer.domElement);controls.target.copy(target);controls.enableDamping=false;controls.mouseButtons={LEFT:null as unknown as THREE.MOUSE,MIDDLE:THREE.MOUSE.PAN,RIGHT:THREE.MOUSE.ROTATE};controls.touches={ONE:null as unknown as THREE.TOUCH,TWO:THREE.TOUCH.DOLLY_PAN};controls.addEventListener("change",redraw);resize();controls.update();redraw();}
     function resize(){width=Math.max(host!.clientWidth,1);height=Math.max(host!.clientHeight,1);renderer.setSize(width,height,false);perspective.aspect=width/height;perspective.updateProjectionMatrix();orthographic.left=-orthoHalf*width/height;orthographic.right=orthoHalf*width/height;orthographic.top=orthoHalf;orthographic.bottom=-orthoHalf;orthographic.updateProjectionMatrix();redraw();}
     const api:CadViewportApi={cancelDrag:()=>endDrag(false),commitDrag:()=>endDrag(true),fit,setView,setProjection,

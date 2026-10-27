@@ -4,6 +4,43 @@ import { defaultDesign, type CadAnalysisRecord, type Design, type DraftElement }
 import { CAD_MIN_SIZE_M, axisDragParameter, cadGeometryFingerprint, cadKind, cadLevels, cadObjects, cadQuantities, createCadObject, executeCadCommand, localCadAxis, resizeDraft, resolveCadSnap, setCadObjects } from "../src/lib/cadModel";
 import { resolveDraft } from "../src/lib/parametric";
 import { addCadNetworkElement, cadMep as networkMep } from "../src/lib/cadNetworks";
+import { workingPlaneElevation, systemForDiscipline, systemsForDiscipline, starterFrameCommands } from "../src/lib/cadWorkspaceContext";
+
+test("working plane follows nonzero and changed levels without retaining another floor's offset", () => {
+  const floor = { id: "first", name: "First floor", elevation: 10, floorHeight: 3 };
+  assert.equal(workingPlaneElevation(floor, null), 10);
+  assert.equal(workingPlaneElevation(floor, { levelId: "first", offset: 1.2 }), 11.2);
+  assert.equal(workingPlaneElevation({ ...floor, elevation: 13 }, { levelId: "first", offset: 1.2 }), 14.2);
+  assert.equal(workingPlaneElevation({ ...floor, id: "second", elevation: -3 }, { levelId: "first", offset: 1.2 }), -3);
+  assert.equal(workingPlaneElevation(floor, { levelId: "first", offset: NaN }), 10);
+});
+
+test("discipline tools cannot silently author a different discipline's system", () => {
+  assert.equal(systemForDiscipline("architecture", "cold-water"), undefined);
+  assert.equal(systemForDiscipline("structure", "electrical"), undefined);
+  assert.equal(systemForDiscipline("electrical", "hot-water"), "electrical");
+  assert.equal(systemForDiscipline("plumbing", "electrical"), "cold-water");
+  assert.equal(systemForDiscipline("plumbing", "hot-water"), "hot-water");
+  assert.equal(systemForDiscipline("coordination", "hvac"), "hvac");
+  assert.ok(!systemsForDiscipline("plumbing").includes("electrical"));
+});
+
+test("starter frame is an atomic floor-hosted command at the chosen working plane", () => {
+  const floor = { id: "upper", name: "Upper floor", elevation: 10, floorHeight: 3 };
+  const initial = { ...defaultDesign(), cad: { version: 1 as const, revision: 0, levels: [floor] } };
+  const changed = executeCadCommand(initial, { type: "batch", commands: starterFrameCommands(floor, 10.5), expectedRevision: 0 });
+  assert.equal(changed.cad?.revision, 1);
+  const members = cadObjects(changed);
+  assert.equal(members.length, 8);
+  assert.equal(cadObjects(initial).length, 0);
+  for (const member of members) assert.equal(member.family?.levelId, "upper");
+  const column = members.find(item => item.kind === "column")!;
+  assert.equal(resolveDraft(column, [floor]).elevation, 10.5);
+  const slab = members.find(item => item.kind === "slab")!;
+  assert.ok(Math.abs(resolveDraft(slab, [floor]).elevation + resolveDraft(slab, [floor]).height - 10.5) < 1e-9);
+  const saved = JSON.parse(JSON.stringify(changed)) as Design;
+  assert.deepEqual(cadQuantities(saved), cadQuantities(changed));
+});
 
 const close = (actual: number, expected: number, tolerance = 1e-9) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
 const project = (...objects: DraftElement[]): Design => ({ ...defaultDesign(), drafts: objects });

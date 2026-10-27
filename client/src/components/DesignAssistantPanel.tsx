@@ -10,7 +10,7 @@ export interface AssistantMessage {
 
 export function DesignAssistantPanel({ messages, onCommand, plan, busy, onPreview, previews, onApply }: { messages: AssistantMessage[]; onCommand: (command: string) => void; plan?: AssistantPlan | null; busy?: boolean; onPreview?: () => void; previews?: AssistantActionPreview[]; onApply?: () => void }) {
   const [command, setCommand] = useState("");
-  const [minimized, setMinimized] = useState(false);
+  const [minimized, setMinimized] = useState(true);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const submit = () => {
