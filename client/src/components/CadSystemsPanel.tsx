@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Design, MepElement } from "../types";
 import { CAD_DEVICE_LABELS, CAD_SYSTEM_LABELS, addCadNetworkElement, assessCadCircuit, assessCadGravity, assessCadWater, cadHostFingerprint, cadMep, cadNetworkFingerprint, cadNetworkIssues, cadNetworkQuantities, cadNetworkState, cadPortPoint, cadPorts, cadPortsCompatible, cadRouteLength, connectCadPorts, disconnectCadPorts, insertCadRouteBend, removeCadNetworkElement, removeCadRouteBend, setCadMep, traceCadNetwork, updateCadRoutePoint, type CadCircuit, type CadDeviceType, type CadEquipment, type CadNetworkCalculation, type CadSystem } from "../lib/cadNetworks";
+import { systemsForDiscipline } from "../lib/cadWorkspaceContext";
 import { download } from "../lib/download";
 
-interface Props { design: Design; onCommand: (next: Design, label: string) => void; selectedId: string | null; onSelect: (id: string | null) => void; discipline: string; levelId?: string; elevation: number; readOnly: boolean; onTrace?: (ids: string[]) => void; onSystemChange?: (system: string) => void; }
+interface Props { design: Design; onCommand: (next: Design, label: string) => void; selectedId: string | null; onSelect: (id: string | null) => void; discipline: string; levelId?: string; levelName?: string; system: CadSystem; elevation: number; readOnly: boolean; onTrace?: (ids: string[]) => void; onSystemChange: (system: CadSystem) => void; }
 const electricalTypes: CadDeviceType[] = ["panel", "light", "switch", "socket", "equipment", "junction", "cable", "conduit", "tray"];
 const plumbingTypes: CadDeviceType[] = ["fixture", "source", "outlet", "valve", "junction", "bend", "reducer", "access", "pipe", "riser"];
 const routeTypes = ["cable", "conduit", "tray", "pipe", "riser"];
 const conductorTemplate = JSON.stringify({ voltageV: null, phases: null, demandFactor: null, powerFactor: null, conductorResistanceOhmPerM: null, conductorReactanceOhmPerM: null, sourceResistanceOhm: null, sourceReactanceOhm: null, earthLoopResistanceOhm: null, earthLoopReactanceOhm: null, minimumVoltageFactor: null, maximumVoltageFactor: null, cableAmpacityA: null, cableDeratingFactor: null, breakerRatingA: null, breakerBreakingCapacityA: null, instantaneousPickupA: null, requiredDisconnectSeconds: null, suppliedTripSecondsAtMinimumFault: null, suppliedLetThroughA2sAtMaximumFault: null, conductorAreaMm2: null, adiabaticK: null, maximumVoltageDropPct: null }, null, 2);
 const emptyNumeric = (value: string) => value.trim() === "" ? undefined : Number(value);
 
-export function CadSystemsPanel({ design, onCommand, selectedId, onSelect, discipline, levelId, elevation, readOnly, onTrace, onSystemChange }: Props) {
-  const [system, setSystem] = useState<CadSystem>(discipline === "electrical" ? "electrical" : "cold-water");
-  const [type, setType] = useState<CadDeviceType>(discipline === "electrical" ? "panel" : "fixture");
+export function CadSystemsPanel({ design, onCommand, selectedId, onSelect, discipline, levelId, levelName, system, elevation, readOnly, onTrace, onSystemChange }: Props) {
+  const [type, setType] = useState<CadDeviceType>(system === "electrical" ? "panel" : "fixture");
   const [name, setName] = useState("");
   const [x, setX] = useState("0"), [z, setZ] = useState("0"), [y, setY] = useState(String(elevation));
   const [endX, setEndX] = useState("2"), [endZ, setEndZ] = useState("0"), [endY, setEndY] = useState(String(elevation));
@@ -38,11 +38,10 @@ export function CadSystemsPanel({ design, onCommand, selectedId, onSelect, disci
   const networkFingerprint = cadNetworkFingerprint(design);
   const labels = new Map(mep.elements.map(item => [item.id, item.name]));
   const calculations = state.calculations.filter(item => system === "electrical" ? item.scope === "circuit" : item.targetId === system);
-  useEffect(() => { if (discipline === "electrical") { setSystem("electrical"); setType("panel"); } else if (discipline === "plumbing") { setSystem("cold-water"); setType("fixture"); } }, [discipline]);
+  useEffect(() => { setType(system === "electrical" ? "panel" : "fixture"); setFromPort(""); setToPort(""); setTrace([]); }, [system]);
   useEffect(() => { setY(String(elevation)); setEndY(String(elevation)); }, [elevation]);
   useEffect(() => { setFromPort(selectedPorts[0]?.id ?? ""); setToPort(""); setTrace([]); }, [selectedId]);
   useEffect(() => { setInputJson(circuit ? JSON.stringify(circuit.inputs, null, 2) : conductorTemplate); }, [circuitId]);
-  useEffect(() => { onSystemChange?.(system); }, [system, onSystemChange]);
   const act = (work: () => Design, label: string) => { if (readOnly) return; try { const next = work(); onCommand(next, label); setError(""); } catch (e) { setError(e instanceof Error ? e.message : "Network operation rejected"); } };
   const patchEquipment = (patch: Partial<CadEquipment>) => {
     if (!equipment) return;
@@ -59,13 +58,13 @@ export function CadSystemsPanel({ design, onCommand, selectedId, onSelect, disci
   const engineeringNumber = (label: string, value: number | undefined, update: (value: number | undefined) => void, unit: string) => <label className="cad-field">{label}<span>{unit}</span><input aria-label={`${label} ${unit}`} key={`${selectedId}-${label}-${value}`} type="number" step="any" defaultValue={value ?? ""} placeholder="Required engineering input" disabled={readOnly} onBlur={e => { const next = emptyNumeric(e.target.value); if (next === undefined || Number.isFinite(next)) update(next); }} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} /></label>;
   const filtered = useMemo(() => state.equipment.filter(item => item.system === system), [state.equipment, system]);
   return <div className="cad-system-authoring">
-    <section className="cad-group"><div className="cad-section-title"><h3>Active system</h3><span className="cad-validity">{CAD_SYSTEM_LABELS[system]}</span></div><label className="cad-field">System<select value={system} onChange={e => { const next = e.target.value as CadSystem; onSelect(null); onTrace?.([]); setSystem(next); setType(next === "electrical" ? "panel" : "fixture"); }}>
-      {Object.entries(CAD_SYSTEM_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-    </select></label><p className="cad-muted">Floor {levelId?.slice(0, 8) ?? "Ground"} · working elevation {elevation.toFixed(3)} m. Coordinates share the architectural model. Existing HVAC elements remain in coordination quantities.</p></section>
-    <section className="cad-group"><h3>Place device / route</h3><label className="cad-field">Object type<select value={type} onChange={e => setType(e.target.value as CadDeviceType)} disabled={readOnly}>{(system === "electrical" ? electricalTypes : plumbingTypes).map(id => <option value={id} key={id}>{CAD_DEVICE_LABELS[id]}</option>)}</select></label><label className="cad-field">Name<input value={name} placeholder={CAD_DEVICE_LABELS[type]} onChange={e => setName(e.target.value)} disabled={readOnly} /></label>
+    <section className="cad-group"><div className="cad-section-title"><h3>Active system</h3><span className="cad-validity">{CAD_SYSTEM_LABELS[system]}</span></div><label className="cad-field">System<select value={system} onChange={e => { const next = e.target.value as CadSystem; onSelect(null); onTrace?.([]); onSystemChange(next); setType(next === "electrical" ? "panel" : "fixture"); }}>
+      {systemsForDiscipline(discipline).map(id => [id, CAD_SYSTEM_LABELS[id]] as const).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+    </select></label><p className="cad-muted">Floor {levelName ?? "Ground"} · working elevation {elevation.toFixed(3)} m. Coordinates share the architectural model. Existing HVAC elements remain in coordination quantities.</p></section>
+    {system !== "hvac" && <section className="cad-group"><h3>Place device / route</h3><label className="cad-field">Object type<select value={type} onChange={e => setType(e.target.value as CadDeviceType)} disabled={readOnly}>{(system === "electrical" ? electricalTypes : plumbingTypes).map(id => <option value={id} key={id}>{CAD_DEVICE_LABELS[id]}</option>)}</select></label><label className="cad-field">Name<input value={name} placeholder={CAD_DEVICE_LABELS[type]} onChange={e => setName(e.target.value)} disabled={readOnly} /></label>
       <div className="cad-field-pair">{pointInput("Start X", x, setX)}{pointInput("Start Z", z, setZ)}</div>{pointInput(routeTypes.includes(type) ? "Start center elevation" : "Mounting elevation", y, setY)}
       {routeTypes.includes(type) ? <><div className="cad-field-pair">{pointInput("End X", endX, setEndX)}{pointInput("End Z", endZ, setEndZ)}</div>{pointInput("End center elevation", endY, setEndY)}</> : <label className="cad-field">Mounting orientation<span>°</span><input type="number" step="any" value={rotation} disabled={readOnly} onChange={e => setRotation(e.target.value)} /></label>}
-      <label className="cad-field">Nominal diameter<span>mm</span><input type="number" min="1" max="5000" value={diameter} onChange={e => setDiameter(e.target.value)} disabled={readOnly} /></label><button className="cad-button cad-primary" onClick={place} disabled={readOnly}>Place {CAD_DEVICE_LABELS[type]}</button><p className="cad-muted">Placement creates geometry and compatible ports. Crossing or adjacent routes remain disconnected until explicitly connected.</p></section>
+      <label className="cad-field">Nominal diameter<span>mm</span><input type="number" min="1" max="5000" value={diameter} onChange={e => setDiameter(e.target.value)} disabled={readOnly} /></label><button className="cad-button cad-primary" onClick={place} disabled={readOnly}>Place {CAD_DEVICE_LABELS[type]}</button><p className="cad-muted">Placement creates geometry and compatible ports. Crossing or adjacent routes remain disconnected until explicitly connected.</p></section>}
     <section className="cad-group"><h3>System explorer · {filtered.length}</h3>{filtered.map(item => <button key={item.elementId} className={`cad-button ${selectedId === item.elementId ? "cad-primary" : ""}`} style={{ margin: "3px 4px 3px 0" }} onClick={() => onSelect(item.elementId)}>{labels.get(item.elementId) ?? item.type}</button>)}{!filtered.length && <p className="cad-muted">No authored elements in this system.</p>}</section>
     {element && <section className="cad-group"><div className="cad-section-title"><h3>{element.name}</h3><span className="cad-muted">{cadRouteLength(element).toFixed(3)} m</span></div>{!equipment && <p className="cad-issue">Legacy MEP geometry has no authored typed ports. Existing tools remain available; it is not silently connected to this network.</p>}
       <label className="cad-field">Element name<input key={`${element.id}-name`} defaultValue={element.name} disabled={readOnly} onBlur={e => patchElement({ name: e.target.value })} /></label>

@@ -74,10 +74,11 @@ export function CadToolPalette({
           type="button"
           onClick={() => onChange(tool.id)}
           title={`${tool.label} (${tool.shortcut})`}
+          aria-pressed={active === tool.id}
           className={cn(
-            "flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition",
+            "flex shrink-0 items-center gap-1.5 rounded-sm border px-2.5 py-1.5 text-xs font-semibold transition",
             active === tool.id
-              ? "border-[#d6a84a]/60 bg-[#d6a84a] text-[#17130b]"
+              ? "border-[var(--studio-accent)] bg-[var(--studio-accent)] text-[var(--studio-bg)]"
               : "border-slate-700/70 text-slate-400 hover:border-slate-500 hover:bg-white/[0.05] hover:text-slate-100",
           )}
         >

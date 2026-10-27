@@ -97,6 +97,7 @@ interface CommunityEditorProps {
   branch: BuildingBranch;
   community: CommunityDesign;
   onChange: (c: CommunityDesign) => void;
+  initialStep?: StepId;
   projectName?: string;
   design?: import("../types").Design;
   onVisualizationChange?: (design: import("../types").Design) => void;
@@ -204,9 +205,9 @@ function UndergroundForm({
   );
 }
 
-export function CommunityEditor({ branch, community, onChange, projectName, design, onVisualizationChange }: CommunityEditorProps) {
+export function CommunityEditor({ branch, community, onChange, projectName, design, onVisualizationChange, initialStep }: CommunityEditorProps) {
   const toast = useToast();
-  const [step, setStep] = useState<StepId>("land");
+  const [step, setStep] = useState<StepId>(initialStep ?? "land");
   const [focusMode, setFocusMode] = useState(false);
   const [focusPanelOpen, setFocusPanelOpen] = useState(false);
   const [activeTool, setActiveTool] = useState<CadTool>("select");

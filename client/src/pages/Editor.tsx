@@ -82,6 +82,7 @@ export function Editor() {
   const [recoveryWarning, setRecoveryWarning] = useState("");
   const [projectRole, setProjectRole] = useState<"owner" | "editor" | "viewer">("viewer");
   const [cadWorkspaceActive, setCadWorkspaceActive] = useState(true);
+  const [moduleTarget, setModuleTarget] = useState<"drafting" | undefined>();
 
   const [name, setName] = useState("");
   const [design, setDesign] = useState<Design>(defaultDesign);
@@ -657,7 +658,7 @@ export function Editor() {
   if (loaded && cadWorkspaceActive) {
     return <Suspense fallback={<div className="flex min-h-[65vh] items-center justify-center"><Spinner className="h-7 w-7" /></div>}>
       <CadWorkspace key={id} design={design} onChange={changeDesign} projectName={name} readOnly={projectRole === "viewer"} saving={saving} saved={!pendingDraft} remoteRevision={remoteRevision}
-        onSave={() => scheduleSave(design)} onLegacy={() => setCadWorkspaceActive(false)}
+        onSave={() => scheduleSave(design)} draftingAvailable={Boolean(communityActive || infraActive)} onLegacy={target => { setModuleTarget(target); setCadWorkspaceActive(false); }}
         projectControls={<><CollaborationStatus projectId={id!} onRemoteEvent={onCollaborationEvent} /><ProjectHistory projectId={id!} currentDesign={design} currentRevision={revisionRef.current} onRestored={onHistoryRestore} />{recoveryControls}<Suspense fallback={null}><ProjectEngineeringBasisControl value={design.engineeringBasis} disabled={projectRole === "viewer"} onChange={engineeringBasis => changeDesign({ ...design, engineeringBasis })} /></Suspense></>} />
     </Suspense>;
   }
@@ -689,6 +690,7 @@ export function Editor() {
         </div>
         <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner className="h-6 w-6 text-amber-300" /></div>}>
         <CommunityEditor
+          initialStep={moduleTarget === "drafting" ? "drafting" : undefined}
            branch={residentialProject ? "residential" : "commercial"}
           community={community}
            projectName={name}
@@ -735,6 +737,7 @@ export function Editor() {
         </div>
         <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner className="h-6 w-6 text-amber-300" /></div>}>
         <InfraEditor
+          initialStep={moduleTarget === "drafting" ? "design" : undefined}
           kind={infraKind}
           infra={design.infra}
           projectName={name}
