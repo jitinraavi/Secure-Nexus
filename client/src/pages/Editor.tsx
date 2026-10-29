@@ -87,6 +87,7 @@ export function Editor() {
   const [name, setName] = useState("");
   const [design, setDesign] = useState<Design>(defaultDesign);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [api, setApi] = useState<EditorApi | null>(null);
   const [tourPlaying, setTourPlaying] = useState(false);
@@ -150,7 +151,7 @@ export function Editor() {
     const request = ++loadGeneration.current, currentScope = scopeRef.current;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     editGeneration.current++;
-    setLoaded(false); setMergeOpen(false); setSaving(false);
+    setLoaded(false); setLoadError(""); setMergeOpen(false); setSaving(false);
     try {
       const project = await getProject(id!);
       if (request !== loadGeneration.current || currentScope !== scopeRef.current || user && !localWriteAllowed(user.id, write)) return;
@@ -185,7 +186,10 @@ export function Editor() {
           return;
         }
       }
-      if (request === loadGeneration.current && currentScope === scopeRef.current) toast.push({ title: "Could not open project", description: err instanceof Error ? err.message : undefined, tone: "error" });
+      if (request === loadGeneration.current && currentScope === scopeRef.current) {
+        setLoadError(err instanceof Error ? err.message : "The project could not be opened.");
+        toast.push({ title: "Could not open project", description: err instanceof Error ? err.message : undefined, tone: "error" });
+      }
     }
   }, [id, toast, user?.id]);
 
@@ -655,7 +659,9 @@ export function Editor() {
   const infraKind = isInfraType(model) ? (model as InfraKind) : null;
   const infraActive = loaded && infraKind && design.infra?.kind === infraKind;
 
-  if (loaded && cadWorkspaceActive) {
+  if (!loaded) return <div className="flex min-h-[65vh] flex-col items-center justify-center gap-4 p-6" role="status" aria-live="polite">{loadError ? <><h1 className="text-xl font-semibold">Project unavailable</h1><p role="alert">{loadError}</p><Button onClick={() => void load()}>Retry opening project</Button></> : <><Spinner className="h-7 w-7" /><p>Opening your project…</p></>}</div>;
+
+  if (cadWorkspaceActive) {
     return <Suspense fallback={<div className="flex min-h-[65vh] items-center justify-center"><Spinner className="h-7 w-7" /></div>}>
       <CadWorkspace key={id} design={design} onChange={changeDesign} projectName={name} readOnly={projectRole === "viewer"} saving={saving} saved={!pendingDraft} remoteRevision={remoteRevision}
         onSave={() => scheduleSave(design)} draftingAvailable={Boolean(communityActive || infraActive)} onLegacy={target => { setModuleTarget(target); setCadWorkspaceActive(false); }}

@@ -746,15 +746,20 @@ async function current_country(userId: string): Promise<string> {
 /* GET /api/auth/sessions */
 router.get("/sessions", asyncHandler(async (req: AuthedRequest, res) => {
   const session = (await resolveSession(req));
-  if (!session) {
+  if (!session || session.status !== "active") {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
+  const checkedAt = now();
   const rows = (await db
     .prepare(
-      "SELECT id, user_agent, ip, created_at, last_seen_at, expires_at FROM sessions WHERE user_id = ? AND status = 'active' ORDER BY last_seen_at DESC",
+      `SELECT s.id,s.user_agent,s.ip,s.created_at,s.last_seen_at,s.expires_at
+       FROM sessions s JOIN users u ON u.id=s.user_id
+       WHERE s.user_id=? AND s.status='active' AND s.expires_at>?
+         AND s.revoked_at IS NULL AND s.credential_version=u.credential_version
+       ORDER BY s.last_seen_at DESC`,
     )
-    .all(session.user_id)) as {
+    .all(session.user_id, checkedAt)) as {
     id: string;
     user_agent: string | null;
     ip: string | null;
@@ -762,7 +767,12 @@ router.get("/sessions", asyncHandler(async (req: AuthedRequest, res) => {
     last_seen_at: number;
     expires_at: number;
   }[];
+  if (!rows.some(row => row.id === session.id)) {
+    res.status(401).json({ error: "Authentication changed. Sign in again." });
+    return;
+  }
   res.json({
+    checkedAt,
     sessions: rows.map((r) => ({ ...r, current: r.id === session.id })),
   });
 }));

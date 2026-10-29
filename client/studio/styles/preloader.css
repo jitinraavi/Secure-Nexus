@@ -1,4 +1,5 @@
 .preloader { display: none; }
+.preloader[hidden] { display: none !important; }
 .js .preloader { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: var(--paper); transition: opacity 650ms var(--ease-out), transform 850ms var(--ease-in-out), visibility 850ms; }
 .preloader.is-leaving { opacity: 0; transform: translateY(-5%); pointer-events: none; visibility: hidden; }
 .preloader__top, .preloader__bottom { position: absolute; left: var(--gutter); right: var(--gutter); display: flex; justify-content: space-between; gap: 30px; font-family: var(--font-mono); font-size: 10px; letter-spacing: .065em; line-height: 1.7; }

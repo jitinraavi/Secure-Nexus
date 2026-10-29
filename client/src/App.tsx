@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth";
 import { SplashScreen } from "./components/SplashScreen";
-import { Spinner } from "./components/ui";
+import { Button, Spinner } from "./components/ui";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 
 const Layout = lazy(() => import("./components/Layout").then((m) => ({ default: m.Layout })));
@@ -31,16 +31,39 @@ function FullScreenLoading() {
   );
 }
 
+function AuthenticationUnavailable() {
+  const { authError, refresh } = useAuth();
+  return (
+    <main className="flex min-h-screen items-center justify-center p-6">
+      <div className="max-w-md space-y-4 rounded-xl border border-slate-700 bg-slate-900 p-6">
+        <h1 className="text-xl font-semibold text-slate-100">Session check unavailable</h1>
+        <p role="alert" className="text-sm text-slate-300">{authError}</p>
+        <Button onClick={() => void refresh()}>Retry session check</Button>
+        <a className="block text-sm underline" href="/">Return to the studio website</a>
+      </div>
+    </main>
+  );
+}
+
 function Protected({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <FullScreenLoading />;
-  if (!user) return <Navigate to="/login" replace />;
-  return <>{children}</>;
+  const { user, status } = useAuth();
+  if (!user) {
+    if (status === "checking") return <FullScreenLoading />;
+    if (status === "unavailable") return <AuthenticationUnavailable />;
+    return <Navigate to="/login" replace />;
+  }
+  // Retain mounted editor state during a failed refresh without exposing private interaction.
+  return <>
+    <div style={status === "authenticated" ? undefined : { display: "none" }} aria-hidden={status !== "authenticated" || undefined}>{children}</div>
+    {status === "unavailable" && <AuthenticationUnavailable />}
+    {status === "checking" && <FullScreenLoading />}
+  </>;
 }
 
 function PublicOnly({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <FullScreenLoading />;
+  const { user, status } = useAuth();
+  if (status === "checking") return <FullScreenLoading />;
+  if (status === "unavailable") return <AuthenticationUnavailable />;
   if (user) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }

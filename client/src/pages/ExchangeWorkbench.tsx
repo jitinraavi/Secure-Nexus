@@ -15,6 +15,7 @@ import { constrainedSurveySurface, importGeoTiffDem, importLas, importSurveyCsv,
 import { advancedCivilCsv, exampleAdvancedAlignment } from "../lib/civilAlignment";
 import { analyzeAdvancedCivilExchange, buildAdvancedCivilLandXml, captureAdvancedCivilExchange, parseAdvancedCivilExchange, serializeAdvancedCivilExchange, type AdvancedCivilExchange, type AdvancedCivilExchangeAnalysis } from "../lib/advancedCivilExchange";
 import { inspectGeometryScene, type GeometryScene } from "../lib/meshGeometry";
+import { civilInputErrorMessage } from "../lib/guidedEngineering";
 
 const textareaClass = "min-h-40 w-full rounded-xl border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-100";
 type ExchangeTab = "bim" | "survey" | "civil";
@@ -143,7 +144,7 @@ export function ExchangeWorkbench() {
     }
     applyWorkspace({ version: 1, tab: "bim", ifcSource: source, idsText: "", names: {}, selected: "", survey: nextSurvey, surveyProjectFrame: frame, fromCrs: crs, toCrs: crs, constraints: '{"breaklines": [], "holes": []}', surfaceCalculated: false, alignment: JSON.stringify(exampleAdvancedAlignment, null, 2), civilCalculated: false, bimReportKind: "geometry" });
   };
-  const perform = (action: () => void) => { setError(""); try { action(); } catch (e) { setError(e instanceof Error ? e.message : "Operation failed."); } };
+  const perform = (action: () => void) => { setError(""); try { action(); } catch (e) { setError(civilInputErrorMessage(e)); } };
   async function importCivilSource(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (!file) return;
     const generation = ++importGeneration.current; setBusy(true); setError("");

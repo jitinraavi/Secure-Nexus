@@ -6,6 +6,8 @@ import { documentationFor, documentationIssues } from "./documentation";
 import { buildDocumentationSchedule, documentationInventory, scheduleCellText, type ScheduleResult } from "./documentationSchedule";
 import { validateDesign } from "./compliance";
 import { engineeringExchangeProvenance } from "./exchangeProvenance";
+import { cadObjects } from "./cadModel";
+import { projectCadDocumentation } from "./cadDocumentationProjection";
 
 type PdfPage = string[];
 const MAX_PAGES = 500;
@@ -39,16 +41,71 @@ function box(page: PdfPage, x: number, y: number, w: number, h: number, gray = 0
   command(page, `${gray} G ${num(x)} ${num(y)} ${num(w)} ${num(h)} re S`);
 }
 function fill(page: PdfPage, x: number, y: number, w: number, h: number, gray = 0.96) {
-  command(page, `${gray} g ${num(x)} ${num(y)} ${num(w)} ${num(h)} re f 0 G`);
+  command(page, `${gray} g ${num(x)} ${num(y)} ${num(w)} ${num(h)} re f 0 g 0 G`);
 }
-function titleBlock(page: PdfPage, projectName: string, definition: DocumentationSheet, docs: DocumentationMetadata, continuation: number, view?: DocumentationView) {
+function titleBlock(page: PdfPage, projectName: string, definition: DocumentationSheet, docs: DocumentationMetadata, continuation: number, view?: DocumentationView, classification = "SCHEMATIC / NOT TO SCALE / NOT FOR CONSTRUCTION") {
   box(page, margin, margin, W - margin * 2, H - margin * 2, 0.15);
+  fill(page, margin + 12, H - 53, W - margin * 2 - 24, 18, 0.93);
+  text(page, classification, margin + 18, H - 47, 9, true);
   line(page, margin, 58, W - margin, 58, 0.15);
   text(page, definition.titleBlock || docs.titleBlock || "GROUNDWORK DESIGN STUDIO", margin + 8, 42, 8, true);
   text(page, safe(projectName).toUpperCase(), 250, 42, 8, true);
   text(page, `${definition.number}${continuation > 1 ? ` / ${continuation}` : ""} | ${definition.name}`.slice(0, 40), W - 205, 42, 8, true);
-  text(page, `${docs.projectNumber} | ${docs.client || "UNASSIGNED CLIENT"} | ${docs.issueDate} | ${view ? `${view.orientation.toUpperCase()} (schematic)` : ""}`.slice(0, 100), margin + 8, 67, 7, true);
+  text(page, `${docs.projectNumber} | ${docs.client || "UNASSIGNED CLIENT"} | ${docs.issueDate}${view ? classification.startsWith("CAD SECTION") ? " | CAD SECTION" : classification.startsWith("MODEL PROJECTION") ? " | CAD PROJECTION" : " | SCHEMATIC VIEW" : ""}`.slice(0, 100), margin + 8, 67, 7, true);
   text(page, docs.status.toUpperCase(), W - 115, 67, 7, true);
+}
+
+const POINTS_PER_METRE = 1000 * 72 / 25.4;
+const CAD_DRAWING = { x: 66, y: 155, width: 660, height: 300 };
+type CadProjection = ReturnType<typeof projectCadDocumentation>;
+interface CadViewLayout { projection: CadProjection; denominator: number | null; pointsPerMetre: number; originX: number; originY: number; section?: DocumentationView["section"]; }
+
+/** Scale is a physical paper ratio, never an implicit fit-to-page operation. */
+function cadViewLayout(design: Design, view: DocumentationView): CadViewLayout {
+  const projection = projectCadDocumentation(design, view);
+  const label = view.scale.trim();
+  const ratio = label.match(/^1\s*:\s*(\d+(?:\.\d+)?)$/);
+  const denominator = /^NTS$/i.test(label) ? null : ratio ? Number(ratio[1]) : NaN;
+  if (denominator !== null && (!Number.isFinite(denominator) || denominator < 1 || denominator > 1_000_000)) throw new Error(`${view.name}: enter a scale from 1:1 to 1:1000000, or NTS for an explicitly unscaled projection.`);
+  const bounds = projection.bounds;
+  const width = bounds ? bounds.maxX - bounds.minX : 0, height = bounds ? bounds.maxY - bounds.minY : 0;
+  const pointsPerMetre = denominator === null ? Math.min(CAD_DRAWING.width / Math.max(width, 0.001), CAD_DRAWING.height / Math.max(height, 0.001)) : POINTS_PER_METRE / denominator;
+  if (width * pointsPerMetre > CAD_DRAWING.width + 0.001 || height * pointsPerMetre > CAD_DRAWING.height + 0.001) {
+    throw new Error(`${view.name}: the authored geometry does not fit the 233 x 106 mm drawing area at 1:${denominator}. Choose a larger scale denominator, a smaller level scope, or NTS. The drawing was not shrunk or clipped.`);
+  }
+  return { projection, denominator, pointsPerMetre, section: view.kind === "section" ? view.section : undefined,
+    originX: CAD_DRAWING.x + (CAD_DRAWING.width - width * pointsPerMetre) / 2 - (bounds?.minX ?? 0) * pointsPerMetre,
+    originY: CAD_DRAWING.y + (CAD_DRAWING.height - height * pointsPerMetre) / 2 - (bounds?.minY ?? 0) * pointsPerMetre };
+}
+
+function renderCadView(page: PdfPage, layout: CadViewLayout) {
+  const { projection, denominator, pointsPerMetre, originX, originY } = layout;
+  const x = (value: number) => originX + value * pointsPerMetre;
+  const y = (value: number) => originY + value * pointsPerMetre;
+  const drawingLabel = layout.section ? `SECTION ${layout.section.axis.toUpperCase()}=${layout.section.offsetM} m | LOOK ${projection.orientation.toUpperCase()}` : `${projection.kind === "plan" ? "TOP" : "ELEVATION"} WIREFRAME PROJECTION | ${projection.orientation.toUpperCase()}`;
+  text(page, `${drawingLabel} | ${!projection.bounds ? "NO GEOMETRY / NOT TO SCALE" : denominator === null ? "NOT TO SCALE" : `SCALE 1:${denominator} - PRINT AT 100%`}`, 70, 485, 8, true);
+  if (!projection.bounds) text(page, "No visible authored CAD geometry matches this view scope.", 90, 430, 9);
+  for (const path of projection.paths) {
+    if (!path.points.length) continue;
+    command(page, `% CAD object ${safe(path.objectId)}`);
+    command(page, `0 G 0 g 0.6 w ${path.points.map((point, index) => `${num(x(point.x))} ${num(y(point.y))} ${index ? "l" : "m"}`).join(" ")}${path.closed ? " h" : ""} S`);
+  }
+  for (const circle of projection.circles) {
+    const cx = x(circle.cx), cy = y(circle.cy), r = circle.radius * pointsPerMetre, k = r * 0.5522847498307936;
+    command(page, `% CAD object ${safe(circle.objectId)} circle`);
+    command(page, `0 G 0 g 0.6 w ${num(cx + r)} ${num(cy)} m ${num(cx + r)} ${num(cy + k)} ${num(cx + k)} ${num(cy + r)} ${num(cx)} ${num(cy + r)} c ${num(cx - k)} ${num(cy + r)} ${num(cx - r)} ${num(cy + k)} ${num(cx - r)} ${num(cy)} c ${num(cx - r)} ${num(cy - k)} ${num(cx - k)} ${num(cy - r)} ${num(cx)} ${num(cy - r)} c ${num(cx + k)} ${num(cy - r)} ${num(cx + r)} ${num(cy - k)} ${num(cx + r)} ${num(cy)} c h S`);
+  }
+  if (projection.bounds && denominator !== null) {
+    const targetMetres = 120 / pointsPerMetre;
+    const magnitude = 10 ** Math.floor(Math.log10(targetMetres));
+    const lengths = [1, 2, 5, 10].map(value => value * magnitude).filter(value => value <= targetMetres);
+    const metres = lengths[lengths.length - 1] ?? magnitude;
+    const end = CAD_DRAWING.x + metres * pointsPerMetre;
+    line(page, CAD_DRAWING.x, 118, end, 118, 0);
+    line(page, CAD_DRAWING.x, 114, CAD_DRAWING.x, 122, 0); line(page, end, 114, end, 122, 0);
+    text(page, `SCALE BAR ${Number(metres.toPrecision(10))} m | check after printing; disable Fit to page`, CAD_DRAWING.x, 103, 7, true);
+  }
+  text(page, layout.section ? "Section boundary edges only: geometry beyond the plane, reinforcement and assemblies are not shown." : "Projected edges only: no hidden-line removal, intersections or reinforcement. Not a section cut.", 70, 91, 7);
 }
 function heading(page: PdfPage, value: string) {
   text(page, value.toUpperCase(), margin + 18, H - 72, 15, true);
@@ -170,13 +227,17 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
   const pages: PdfPage[] = [];
   const budget = { bytes: 0 };
   const inventory = documentationInventory(design);
+  const authoredCad = cadObjects(design).length;
   const continuation = new Map<string, number>();
-  const page = (sheet: DocumentationSheet, label = sheet.name, view?: DocumentationView) => {
+  const page = (sheet: DocumentationSheet, label = sheet.name, view?: DocumentationView, layout?: CadViewLayout) => {
     if (pages.length >= MAX_PAGES) throw new Error("The PDF exceeds 500 pages. Select fewer views, schedules or rows.");
     const count = (continuation.get(sheet.id) ?? 0) + 1; continuation.set(sheet.id, count);
     const p: PdfPage = [];
     pageBudgets.set(p, budget);
-    titleBlock(p, projectName, sheet, docs, count, view); heading(p, label);
+    const classification = layout?.projection.bounds ? `${layout.section ? "CAD SECTION" : "MODEL PROJECTION"} / ${layout.denominator === null ? "NOT TO SCALE" : `SCALE 1:${layout.denominator} (PRINT AT 100%)`} / NOT FOR CONSTRUCTION` : undefined;
+    titleBlock(p, projectName, sheet, docs, count, view, classification); heading(p, label);
+    if (layout) text(p, `CAD coverage: ${layout.projection.includedObjectIds.length} drawn | ${layout.projection.hiddenObjectIds.length} hidden | ${layout.projection.excludedObjectIds.length} excluded | ${layout.projection.outOfScopeObjectIds.length} outside level | ${layout.projection.notIntersectedObjectIds.length} not cut. See notes.`, 46, H - 96, 7, true);
+    else if (authoredCad) text(p, "Authored CAD appears on supported drawing sheets. Other illustrations remain schematic; schedules list supported records.", 46, H - 96, 7, true);
     const revisions = sheet.revisionIds === undefined ? docs.revisions : docs.revisions.filter(revision => sheet.revisionIds!.includes(revision.id));
     const latest = revisions[revisions.length - 1];
     if (latest) text(p, `Revision ${latest.number} | ${latest.date} | ${latest.description}`.slice(0, 120), 70, 82, 7);
@@ -241,9 +302,10 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
   for (const sheet of sheets) {
     if (sheet.number === "G-001") {
       const p = page(sheet);
-      text(p, safe(projectName).toUpperCase().slice(0, 40), 90, 385, 25, true); text(p, "PRELIMINARY SHEET PRODUCTION SET", 90, 355, 13);
+      text(p, safe(projectName).toUpperCase().slice(0, 40), 90, 385, 25, true); text(p, "SCHEMATIC REVIEW SET - NOT FOR CONSTRUCTION", 90, 355, 13);
       text(p, `${docs.status.toUpperCase()} | ${docs.views.filter(view => view.visible).length} visible views | ${docs.schedules.length} schedules`, 90, 320, 9);
-      text(p, "Geometry pages are fitted schematic studies. Requested scale/orientation are metadata.", 90, 290, 8);
+      text(p, "CAD drawing pages state their physical scale or NTS. Print at 100% and check the scale bar.", 90, 290, 8);
+      text(p, "Legacy illustrations, notes and schedules are not to scale. Sections require an explicitly defined cut plane.", 90, 256, 8);
       text(p, "Live schedules include stored occurrences; envelope areas and volumes are approximate.", 90, 272, 8);
       text(p, `SCREENING PROFILE: ${compliance.profile.name}`, 90, 240, 8, true);
       listPages(sheet, "Sheet index", docs.sheets.map(item => `${item.number} ${item.name} | ${item.viewIds.length} bound view(s)`));
@@ -265,11 +327,30 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
           else text(p, `VIEW HIDDEN: ${view.name}`, 90, 430, 9);
           continue;
         }
-        const p = page(sheet, view.name, view);
-        text(p, `Requested ${view.scale} / ${view.orientation} | schematic fit; dimensions shown as stored`.slice(0, 120), 70, 485, 7);
-        if (!view.visible) text(p, `VIEW HIDDEN: ${view.name}`, 90, 430, 9);
-        else if (view.kind === "plan") renderPlan(p); else if (view.kind === "elevation") renderElevation(p); else if (view.kind === "section") renderSection(p);
-        else text(p, "Detail view has no generated detail geometry; annotations follow on continuation pages.", 90, 430, 8);
+        const layout = view.visible && authoredCad && (view.kind === "plan" || view.kind === "elevation" || view.kind === "section" && view.section) ? cadViewLayout(design, view) : undefined;
+        const p = page(sheet, view.name, view, layout);
+        if (layout) {
+          renderCadView(p, layout);
+          const projectionNotes = [
+            "Scope: authored CAD objects only. Room furniture, generated buildings/site/terrain and MEP/network geometry are not included in this drawing.",
+            layout.section ? `Declared vertical cut: ${layout.section.axis.toUpperCase()}=${layout.section.offsetM} m; look direction ${view.orientation}. Only intersected supported solids are drawn, with no beyond-plane geometry.` : "Top projections are not floor cuts. Elevations project all supported edges; overlapping objects remain visible. Circles use standard PDF cubic curves.",
+            ...layout.projection.warnings,
+            ...(layout.projection.hiddenObjectIds.length ? [`Hidden objects: ${layout.projection.hiddenObjectIds.join(", ")}`] : []),
+            ...(layout.projection.excludedObjectIds.length ? [`Excluded objects: ${layout.projection.excludedObjectIds.join(", ")}`] : []),
+            ...(layout.projection.outOfScopeObjectIds.length ? [`Outside selected level: ${layout.projection.outOfScopeObjectIds.join(", ")}`] : []),
+            ...(layout.projection.notIntersectedObjectIds.length ? [`Solids not intersected by the cut: ${layout.projection.notIntersectedObjectIds.join(", ")}`] : []),
+          ];
+          listPages(sheet, `${view.name} - projection notes`, projectionNotes, view);
+        } else {
+          text(p, `RECORDED METADATA ONLY: scale ${view.scale} / orientation ${view.orientation}`.slice(0, 120), 70, 485, 7);
+          if (!view.visible) text(p, `VIEW HIDDEN: ${view.name}`, 90, 430, 9);
+          else if (authoredCad && view.kind === "section") {
+            text(p, "CAD SECTION NOT GENERATED: no section cut plane is defined in this document.", 70, 435, 9, true);
+            text(p, "Use authored CAD top/elevation projections for review. This page does not depict a model cut.", 70, 415, 8);
+          }
+          else if (view.kind === "plan") renderPlan(p); else if (view.kind === "elevation") renderElevation(p); else if (view.kind === "section") renderSection(p);
+          else text(p, "Detail view has no generated detail geometry; annotations follow on continuation pages.", 90, 430, 8);
+        }
         if (view.visible) notes(sheet, view);
       }
       if (sheet.number === "S-401") {

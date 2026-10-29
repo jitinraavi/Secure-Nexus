@@ -14,7 +14,7 @@ export interface Plan {
 
 export const PLANS: Record<string, Plan> = {
   free: { id: "free", name: "Free", price: 0, currency: "INR", periodDays: 0, tagline: "1 active project" },
-  pro: { id: "pro", name: "Pro", price: 200000, currency: "INR", periodDays: 30, tagline: "Unlimited projects + exports + 2FA" },
+  pro: { id: "pro", name: "Pro", price: 200000, currency: "INR", periodDays: 30, tagline: "Unlimited projects + exports" },
   studio: { id: "studio", name: "Studio", price: 400000, currency: "INR", periodDays: 30, tagline: "All Pro features + CAD connectors + priority support" },
 };
 

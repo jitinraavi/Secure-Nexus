@@ -52,6 +52,28 @@ jobs:
       - name: Test browser security helpers
         run: npm run test -w client
 
+      - name: Set up isolated external IFC reader
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/ifc-validation-requirements.txt
+
+      - name: Install pinned IFC acceptance tooling
+        run: python -m pip install -r scripts/ifc-validation-requirements.txt
+
+      - name: Validate exported geometry in IfcOpenShell
+        run: npm run test:ifc
+
+      - name: Save synthetic external-reader evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ifc-interop-${{ github.sha }}
+          path: artifacts/ifc-interop/
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Test studio interactions
         run: npm run test:studio
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Badge, Button, Input, Modal, Select } from "./ui";
 import { useToast } from "./Toast";
@@ -6,17 +6,20 @@ import { download, downloadBlob } from "../lib/download";
 import type { Design, DocumentationAnnotation, DocumentationRevision, DocumentationSchedule, DocumentationSheet, DocumentationView } from "../types";
 import { documentationFor, documentationIssues } from "../lib/documentation";
 import { buildDocumentationSchedule, documentationInventory, documentationScheduleCsv, SCHEDULE_FIELDS, scheduleCellText } from "../lib/documentationSchedule";
-import { getCadExchangeStatus, type CadExchangeStatusResponse } from "../api";
+import { getCadExchangeStatus } from "../api";
+import { dwgExportReadiness, observeCadExportReadiness, type CadExportReadiness } from "../lib/exportReadiness";
 import { COMPLIANCE_PROFILES, validateDesign } from "../lib/compliance";
 import { buildIfcStep, inspectGroundworkIfcSources, validateIfcProfile, validateIfcRoundTrip, type IfcValidationReport } from "../lib/bim";
 import { buildBcfZip } from "../lib/bcf";
 import { technicalGraphicsSettings } from "../lib/technicalGraphics";
 import { engineeringExchangeProvenance } from "../lib/exchangeProvenance";
+import { cadLevels, cadObjects } from "../lib/cadModel";
 
 export function DesignExportMenu({ design, projectName, onChange }: { design: Design; projectName?: string; onChange?: (design: Design) => void }) {
   const { id: projectId } = useParams<{ id: string }>();
   const [open, setOpen] = useState(false);
-  const [cadStatus, setCadStatus] = useState<CadExchangeStatusResponse | null>(null);
+  const [cadStatus, setCadStatus] = useState<CadExportReadiness>({ status: "loading" });
+  const [capabilityAttempt, setCapabilityAttempt] = useState(0);
   const docs = documentationFor(design);
   const compliance = validateDesign(design);
   const ifcBuild = useMemo(() => {
@@ -33,8 +36,11 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
   const graphics = technicalGraphicsSettings(design.technicalGraphics);
   const toast = useToast();
   const stem = (projectName || "design").trim().replace(/[^\w-]+/g, "-").toLowerCase() || "design";
-  useEffect(() => { getCadExchangeStatus().then(setCadStatus).catch(() => setCadStatus(null)); }, []);
-  const dwgCapability = cadStatus?.nativeCapabilities?.find(item => item.kind === "dxf-to-dwg");
+  useEffect(() => {
+    if (!open) return;
+    return observeCadExportReadiness(getCadExchangeStatus, setCadStatus);
+  }, [open, capabilityAttempt]);
+  const dwgReadiness = dwgExportReadiness(cadStatus);
   const updateDocs = (patch: Partial<typeof docs>) => onChange?.({ ...design, documentation: { ...docs, ...patch } });
   const updateProfile = (profileId: string) => onChange?.({ ...design, compliance: { profileId } });
   const update = <T extends { id: string }>(key: "views" | "sheets" | "annotations" | "schedules" | "revisions", id: string, patch: Partial<T>) => {
@@ -69,8 +75,8 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
     try {
     const { buildSheetPdf } = await import("../lib/sheets");
     const blob = new Blob([buildSheetPdf(projectName || "Untitled project", design)], { type: "application/pdf" });
-    downloadBlob(`${stem}-sheets.pdf`, blob);
-    toast.push({ title: "PDF sheet set downloaded", description: "Documentation metadata, views, annotations, schedules, and planning geometry included.", tone: "success" });
+    downloadBlob(`${stem}-review-sheets.pdf`, blob);
+    toast.push({ title: "Review PDF downloaded", description: "CAD plan/elevation/section pages declare scale or NTS; print at 100% and check the scale bar. Not for construction.", tone: "success" });
     setOpen(false);
     } catch (error) {
       toast.push({ title: "PDF export failed", description: error instanceof Error ? error.message : "Could not export the selected sheets.", tone: "error" });
@@ -85,7 +91,11 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
   return (
     <>
       <Button variant="secondary" size="sm" onClick={() => setOpen(true)} aria-label="Open documentation and export options">Docs / exports</Button>
-      <Modal open={open} onClose={() => setOpen(false)} title="Documentation and exchange exports">
+      <Modal open={open} onClose={() => setOpen(false)} title="Documentation and exchange exports" wide>
+        <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+          <p className="font-semibold">Review outputs · each drawing declares its scale · not for construction</p>
+          <p className="mt-1">Authored CAD top/elevation projections and explicitly defined vertical section cuts use physical 1:n scale, or explicit NTS. Oversized scaled drawings are blocked instead of shrunk. Paper is US Letter landscape (279.4 × 215.9 mm); print at 100% and check the scale bar. Elevations show projected edges without hidden-line removal; sections show intersected solids at the declared plane. Legacy room/site illustrations remain schematic and not to scale; generated site, furniture and MEP geometry are outside the CAD drawing scope. Verify exchange dimensions and fidelity in your authoring tools.</p>
+        </div>
         <div className="mb-4 rounded-xl border border-slate-700 bg-slate-950/40 p-3">
           <p className="gw-kicker">Sheet set metadata</p>
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -144,11 +154,14 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           <p className="mt-1 text-sm leading-relaxed text-slate-300">{projectName || "Untitled project"} exports a 2D drafting projection and a minimal IFC4 coordination model.</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">Proxy geometry, section cuts, infrastructure forms, and BOQ quantities are approximate planning outputs. Confirm dimensions in authoring software.</p>
           <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-950/40 p-2 text-xs text-slate-400">
-            <span className={dwgCapability?.available ? "text-emerald-300" : "text-amber-300"}>DWG: {dwgCapability?.available ? "conversion worker configured" : "unavailable"}</span>
-            <span className="ml-2">{dwgCapability?.reason || "Provider status is loading."}</span>
+            <p role={cadStatus.status === "error" ? "alert" : "status"} className={dwgReadiness.available ? "text-cyan-300" : "text-amber-300"}>{dwgReadiness.label}</p>
+            <p className="mt-1">{dwgReadiness.message}</p>
+            {cadStatus.status === "error" && <Button className="mt-2" size="sm" variant="outline" onClick={() => setCapabilityAttempt(value => value + 1)}>Retry DWG availability</Button>}
+            {dwgReadiness.available && <p className="mt-1">Configuration permits queuing; this check does not verify a completed conversion or downstream drawing fidelity.</p>}
            </div>
            <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-950/40 p-2 text-xs">
-             <div className="flex flex-wrap items-center gap-2"><Badge tone={ifcReport.valid ? "emerald" : "rose"}>{ifcReport.valid ? "IFC validation passed" : "IFC validation blocked"}</Badge><Badge tone={ifcProfile.valid ? "emerald" : "amber"}>{ifcProfile.valid ? "Reference-view preflight passed" : "Reference-view preflight needs work"}</Badge><span className="text-slate-500">{ifcReport.parsedEntities} entities · {ifcReport.guidCount} GUIDs · round-trip {ifcReport.normalized ? "stable" : "changed"}</span></div>
+             <div className="flex flex-wrap items-center gap-2"><Badge tone={ifcReport.valid ? "cyan" : "rose"}>{ifcReport.valid ? "Internal IFC checks passed" : "Internal IFC checks blocked"}</Badge><Badge tone={ifcProfile.valid ? "cyan" : "amber"}>{ifcProfile.valid ? "Internal reference preflight passed" : "Internal reference preflight needs work"}</Badge><span className="text-slate-500">{ifcReport.parsedEntities} entities · {ifcReport.guidCount} GUIDs · internal round-trip {ifcReport.normalized ? "stable" : "changed"}</span></div>
+             <p className="mt-2 text-slate-400">These are Groundwork's internal checks. Third-party interoperability, complete geometry coverage and construction suitability have not been established by this preflight.</p>
              {ifcReport.issues.length > 0 && <div className="mt-2 max-h-28 space-y-1 overflow-y-auto text-slate-400">{ifcReport.issues.map((issue, index) => <p key={`${issue.code}-${issue.entityId ?? "model"}-${index}`}><span className={issue.severity === "error" ? "text-rose-300" : "text-amber-300"}>{issue.severity}</span> {issue.message}</p>)}</div>}
            </div>
         </div>
@@ -156,10 +169,10 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
           <Button onClick={() => void exportFile("dxf")}>Download DXF</Button>
           <Button variant="secondary" onClick={() => download(`${stem}-engineering-declaration.json`, JSON.stringify(engineeringExchangeProvenance(design.engineeringBasis), null, 2), "application/json")}>Engineering declaration JSON</Button>
            <Button variant="secondary" disabled={!ifcReport.valid} title={ifcReport.valid ? "" : "Resolve IFC validation errors first"} onClick={() => void exportFile("ifc")}>Download IFC STEP</Button>
-          <Link className="rounded-xl border border-slate-700 p-3 text-center text-sm sm:col-span-2" to={`/exchange${projectId ? `?project=${encodeURIComponent(projectId)}` : ""}`} onClick={() => setOpen(false)}>Open DWG conversion jobs</Link>
+          <Link className="rounded-xl border border-slate-700 p-3 text-center text-sm sm:col-span-2" to={`/exchange${projectId ? `?project=${encodeURIComponent(projectId)}` : ""}`} onClick={() => setOpen(false)}>View DWG availability and jobs</Link>
           <p className="text-xs text-slate-400 sm:col-span-2">Download the current DXF, then submit it in the exchange workbench. LibreDWG conversion preserves the captured source; review the drawing for unsupported entities.</p>
           <Button variant="secondary" onClick={() => void exportBcf()}>Download BCF coordination package</Button>
-          <Button variant="outline" onClick={() => download(`${stem}-ifc-validation.json`, JSON.stringify({ roundTrip: ifcReport, profile: ifcProfile }, null, 2), "application/json")}>Download IFC validation report</Button>
+          <Button variant="outline" onClick={() => download(`${stem}-ifc-validation.json`, JSON.stringify({ scope: "Groundwork internal IFC preflight", thirdPartyInteroperability: "not-verified", constructionSuitability: "not-assessed", roundTrip: ifcReport, profile: ifcProfile }, null, 2), "application/json")}>Download internal IFC check report</Button>
           <p className="text-xs text-slate-500">{ifcReport.sourceRoundTrip?.scope} {ifcReport.sourceRoundTrip?.checkedEntities ?? 0} source entities checked.</p>
           <label className="block text-xs text-slate-400">Inspect a Groundwork IFC metadata export
             <input className="mt-1 block text-xs" type="file" accept=".ifc,.step,.stp" onChange={e => {
@@ -175,7 +188,7 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
             }} />
           </label>
           {importSummary && <p className="text-xs text-slate-400">{importSummary}</p>}
-           <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download sheet set with screening report</Button>
+           <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download review PDF</Button>
         </div>
       </Modal>
     </>
@@ -199,9 +212,10 @@ function DocumentationEditor({
 }) {
   const inventory = useMemo(() => documentationInventory(design), [design]);
   const warnings = useMemo(() => documentationIssues(design), [design]);
+  const hasCad = cadObjects(design).length > 0;
   const bindings = (values: string[], target: string, selected: boolean) => selected ? [...new Set([...values, target])] : values.filter(value => value !== target);
   const id = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const addView = () => add("views", { id: id(), name: "New view", kind: "plan", scale: "1:100", orientation: "north", visible: true });
+  const addView = () => add("views", { id: id(), name: "New view", kind: "plan", scale: hasCad ? "1:100" : "NTS", orientation: "north", visible: true });
   const addSheet = () => add("sheets", { id: id(), number: "A-000", name: "New sheet", viewIds: [] });
   const addAnnotation = () => add("annotations", { id: id(), text: "New annotation", tag: "NOTE" });
   const addSchedule = () => add("schedules", { id: id(), name: "New schedule", category: "objects", fields: ["Category", "Name", "Quantity"], filters: [], sortDirection: "asc" });
@@ -209,7 +223,7 @@ function DocumentationEditor({
   return (
     <div className="space-y-3">
       {warnings.length > 0 && <div className="max-h-32 overflow-auto rounded-lg border border-amber-500/30 p-2 text-xs text-amber-200">{warnings.map(warning => <p key={warning}>{warning}</p>)}</div>}
-      <p className="text-xs text-slate-500">Schedules refresh from saved model occurrences. Schematic PDF geometry is fitted to each page; requested scale and orientation remain metadata.</p>
+      <p className="text-xs text-slate-400">Schedules refresh from saved model occurrences. Authored CAD plan/elevation views and defined vertical section cuts support physical scales such as 1:100; NTS fits geometry and is marked unscaled. Other illustrations retain scale/orientation as read-only metadata. Define a section plane explicitly before a CAD section can be drawn. Directions follow local model axes; they do not establish survey north.</p>
       <DocSection title="Sheets" addLabel="Add sheet" onAdd={addSheet}>
         {docs.sheets.map((sheet) => <div key={sheet.id} className="space-y-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2"><div className="grid gap-2 sm:grid-cols-[.7fr_1fr_1fr_auto]">
           <Input aria-label="Sheet number" value={sheet.number} onChange={(e) => update<DocumentationSheet>("sheets", sheet.id, { number: e.target.value })} />
@@ -222,14 +236,22 @@ function DocumentationEditor({
           <div className="flex flex-wrap gap-2 text-xs text-slate-400"><span>Revisions:</span><label className="flex items-center gap-1"><input type="checkbox" checked={sheet.revisionIds === undefined} onChange={event => update<DocumentationSheet>("sheets", sheet.id, { revisionIds: event.target.checked ? undefined : [] })} />All project revisions</label>{sheet.revisionIds !== undefined && docs.revisions.map(revision => <label key={revision.id} className="flex items-center gap-1"><input type="checkbox" checked={sheet.revisionIds!.includes(revision.id)} onChange={event => update<DocumentationSheet>("sheets", sheet.id, { revisionIds: bindings(sheet.revisionIds ?? [], revision.id, event.target.checked) })} />{revision.number}</label>)}</div>
         </div>)}
       </DocSection>
-      <DocSection title="Views, scales and orientation" addLabel="Add view" onAdd={addView}>
-        {docs.views.map((view) => <div key={view.id} className="grid gap-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2 sm:grid-cols-[1fr_auto_auto_auto_auto_auto]">
+      <DocSection title="Drawing views and recorded metadata" addLabel="Add view" onAdd={addView}>
+        {docs.views.map((view) => <div key={view.id} className="grid gap-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2 sm:grid-cols-2">
           <Input aria-label="View name" value={view.name} onChange={(e) => update<DocumentationView>("views", view.id, { name: e.target.value })} />
-          <Select aria-label="View kind" value={view.kind} onChange={(e) => update<DocumentationView>("views", view.id, { kind: e.target.value as DocumentationView["kind"] })}><option value="plan">Plan</option><option value="elevation">Elevation</option><option value="section">Section</option><option value="detail">Detail</option><option value="schedule">Schedule</option></Select>
-          <Input aria-label="View scale" value={view.scale} onChange={(e) => update<DocumentationView>("views", view.id, { scale: e.target.value })} className="w-24" />
-          <Select aria-label="View orientation" value={view.orientation} onChange={(e) => update<DocumentationView>("views", view.id, { orientation: e.target.value as DocumentationView["orientation"] })}><option value="north">North</option><option value="east">East</option><option value="south">South</option><option value="west">West</option><option value="custom">Custom</option></Select>
+          <Select aria-label="View kind" value={view.kind} onChange={(e) => {
+            const kind = e.target.value as DocumentationView["kind"];
+            const compatible = view.section?.axis === "x" ? view.orientation === "east" || view.orientation === "west" : view.orientation === "north" || view.orientation === "south";
+            update<DocumentationView>("views", view.id, { kind, ...(kind === "section" && view.section && !compatible ? { orientation: view.section.axis === "x" ? "east" : "north" } : {}) });
+          }}><option value="plan">Plan</option><option value="elevation">Elevation</option><option value="section">Section</option><option value="detail">Detail</option><option value="schedule">Schedule</option></Select>
+          {hasCad && (view.kind === "plan" || view.kind === "elevation" || view.kind === "section" && view.section) ? <>
+            <Input label="Drawing scale (1:n or NTS)" value={view.scale} onChange={e => update<DocumentationView>("views", view.id, { scale: e.target.value })} />
+            <Select label={view.kind === "section" ? "Section look direction" : "Drawing orientation"} value={view.orientation} onChange={e => update<DocumentationView>("views", view.id, { orientation: e.target.value as DocumentationView["orientation"] })}>{(view.kind !== "section" || view.section?.axis === "z") && <><option value="north">North</option><option value="south">South</option></>}{(view.kind !== "section" || view.section?.axis === "x") && <><option value="east">East</option><option value="west">West</option></>}{view.orientation === "custom" && <option value="custom" disabled>Custom (unsupported)</option>}</Select>
+          </> : <><Input label="Recorded scale (metadata only)" value={view.scale} readOnly /><Input label="Recorded orientation (metadata only)" value={view.orientation} readOnly /></>}
           <label className="flex items-center gap-1 px-2 text-xs text-slate-400"><input type="checkbox" checked={view.visible} onChange={(e) => update<DocumentationView>("views", view.id, { visible: e.target.checked })} /> Visible</label>
           <Button variant="danger" size="sm" onClick={() => remove("views", view.id)}>Delete</Button>
+          {hasCad && (view.kind === "plan" || view.kind === "elevation" || view.kind === "section") && <div className="space-y-1 sm:col-span-2"><Select label="Drawing level scope" value={view.levelId ?? ""} onChange={event => update<DocumentationView>("views", view.id, { levelId: event.target.value || undefined })}><option value="">All authored CAD objects</option>{view.levelId && !cadLevels(design).some(level => level.id === view.levelId) && <option value={view.levelId}>Missing level ({view.levelId})</option>}{cadLevels(design).map(level => <option key={level.id} value={level.id}>{level.name}</option>)}</Select><p className="text-xs text-slate-400">A selected level includes only objects explicitly hosted on it. Other levels and unhosted objects are omitted and counted in the PDF coverage notes.</p></div>}
+          {hasCad && view.kind === "section" && <div className="sm:col-span-2"><SectionPlaneEditor view={view} update={patch => update<DocumentationView>("views", view.id, patch)} /></div>}
         </div>)}
       </DocSection>
       <DocSection title="Annotations and tags" addLabel="Add annotation" onAdd={addAnnotation}>
@@ -257,6 +279,28 @@ function DocumentationEditor({
       </DocSection>
     </div>
   );
+}
+
+function SectionPlaneEditor({ view, update }: { view: DocumentationView; update: (patch: Partial<DocumentationView>) => void }) {
+  const [offset, setOffset] = useState(String(view.section?.offsetM ?? 0));
+  const [error, setError] = useState("");
+  const id = useId();
+  useEffect(() => { setOffset(String(view.section?.offsetM ?? 0)); setError(""); }, [view.section?.offsetM]);
+  if (!view.section) return <div className="space-y-2 border-t border-slate-700 pt-2 text-xs text-slate-400"><p>No cut plane is defined. The PDF will show a section-unavailable notice until you explicitly define one.</p><Button size="sm" variant="secondary" onClick={() => update({ section: { axis: "z", offsetM: 0 }, orientation: "north" })}>Define vertical section plane</Button></div>;
+  const commit = () => {
+    const value = Number(offset);
+    if (!offset.trim() || !Number.isFinite(value) || Math.abs(value) > 1_000_000) { setError("Enter a finite model coordinate between -1000000 and 1000000 metres."); return; }
+    update({ section: { axis: view.section!.axis, offsetM: value } }); setError("");
+  };
+  return <div className="space-y-2 border-t border-slate-700 pt-2"><div className="grid gap-2 sm:grid-cols-2">
+    <Select label="Section plane axis" value={view.section.axis} onChange={event => {
+      const axis = event.target.value as "x" | "z";
+      const compatible = axis === "x" ? view.orientation === "east" || view.orientation === "west" : view.orientation === "north" || view.orientation === "south";
+      update({ section: { ...view.section!, axis }, orientation: compatible ? view.orientation : axis === "x" ? "east" : "north" });
+    }}><option value="z">Constant Z plane</option><option value="x">Constant X plane</option></Select>
+    <Input label="Section plane coordinate (m)" type="number" step="any" value={offset} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} onChange={event => { setOffset(event.target.value); setError(""); }} onBlur={commit} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } if (event.key === "Escape") { event.preventDefault(); setOffset(String(view.section!.offsetM)); setError(""); } }} />
+    <Button variant="outline" size="sm" onClick={() => update({ section: undefined })}>Remove cut plane</Button>
+  </div><p className="text-xs text-slate-400">The cut intersects supported authored CAD solids at {view.section.axis.toUpperCase()} = {view.section.offsetM} m in local model coordinates. It does not display geometry beyond the plane. Top/elevation wireframes, generated site forms and MEP are separate scopes.</p>{error && <p id={`${id}-error`} role="alert" className="text-xs text-rose-300">{error}</p>}</div>;
 }
 
 function LiveScheduleEditor({ design, schedule, inventory, stem, update, remove }: {
@@ -306,4 +350,3 @@ function LiveScheduleEditor({ design, schedule, inventory, stem, update, remove 
 function DocSection({ title, addLabel, onAdd, children }: { title: string; addLabel: string; onAdd: () => void; children: React.ReactNode }) {
   return <section className="rounded-xl border border-slate-700 bg-slate-950/30 p-3"><div className="mb-2 flex items-center justify-between"><p className="gw-kicker">{title}</p><Button variant="outline" size="sm" onClick={onAdd}>{addLabel}</Button></div><div className="space-y-2">{children}</div></section>;
 }
-

@@ -126,10 +126,15 @@ export function initProjects() {
     const maxScroll = Math.max(0, track.scrollWidth - track.clientWidth);
     const currentScroll = Math.max(0, Math.min(maxScroll, track.scrollLeft));
     const fraction = maxScroll > 1 ? currentScroll / maxScroll : 1;
-    // Count the leading project; the last position represents the final group.
-    const active = maxScroll > 1
-      ? Math.min(projects.length - 1, Math.round(currentScroll / cardStep()))
-      : 0;
+    const viewport = track.getBoundingClientRect();
+    const visible = cards.flatMap((card, index) => {
+      const bounds = card.getBoundingClientRect();
+      return Math.min(bounds.right, viewport.right) - Math.max(bounds.left, viewport.left) > 1 ? [index + 1] : [];
+    });
+    const first = visible[0] || 1, last = visible[visible.length - 1] || first;
+    const positionLabel = first === last
+      ? `Project ${first} of ${projects.length}`
+      : `Projects ${first} to ${last} of ${projects.length}`;
     if (previous) previous.disabled = currentScroll <= 1;
     if (next) next.disabled = currentScroll >= maxScroll - 1;
     if (progress) {
@@ -137,16 +142,17 @@ export function initProjects() {
       progress.style.setProperty('--project-progress', String(visualProgress));
       progress.style.transform = `scaleX(${visualProgress})`;
       progress.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
-      progress.setAttribute('aria-valuetext', `Project ${active + 1} of ${projects.length}`);
+      progress.setAttribute('aria-valuetext', positionLabel);
       if (progress.tagName === 'PROGRESS') {
         progress.max = 100;
         progress.value = fraction * 100;
       }
     }
     if (count) {
-      const text = `${String(active + 1).padStart(2, '0')} / ${String(projects.length).padStart(2, '0')}`;
+      const range = first === last ? String(first).padStart(2, '0') : `${String(first).padStart(2, '0')}–${String(last).padStart(2, '0')}`;
+      const text = `${range} / ${String(projects.length).padStart(2, '0')}`;
       if (count.textContent !== text) count.textContent = text;
-      count.setAttribute('aria-label', `Project ${active + 1} of ${projects.length}`);
+      count.setAttribute('aria-label', positionLabel);
     }
   }
 

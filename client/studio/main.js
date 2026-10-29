@@ -1,5 +1,4 @@
-import { createHeroCity } from './scene/hero-city.js';
-import { createProcessStack } from './scene/process-stack.js';
+import { deferDecorativeScenes } from './ui/deferred-scenes.js';
 import { initProjects } from './ui/projects.js';
 import { initServices } from './ui/services.js';
 import { initNewsletter } from './ui/newsletter.js';
@@ -32,6 +31,8 @@ try { storedMotion = localStorage.getItem('groundwork-motion'); } catch { /* Sto
 let motionEnabled = storedMotion === 'on' || (storedMotion !== 'off' && !preference.matches);
 let heroScene = null;
 let processScene = null;
+let createHeroCity = null;
+let createProcessStack = null;
 let frame = 0;
 let disposed = false;
 let dirty = true;
@@ -85,6 +86,7 @@ function createScene(factory, canvas, shell) {
 }
 
 function createScenes() {
+  if (!createHeroCity || !createProcessStack) { invalidate(); return; }
   heroScene?.dispose();
   processScene?.dispose();
   heroScene = createScene(createHeroCity, heroCanvas, heroShell);
@@ -156,7 +158,7 @@ function updateHotspots() {
   });
 }
 
-// This is the only animation loop for both Three.js scenes and the opening ruler.
+// This is the only animation loop for the optional Three.js scenes.
 function render(now) {
   frame = 0;
   if (disposed || document.hidden) return;
@@ -179,47 +181,17 @@ function render(now) {
     processScene.render({ time: elapsed, progress: stageOverride ? activeStage / 4 : processProgress, activeStage });
     updateHotspots();
   }
-  updatePreloader(now);
   const moving = motionEnabled && ((heroVisible && heroScene) || (processVisible && processScene));
   const settling = heroProgress !== targetHeroProgress || processProgress !== targetProcessProgress;
-  if (moving || settling || preloaderActive) schedule();
+  if (moving || settling) schedule();
 }
 
 const preloader = document.querySelector('#preloader');
-const preloaderStart = performance.now();
-let preloaderActive = Boolean(preloader);
-let preloaderLeaving = false;
-let hideTimer;
-
 function finishPreloader() {
-  if (!preloader || preloaderLeaving) return;
-  preloaderLeaving = true;
-  preloaderActive = false;
-  preloader.classList.add('is-folded', 'is-leaving');
-  const count = document.querySelector('#loader-count');
-  if (count) count.textContent = '100';
-  preloader.setAttribute('aria-label', 'Groundwork studio ready');
-  hideTimer = setTimeout(() => {
-    if (preloader.contains(document.activeElement)) {
-      const main = document.querySelector('#main');
-      main.setAttribute('tabindex', '-1');
-      main.focus({ preventScroll: true });
-    }
-    preloader.hidden = true;
-  }, motionEnabled ? 450 : 80);
+  if (preloader) preloader.hidden = true;
 }
-
-function updatePreloader(now) {
-  if (!preloaderActive) return;
-  const age = now - preloaderStart;
-  const duration = motionEnabled ? 1800 : 160;
-  const count = document.querySelector('#loader-count');
-  if (count) count.textContent = String(Math.min(100, Math.floor(age / duration * 100))).padStart(3, '0');
-  if (age > (motionEnabled ? 340 : 0)) preloader.classList.add('is-folded');
-  if (age >= duration) finishPreloader();
-}
+finishPreloader();
 on(document.querySelector('#skip-preloader'), 'click', finishPreloader);
-const preloaderSafety = setTimeout(finishPreloader, 2800);
 
 const menuToggle = document.querySelector('#menu-toggle');
 const mobileNav = document.querySelector('#mobile-nav');
@@ -308,14 +280,30 @@ if (year) year.textContent = String(new Date().getFullYear());
 const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(invalidate) : null;
 resizeObserver?.observe(document.querySelector('#main'));
 document.fonts?.ready.then(() => { if (!disposed) invalidate(); });
-createScenes();
+invalidate();
+cleanup.push(deferDecorativeScenes(async () => {
+  try {
+    const [heroModule, processModule] = await Promise.all([
+      import('./scene/hero-city.js'),
+      import('./scene/process-stack.js'),
+    ]);
+    if (disposed) return;
+    createHeroCity = heroModule.createHeroCity;
+    createProcessStack = processModule.createProcessStack;
+    createScenes();
+  } catch {
+    // Text, navigation and CSS architecture illustrations remain usable.
+    if (!disposed) {
+      heroShell?.classList.add('is-unavailable');
+      processShell?.classList.add('is-unavailable');
+    }
+  }
+}));
 
 function dispose() {
   if (disposed) return;
   disposed = true;
   if (frame) cancelAnimationFrame(frame);
-  clearTimeout(preloaderSafety);
-  clearTimeout(hideTimer);
   resizeObserver?.disconnect();
   cleanup.forEach((remove) => remove());
   heroScene?.dispose();

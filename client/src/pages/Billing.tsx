@@ -17,8 +17,8 @@ const METHOD_ICONS: Record<string, string> = {
 
 const PLAN_FEATURES: Record<string, string[]> = {
   free: ["1 active project", "Photo upload", "PNG/PDF preview", "Community support"],
-  pro: ["Unlimited projects", "DXF + OBJ + GLB exports", "TOTP 2FA & audit log", "Bill of materials CSV", "Email support"],
-  studio: ["Everything in Pro", "AutoCAD connector priority", "Client sharing links", "White-label exports", "Priority support"],
+  pro: ["Unlimited projects", "DXF + OBJ + GLB exports", "Bill of materials CSV", "Email support"],
+  studio: ["Everything in Pro", "CAD workflow support (check live availability)", "Client sharing links", "White-label exports", "Priority support"],
 };
 
 export function Billing() {
@@ -91,6 +91,8 @@ export function Billing() {
         {isDemo && <Badge tone="amber">Demo payments · no real charge</Badge>}
         </>
       } />
+
+      <Card className="p-5"><h2 className="font-semibold">Know what your plan includes</h2><p className="mt-2 text-sm text-slate-300">Account security controls are in Settings. Native CAD conversion, solver execution and rendering depend on configured services; a subscription does not enable an unavailable worker. Check readiness in the relevant workbench.</p><a href="/workspace-guide.html#capabilities" className="mt-2 inline-block text-sm underline">Review supported workflows and output limits</a></Card>
 
       {loadError && <Card className="p-5"><p role="alert" className="text-sm text-rose-300">{loadError}</p><Button variant="secondary" className="mt-3" onClick={() => void load()}>Try again</Button></Card>}
       {loading ? (

@@ -21,9 +21,6 @@ export function Signup() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [country, setCountry] = useState("IN");
-  const [phone, setPhone] = useState("");
-  const [accountType, setAccountType] = useState<"individual" | "business">("individual");
-  const [gstin, setGstin] = useState("");
   const [countries, setCountries] = useState<CountryOption[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -87,20 +84,12 @@ export function Signup() {
       setError("Passwords do not match");
       return;
     }
-    if (accountType === "business") {
-      if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(gstin.trim().toUpperCase())) {
-        setError("Enter a valid GSTIN for business accounts");
-        return;
-      }
-    }
     setLoading(true);
     try {
       const res = await signup(email.trim(), password, confirm, {
         username: username.trim(),
         country,
-        phone: phone.trim() || undefined,
-        accountType,
-        gstin: accountType === "business" ? gstin.trim().toUpperCase() : undefined,
+        accountType: "individual",
       });
       if (res.needsEmailVerification) {
         emailRef.current = email.trim();
@@ -277,23 +266,6 @@ export function Signup() {
               required
             />
 
-            <div>
-              <span className="text-sm font-medium text-slate-300">Account type</span>
-              <div className="mt-1.5 grid grid-cols-2 gap-2">
-                {(["individual", "business"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setAccountType(t)}
-                    aria-pressed={accountType === t}
-                    className="public-auth-account rounded-lg px-3 py-2 text-xs font-medium transition"
-                  >
-                    {t === "individual" ? "Individual" : "Business"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <Select label="Country" value={country} onChange={(e) => setCountry(e.target.value)}>
               {countries.length === 0 && <option value="IN">India</option>}
               {countries.map((c) => (
@@ -303,25 +275,7 @@ export function Signup() {
               ))}
             </Select>
 
-            <Input
-              label="Phone (optional)"
-              type="tel"
-              autoComplete="tel"
-              placeholder="+91 98765 43210"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-            />
-
-            {accountType === "business" && (
-              <Input
-                label="GSTIN"
-                placeholder="22AAAAA0000A1Z5"
-                value={gstin}
-                onChange={(e) => setGstin(e.target.value)}
-                maxLength={15}
-              />
-            )}
-
+            <p className="text-sm text-slate-400">Business and billing details can be added in Settings after sign-in. Read <a href="/privacy.html" className="underline">how your account and local project copies are handled</a> and the <a href="/use-and-limitations.html" className="underline">output limitations</a> before creating an account.</p>
             {error && <p role="alert" className="text-sm text-rose-400">{error}</p>}
             <Button type="submit" loading={loading} className="w-full" size="lg">
               Create account

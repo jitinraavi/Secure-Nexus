@@ -612,6 +612,8 @@ export interface DocumentationView {
   scale: string;
   orientation: DocumentationOrientation;
   levelId?: string;
+  /** Explicit vertical world-metre cut plane. Absent values never imply a section. */
+  section?: { axis: "x" | "z"; offsetM: number };
   visible: boolean;
 }
 
