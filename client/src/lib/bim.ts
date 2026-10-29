@@ -42,7 +42,7 @@ export function buildBimExchange(design: Design): string {
   const room = design.room;
   entities.push(entity("room", "SPACE", {
     name: "Room shell",
-    geometry: { kind: "box", widthM: room.widthMm / 1000, depthM: room.depthMm / 1000, heightM: room.wallHeightMm / 1000 },
+    geometry: { kind: "box", xM: room.widthMm / 2000, zM: room.depthMm / 2000, widthM: room.widthMm / 1000, depthM: room.depthMm / 1000, heightM: room.wallHeightMm / 1000 },
     properties: { wallColor: room.wallColor, floorColor: room.floorColor },
   }));
   const roomWidth = room.widthMm / 1000;
@@ -61,8 +61,8 @@ export function buildBimExchange(design: Design): string {
     }),
     entity("room-wall-north", "WALL", { name: "North wall", geometry: { kind: "box", xM: roomWidth / 2, zM: 0, widthM: roomWidth, depthM: 0.15, heightM: roomHeight } }),
     entity("room-wall-south", "WALL", { name: "South wall", geometry: { kind: "box", xM: roomWidth / 2, zM: roomDepth, widthM: roomWidth, depthM: 0.15, heightM: roomHeight } }),
-    entity("room-wall-east", "WALL", { name: "East wall", geometry: { kind: "box", xM: roomWidth, zM: roomDepth / 2, widthM: 0.15, depthM: roomDepth, heightM: roomHeight, rotationDeg: 90 } }),
-    entity("room-wall-west", "WALL", { name: "West wall", geometry: { kind: "box", xM: 0, zM: roomDepth / 2, widthM: 0.15, depthM: roomDepth, heightM: roomHeight, rotationDeg: 90 } }),
+    entity("room-wall-east", "WALL", { name: "East wall", geometry: { kind: "box", xM: roomWidth, zM: roomDepth / 2, widthM: 0.15, depthM: roomDepth, heightM: roomHeight } }),
+    entity("room-wall-west", "WALL", { name: "West wall", geometry: { kind: "box", xM: 0, zM: roomDepth / 2, widthM: 0.15, depthM: roomDepth, heightM: roomHeight } }),
   );
 
   for (const item of design.furniture) {
@@ -90,7 +90,7 @@ export function buildBimExchange(design: Design): string {
       entities.push(entity(opening.id, opening.kind === "door" ? "DOOR" : opening.kind === "window" ? "WINDOW" : "OPENING_INTENT", {
         name: `${opening.kind} in ${draft.label ?? draft.id}`, levelId: draft.family?.levelId,
         geometry: { kind: "opening", xM: draft.x + opening.offsetM * Math.cos(angle), zM: draft.z - opening.offsetM * Math.sin(angle), yM: resolved.elevation + opening.sillM, widthM: opening.widthM, depthM: resolved.depth, heightM: opening.heightM, rotationDeg: draft.rotationDeg },
-        properties: { hostId: draft.id, cadHostedOpening: true, openingKind: opening.kind, approximation: opening.kind === "void" ? "Unfilled CAD void is retained as an intent proxy; an IFC host boolean void relationship is unavailable for this unfilled type." : "Authored rectangular wall opening; generic fill geometry without frame, hardware or fabrication details." },
+        properties: { hostId: draft.id, cadHostedOpening: true, openingKind: opening.kind, approximation: opening.kind === "void" ? "Authored rectangular unfilled wall void; exported with an IFC host void relationship and no fill." : "Authored rectangular wall opening; generic fill geometry without frame, hardware or fabrication details." },
       }));
     }
     for (const message of parametricIssues(draft, levels)) entities.push(entity(`${draft.id}-validation-${message}`, "VALIDATION", { properties: { sourceId: draft.id, message } }));
@@ -359,7 +359,18 @@ export function validateIfcStep(step: string): IfcValidationReport {
     const match = relation.fields.match(/\(([^)]*)\),#(\d+)$/);
     if (match) for (const ref of references(match[1])) contained.add(ref);
   }
-  for (const entity of parsed.entities.filter((item) => productTypes.has(item.type))) if (!contained.has(entity.id)) issues.push({ code: "missing-containment", message: `${entity.type} #${entity.id} is not contained by a building storey.`, severity: "error", entityId: entity.id });
+  const aggregatedSpaces = new Set<number>();
+  for (const relation of byType("IFCRELAGGREGATES")) {
+    const fields = stepFields(relation.fields), parent = byId.get(Number(fields[4]?.replace("#", "")));
+    if (parent?.type === "IFCBUILDINGSTOREY") for (const ref of references(fields[5] ?? "")) aggregatedSpaces.add(ref);
+  }
+  for (const entity of parsed.entities.filter((item) => productTypes.has(item.type))) {
+    if (entity.type === "IFCSPACE") {
+      if (!aggregatedSpaces.has(entity.id) || contained.has(entity.id)) issues.push({ code: "space-decomposition", message: `IFCSPACE #${entity.id} must be aggregated beneath a building storey, not contained as an element.`, severity: "error", entityId: entity.id });
+    } else if (entity.type === "IFCOPENINGELEMENT") {
+      if (contained.has(entity.id)) issues.push({ code: "opening-containment", message: `Opening #${entity.id} is placed by its host void relationship, not storey containment.`, severity: "error", entityId: entity.id });
+    } else if (!contained.has(entity.id)) issues.push({ code: "missing-containment", message: `${entity.type} #${entity.id} is not contained by a building storey.`, severity: "error", entityId: entity.id });
+  }
 
   const propertyTargets = new Set<number>();
   const quantityTargets = new Set<number>();
@@ -375,11 +386,12 @@ export function validateIfcStep(step: string): IfcValidationReport {
     if (!quantityTargets.has(entity.id)) issues.push({ code: "missing-quantity-set", message: `${entity.type} #${entity.id} has no quantity set.`, severity: "error", entityId: entity.id });
   }
   const openingIds = new Set(byType("IFCOPENINGELEMENT").map((entity) => entity.id));
-  const voidIds = new Set(byType("IFCRELVOIDSELEMENT").flatMap((entity) => references(entity.fields)));
-  const fillIds = new Set(byType("IFCRELFILLSELEMENT").flatMap((entity) => references(entity.fields)));
+  const voidIds = new Set(byType("IFCRELVOIDSELEMENT").map(entity => Number(stepFields(entity.fields)[5]?.replace("#", ""))));
+  const fillIds = new Set(byType("IFCRELFILLSELEMENT").map(entity => Number(stepFields(entity.fields)[4]?.replace("#", ""))));
+  const unfilledGuids = new Set(inspectGroundworkIfcSources(step).entities.filter(item => item.type === "OPENING_INTENT" && item.properties?.cadHostedOpening).map(item => ifcSourceGuid(item.id)));
   for (const opening of openingIds) {
     if (!voidIds.has(opening)) issues.push({ code: "opening-host-missing", message: `Opening #${opening} has no IFCRELVOIDSELEMENT relationship.`, severity: "error", entityId: opening });
-    if (!fillIds.has(opening)) issues.push({ code: "opening-fill-missing", message: `Opening #${opening} has no IFCRELFILLSELEMENT relationship.`, severity: "error", entityId: opening });
+    if (!fillIds.has(opening) && !unfilledGuids.has(firstString(byId.get(opening)!.fields) ?? "")) issues.push({ code: "opening-fill-missing", message: `Opening #${opening} has neither an authored unfilled-void declaration nor an IFCRELFILLSELEMENT relationship.`, severity: "error", entityId: opening });
   }
   const sourceTypes = parsed.entities.map((entity) => entity.line).join("\n");
   const hasMepSource = /IFCLABEL\('MEP_(DUCT|PIPE|CABLE_TRAY|EQUIPMENT|FIXTURE)'\)/.test(sourceTypes);
@@ -471,7 +483,7 @@ export function validateIfcProfile(step: string, profile: IfcMvdProfile = "coord
 
   if (profile === "reference-view" || profile === "design-transfer") {
     require("materials", count("IFCMATERIAL") > 0 || /Material/i.test(step), "Reference exchange should retain material intent.");
-    require("openings", count("IFCOPENINGELEMENT") === 0 || (count("IFCRELVOIDSELEMENT") > 0 && count("IFCRELFILLSELEMENT") > 0), "Hosted openings must preserve void/fill relationships.");
+    require("openings", !base.issues.some(issue => issue.severity === "error" && issue.code.startsWith("opening-")), "Each hosted opening must retain its void relationship and either its filling or an authored unfilled-void declaration.");
     require("georeferencing", count("IFCMAPCONVERSION") > 0 || count("IFCSITE") > 0, "Site/georeferencing context must be represented.");
   }
   if (profile === "design-transfer") {
@@ -528,11 +540,11 @@ export function buildIfcStep(design: Design): string {
     rows.push(`#${id}=${type}(${fields});`);
     return id;
   };
-  const owner = add("IFCPERSON", "$,$,'Groundwork',$,$,$,$");
+  const owner = add("IFCPERSON", "$,$,'Groundwork',$,$,$,$,$");
   const org = add("IFCORGANIZATION", "$,'Groundwork',$,$,$");
   const personOrg = add("IFCPERSONANDORGANIZATION", `#${owner},#${org},$`);
   const application = add("IFCAPPLICATION", `#${org},'1.0','Groundwork Design Studio','GROUNDWORK'`);
-  const history = add("IFCOWNERHISTORY", `#${personOrg},#${application},$,.ADDED.,$,$,$,0`);
+  const history = add("IFCOWNERHISTORY", `#${personOrg},#${application},$,.ADDED.,0,$,$,0`);
   const origin = add("IFCCARTESIANPOINT", "(0.,0.,0.)");
   const up = add("IFCDIRECTION", "(0.,0.,1.)");
   const east = add("IFCDIRECTION", "(1.,0.,0.)");
@@ -651,6 +663,7 @@ export function buildIfcStep(design: Design): string {
     add("IFCRELDEFINESBYPROPERTIES", `'${guid(`quantity-rel:${item.id}`)}',#${history},'Base quantities',$,(#${product}),#${quantitySet}`, `quantity-rel:${item.id}`);
   };
   const typedClass = (item: ExchangeEntity) => {
+    if (item.type === "OPENING_INTENT" && item.properties?.cadHostedOpening) return "IFCOPENINGELEMENT";
     if (item.type === "WALL" || item.type === "FACADE_PANEL" || item.type === "DRAFT_WALL") return "IFCWALL";
     if (item.type === "DRAFT_SLAB") return "IFCSLAB";
     if (item.type === "DRAFT_COLUMN") return "IFCCOLUMN";
@@ -711,31 +724,36 @@ export function buildIfcStep(design: Design): string {
     const suffix = type === "IFCSPACE" ? ",.ELEMENT.,.NOTDEFINED.,$"
       : ["IFCWALL", "IFCSLAB", "IFCROOF", "IFCCOLUMN", "IFCBEAM", "IFCUNITARYEQUIPMENT"].includes(type) ? ",.NOTDEFINED."
       : type === "IFCDOOR" || type === "IFCWINDOW" ? ",$,$,.NOTDEFINED.,.NOTDEFINED.,$"
+      : type === "IFCOPENINGELEMENT" ? ",.OPENING."
       : type === "IFCBUILDINGELEMENTPROXY" ? ",.NOTDEFINED."
       : "";
     const id = add(type, `${base}${suffix}`);
     productBySource.set(item.id, id);
     if (item.type === "WALL" || item.type === "FACADE_PANEL" || item.type === "DRAFT_WALL") hostBySource.set(item.id, id);
-    storeyProducts.get(storey)?.push(id);
+    if (type === "IFCSPACE") aggregate("Storey space", storey, [id], `storey-space:${item.id}`);
+    else if (type !== "IFCOPENINGELEMENT") storeyProducts.get(storey)?.push(id);
     pset(id, item, dims);
     const materialName = String(item.properties?.material ?? item.properties?.color ?? "Unspecified");
-    add("IFCRELASSOCIATESMATERIAL", `'${guid(`material-rel:${item.id}`)}',#${history},$,$,(#${id}),#${material(materialName)}`, `material-rel:${item.id}`);
+    if (type !== "IFCSPACE" && type !== "IFCOPENINGELEMENT") add("IFCRELASSOCIATESMATERIAL", `'${guid(`material-rel:${item.id}`)}',#${history},$,$,(#${id}),#${material(materialName)}`, `material-rel:${item.id}`);
     return id;
   });
   void products;
   for (const item of exchange.entities) {
-    if (item.type !== "DOOR" && item.type !== "WINDOW") continue;
+    const unfilled = item.type === "OPENING_INTENT" && item.properties?.cadHostedOpening;
+    if (item.type !== "DOOR" && item.type !== "WINDOW" && !unfilled) continue;
     const fill = productBySource.get(item.id);
     const wallKey = item.properties?.wall ? `room-wall-${String(item.properties.wall)}` : undefined;
     const host = hostBySource.get(String(item.properties?.hostId ?? wallKey ?? ""));
     if (!fill || !host) continue;
+    if (unfilled) {
+      add("IFCRELVOIDSELEMENT", `'${guid(`void:${item.id}`)}',#${history},'Unfilled opening host',$,#${host},#${fill}`, `void:${item.id}`);
+      continue;
+    }
     const openingShape = boxShape(item, dimensions(item));
     const geometry = item.geometry ?? {};
     const openingPlacement = placement(Number(geometry.xM) || 0, Number(geometry.zM) || 0, Number(geometry.yM) || 0, (Number(geometry.rotationDeg) || 0) * (item.properties?.cadHostedOpening ? -1 : 1), undefined, item.properties?.cadHostedOpening ? 6 : 3);
     const opening = add("IFCOPENINGELEMENT", `'${guid(`opening:${item.id}`)}',#${history},${ifcText(`${item.name ?? item.type} void`)},'Host void is approximate',$,#${openingPlacement},${openingShape ? `#${openingShape}` : "$"},$,.OPENING.`, `opening:${item.id}`);
     pset(opening, { ...item, id: `opening:${item.id}`, type: "OPENING" }, dimensions(item));
-    const openingStorey = storeyIds.get(item.levelId || "default") ?? storeyIds.get("default");
-    if (openingStorey) storeyProducts.get(openingStorey)?.push(opening);
     add("IFCRELVOIDSELEMENT", `'${guid(`void:${item.id}`)}',#${history},'Opening host',$,#${host},#${opening}`, `void:${item.id}`);
     add("IFCRELFILLSELEMENT", `'${guid(`fill:${item.id}`)}',#${history},'Opening fill',$,#${opening},#${fill}`, `fill:${item.id}`);
   }

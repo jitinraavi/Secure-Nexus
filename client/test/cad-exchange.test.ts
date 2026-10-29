@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { defaultDesign, type Design, type DraftElement } from "../src/types";
 import { cadFootprintArea, cadQuantities, createCadObject, executeCadCommand, localCadAxis, resizeDraft, resolveCadSnap } from "../src/lib/cadModel";
 import { buildDxf } from "../src/lib/dxf";
-import { buildBimExchange, buildIfcStep, validateIfcStep } from "../src/lib/bim";
+import { buildBimExchange, buildIfcStep, ifcSourceGuid, validateIfcProfile, validateIfcStep } from "../src/lib/bim";
 import { documentationInventory } from "../src/lib/documentationSchedule";
 import { buildObjMtl } from "../src/lib/obj";
 
@@ -118,6 +118,34 @@ test("polygon exchange preserves its authored footprint and net quantities", () 
   assert.match(ifc, /IFCCARTESIANPOINT\(\(2\.000000,-0\.500000\)\)/);
   assert.match(ifc, /IFCQUANTITYVOLUME\('GrossVolume',\$,\$,1\.600000,\$\)/);
   assert.equal(validateIfcStep(ifc).valid, true);
+});
+
+test("unfilled authored IFC voids retain their host and pass reference-view preflight without an invented fill", () => {
+  const wall = { ...createCadObject("wall"), id: "void-host", openings: [{ id: "unfilled-void", kind: "void" as const, widthM: 1, heightM: 2, offsetM: 0, sillM: 0 }] };
+  const ifc = buildIfcStep(project(wall));
+  const opening = ifc.split("\n").find(line => line.includes(`=IFCOPENINGELEMENT('${ifcSourceGuid("unfilled-void")}'`));
+  assert.ok(opening, "Authored void must be an actual IfcOpeningElement");
+  const openingId = opening.match(/^#(\d+)=/)![1];
+  assert.match(ifc, new RegExp(`=IFCRELVOIDSELEMENT\\([^\\n]+,#${openingId}\\);`));
+  assert.doesNotMatch(ifc, /=IFCRELFILLSELEMENT\(/, "An authored unfilled void must not acquire a fictitious fill");
+  assert.equal(validateIfcStep(ifc).valid, true);
+  const profile = validateIfcProfile(ifc, "reference-view");
+  assert.equal(profile.valid, true, JSON.stringify(profile.issues));
+
+  const noHost = ifc.split("\n").filter(line => !line.includes("=IFCRELVOIDSELEMENT(")).join("\n");
+  assert.ok(validateIfcStep(noHost).issues.some(issue => issue.code === "opening-host-missing"), "Missing unfilled-void hosts must still fail preflight");
+});
+
+test("IFC spaces require storey decomposition and openings stay out of ordinary spatial containment", () => {
+  const wall = { ...createCadObject("wall"), openings: [{ id: "space-window", kind: "window" as const, widthM: 1, heightM: 1, offsetM: 0, sillM: 1 }] };
+  const ifc = buildIfcStep(project(wall));
+  assert.equal(validateIfcStep(ifc).valid, true);
+  const noSpaceDecomposition = ifc.split("\n").filter(line => !line.includes("'Storey space'")).join("\n");
+  assert.ok(validateIfcStep(noSpaceDecomposition).issues.some(issue => issue.code === "space-decomposition"));
+  const openingId = ifc.match(/^#(\d+)=IFCOPENINGELEMENT\(/m)![1];
+  const containedOpening = ifc.replace(/(=IFCRELCONTAINEDINSPATIALSTRUCTURE\([^\n]*,\()([^)]*)(\),#\d+\);)/, `$1$2,#${openingId}$3`);
+  assert.notEqual(containedOpening, ifc, "Fixture must add the opening to an existing containment relation");
+  assert.ok(validateIfcStep(containedOpening).issues.some(issue => issue.code === "opening-containment"));
 });
 
 test("snapping rejects polygon cutouts, wall voids, and invented 2D bounding-box faces", () => {

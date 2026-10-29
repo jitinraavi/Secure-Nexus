@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Badge, Button, Input, Modal, Select } from "./ui";
 import { useToast } from "./Toast";
@@ -13,6 +13,7 @@ import { buildIfcStep, inspectGroundworkIfcSources, validateIfcProfile, validate
 import { buildBcfZip } from "../lib/bcf";
 import { technicalGraphicsSettings } from "../lib/technicalGraphics";
 import { engineeringExchangeProvenance } from "../lib/exchangeProvenance";
+import { cadLevels, cadObjects } from "../lib/cadModel";
 
 export function DesignExportMenu({ design, projectName, onChange }: { design: Design; projectName?: string; onChange?: (design: Design) => void }) {
   const { id: projectId } = useParams<{ id: string }>();
@@ -74,8 +75,8 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
     try {
     const { buildSheetPdf } = await import("../lib/sheets");
     const blob = new Blob([buildSheetPdf(projectName || "Untitled project", design)], { type: "application/pdf" });
-    downloadBlob(`${stem}-schematic-sheets.pdf`, blob);
-    toast.push({ title: "Schematic PDF downloaded", description: "Not to scale; not for construction. Stored scale and orientation are metadata only.", tone: "success" });
+    downloadBlob(`${stem}-review-sheets.pdf`, blob);
+    toast.push({ title: "Review PDF downloaded", description: "CAD plan/elevation/section pages declare scale or NTS; print at 100% and check the scale bar. Not for construction.", tone: "success" });
     setOpen(false);
     } catch (error) {
       toast.push({ title: "PDF export failed", description: error instanceof Error ? error.message : "Could not export the selected sheets.", tone: "error" });
@@ -90,10 +91,10 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
   return (
     <>
       <Button variant="secondary" size="sm" onClick={() => setOpen(true)} aria-label="Open documentation and export options">Docs / exports</Button>
-      <Modal open={open} onClose={() => setOpen(false)} title="Documentation and exchange exports">
+      <Modal open={open} onClose={() => setOpen(false)} title="Documentation and exchange exports" wide>
         <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-          <p className="font-semibold">Schematic review outputs · not to scale · not for construction</p>
-          <p className="mt-1">PDF geometry is fitted to each page. Views show room/site envelopes and supported schematic symbols; authored CAD objects are not drawn. Schedules list supported model records. Recorded scale and orientation do not control the drawing. IFC and DXF are planning/coordination exchanges with explicit geometry limits; independently verify dimensions and fidelity in your authoring tools.</p>
+          <p className="font-semibold">Review outputs · each drawing declares its scale · not for construction</p>
+          <p className="mt-1">Authored CAD top/elevation projections and explicitly defined vertical section cuts use physical 1:n scale, or explicit NTS. Oversized scaled drawings are blocked instead of shrunk. Paper is US Letter landscape (279.4 × 215.9 mm); print at 100% and check the scale bar. Elevations show projected edges without hidden-line removal; sections show intersected solids at the declared plane. Legacy room/site illustrations remain schematic and not to scale; generated site, furniture and MEP geometry are outside the CAD drawing scope. Verify exchange dimensions and fidelity in your authoring tools.</p>
         </div>
         <div className="mb-4 rounded-xl border border-slate-700 bg-slate-950/40 p-3">
           <p className="gw-kicker">Sheet set metadata</p>
@@ -187,7 +188,7 @@ export function DesignExportMenu({ design, projectName, onChange }: { design: De
             }} />
           </label>
           {importSummary && <p className="text-xs text-slate-400">{importSummary}</p>}
-           <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download schematic PDF · not to scale</Button>
+           <Button className="sm:col-span-2" onClick={() => void exportSheets()}>Download review PDF</Button>
         </div>
       </Modal>
     </>
@@ -211,9 +212,10 @@ function DocumentationEditor({
 }) {
   const inventory = useMemo(() => documentationInventory(design), [design]);
   const warnings = useMemo(() => documentationIssues(design), [design]);
+  const hasCad = cadObjects(design).length > 0;
   const bindings = (values: string[], target: string, selected: boolean) => selected ? [...new Set([...values, target])] : values.filter(value => value !== target);
   const id = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const addView = () => add("views", { id: id(), name: "New view", kind: "plan", scale: "NTS", orientation: "north", visible: true });
+  const addView = () => add("views", { id: id(), name: "New view", kind: "plan", scale: hasCad ? "1:100" : "NTS", orientation: "north", visible: true });
   const addSheet = () => add("sheets", { id: id(), number: "A-000", name: "New sheet", viewIds: [] });
   const addAnnotation = () => add("annotations", { id: id(), text: "New annotation", tag: "NOTE" });
   const addSchedule = () => add("schedules", { id: id(), name: "New schedule", category: "objects", fields: ["Category", "Name", "Quantity"], filters: [], sortDirection: "asc" });
@@ -221,7 +223,7 @@ function DocumentationEditor({
   return (
     <div className="space-y-3">
       {warnings.length > 0 && <div className="max-h-32 overflow-auto rounded-lg border border-amber-500/30 p-2 text-xs text-amber-200">{warnings.map(warning => <p key={warning}>{warning}</p>)}</div>}
-      <p className="text-xs text-slate-400">Schedules refresh from saved model occurrences. All PDF pages are schematic and not to scale. Previously recorded scale and orientation are preserved below as read-only metadata; they do not control the PDF projection.</p>
+      <p className="text-xs text-slate-400">Schedules refresh from saved model occurrences. Authored CAD plan/elevation views and defined vertical section cuts support physical scales such as 1:100; NTS fits geometry and is marked unscaled. Other illustrations retain scale/orientation as read-only metadata. Define a section plane explicitly before a CAD section can be drawn. Directions follow local model axes; they do not establish survey north.</p>
       <DocSection title="Sheets" addLabel="Add sheet" onAdd={addSheet}>
         {docs.sheets.map((sheet) => <div key={sheet.id} className="space-y-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2"><div className="grid gap-2 sm:grid-cols-[.7fr_1fr_1fr_auto]">
           <Input aria-label="Sheet number" value={sheet.number} onChange={(e) => update<DocumentationSheet>("sheets", sheet.id, { number: e.target.value })} />
@@ -234,14 +236,22 @@ function DocumentationEditor({
           <div className="flex flex-wrap gap-2 text-xs text-slate-400"><span>Revisions:</span><label className="flex items-center gap-1"><input type="checkbox" checked={sheet.revisionIds === undefined} onChange={event => update<DocumentationSheet>("sheets", sheet.id, { revisionIds: event.target.checked ? undefined : [] })} />All project revisions</label>{sheet.revisionIds !== undefined && docs.revisions.map(revision => <label key={revision.id} className="flex items-center gap-1"><input type="checkbox" checked={sheet.revisionIds!.includes(revision.id)} onChange={event => update<DocumentationSheet>("sheets", sheet.id, { revisionIds: bindings(sheet.revisionIds ?? [], revision.id, event.target.checked) })} />{revision.number}</label>)}</div>
         </div>)}
       </DocSection>
-      <DocSection title="Schematic views and recorded metadata" addLabel="Add view" onAdd={addView}>
-        {docs.views.map((view) => <div key={view.id} className="grid gap-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2 sm:grid-cols-[1fr_auto_auto_auto_auto_auto]">
+      <DocSection title="Drawing views and recorded metadata" addLabel="Add view" onAdd={addView}>
+        {docs.views.map((view) => <div key={view.id} className="grid gap-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2 sm:grid-cols-2">
           <Input aria-label="View name" value={view.name} onChange={(e) => update<DocumentationView>("views", view.id, { name: e.target.value })} />
-          <Select aria-label="View kind" value={view.kind} onChange={(e) => update<DocumentationView>("views", view.id, { kind: e.target.value as DocumentationView["kind"] })}><option value="plan">Plan</option><option value="elevation">Elevation</option><option value="section">Section</option><option value="detail">Detail</option><option value="schedule">Schedule</option></Select>
-          <Input label="Recorded scale (metadata only)" value={view.scale} readOnly className="w-36" />
-          <Input label="Recorded orientation (metadata only)" value={view.orientation} readOnly className="w-40" />
+          <Select aria-label="View kind" value={view.kind} onChange={(e) => {
+            const kind = e.target.value as DocumentationView["kind"];
+            const compatible = view.section?.axis === "x" ? view.orientation === "east" || view.orientation === "west" : view.orientation === "north" || view.orientation === "south";
+            update<DocumentationView>("views", view.id, { kind, ...(kind === "section" && view.section && !compatible ? { orientation: view.section.axis === "x" ? "east" : "north" } : {}) });
+          }}><option value="plan">Plan</option><option value="elevation">Elevation</option><option value="section">Section</option><option value="detail">Detail</option><option value="schedule">Schedule</option></Select>
+          {hasCad && (view.kind === "plan" || view.kind === "elevation" || view.kind === "section" && view.section) ? <>
+            <Input label="Drawing scale (1:n or NTS)" value={view.scale} onChange={e => update<DocumentationView>("views", view.id, { scale: e.target.value })} />
+            <Select label={view.kind === "section" ? "Section look direction" : "Drawing orientation"} value={view.orientation} onChange={e => update<DocumentationView>("views", view.id, { orientation: e.target.value as DocumentationView["orientation"] })}>{(view.kind !== "section" || view.section?.axis === "z") && <><option value="north">North</option><option value="south">South</option></>}{(view.kind !== "section" || view.section?.axis === "x") && <><option value="east">East</option><option value="west">West</option></>}{view.orientation === "custom" && <option value="custom" disabled>Custom (unsupported)</option>}</Select>
+          </> : <><Input label="Recorded scale (metadata only)" value={view.scale} readOnly /><Input label="Recorded orientation (metadata only)" value={view.orientation} readOnly /></>}
           <label className="flex items-center gap-1 px-2 text-xs text-slate-400"><input type="checkbox" checked={view.visible} onChange={(e) => update<DocumentationView>("views", view.id, { visible: e.target.checked })} /> Visible</label>
           <Button variant="danger" size="sm" onClick={() => remove("views", view.id)}>Delete</Button>
+          {hasCad && (view.kind === "plan" || view.kind === "elevation" || view.kind === "section") && <div className="space-y-1 sm:col-span-2"><Select label="Drawing level scope" value={view.levelId ?? ""} onChange={event => update<DocumentationView>("views", view.id, { levelId: event.target.value || undefined })}><option value="">All authored CAD objects</option>{view.levelId && !cadLevels(design).some(level => level.id === view.levelId) && <option value={view.levelId}>Missing level ({view.levelId})</option>}{cadLevels(design).map(level => <option key={level.id} value={level.id}>{level.name}</option>)}</Select><p className="text-xs text-slate-400">A selected level includes only objects explicitly hosted on it. Other levels and unhosted objects are omitted and counted in the PDF coverage notes.</p></div>}
+          {hasCad && view.kind === "section" && <div className="sm:col-span-2"><SectionPlaneEditor view={view} update={patch => update<DocumentationView>("views", view.id, patch)} /></div>}
         </div>)}
       </DocSection>
       <DocSection title="Annotations and tags" addLabel="Add annotation" onAdd={addAnnotation}>
@@ -269,6 +279,28 @@ function DocumentationEditor({
       </DocSection>
     </div>
   );
+}
+
+function SectionPlaneEditor({ view, update }: { view: DocumentationView; update: (patch: Partial<DocumentationView>) => void }) {
+  const [offset, setOffset] = useState(String(view.section?.offsetM ?? 0));
+  const [error, setError] = useState("");
+  const id = useId();
+  useEffect(() => { setOffset(String(view.section?.offsetM ?? 0)); setError(""); }, [view.section?.offsetM]);
+  if (!view.section) return <div className="space-y-2 border-t border-slate-700 pt-2 text-xs text-slate-400"><p>No cut plane is defined. The PDF will show a section-unavailable notice until you explicitly define one.</p><Button size="sm" variant="secondary" onClick={() => update({ section: { axis: "z", offsetM: 0 }, orientation: "north" })}>Define vertical section plane</Button></div>;
+  const commit = () => {
+    const value = Number(offset);
+    if (!offset.trim() || !Number.isFinite(value) || Math.abs(value) > 1_000_000) { setError("Enter a finite model coordinate between -1000000 and 1000000 metres."); return; }
+    update({ section: { axis: view.section!.axis, offsetM: value } }); setError("");
+  };
+  return <div className="space-y-2 border-t border-slate-700 pt-2"><div className="grid gap-2 sm:grid-cols-2">
+    <Select label="Section plane axis" value={view.section.axis} onChange={event => {
+      const axis = event.target.value as "x" | "z";
+      const compatible = axis === "x" ? view.orientation === "east" || view.orientation === "west" : view.orientation === "north" || view.orientation === "south";
+      update({ section: { ...view.section!, axis }, orientation: compatible ? view.orientation : axis === "x" ? "east" : "north" });
+    }}><option value="z">Constant Z plane</option><option value="x">Constant X plane</option></Select>
+    <Input label="Section plane coordinate (m)" type="number" step="any" value={offset} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} onChange={event => { setOffset(event.target.value); setError(""); }} onBlur={commit} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } if (event.key === "Escape") { event.preventDefault(); setOffset(String(view.section!.offsetM)); setError(""); } }} />
+    <Button variant="outline" size="sm" onClick={() => update({ section: undefined })}>Remove cut plane</Button>
+  </div><p className="text-xs text-slate-400">The cut intersects supported authored CAD solids at {view.section.axis.toUpperCase()} = {view.section.offsetM} m in local model coordinates. It does not display geometry beyond the plane. Top/elevation wireframes, generated site forms and MEP are separate scopes.</p>{error && <p id={`${id}-error`} role="alert" className="text-xs text-rose-300">{error}</p>}</div>;
 }
 
 function LiveScheduleEditor({ design, schedule, inventory, stem, update, remove }: {
@@ -318,4 +350,3 @@ function LiveScheduleEditor({ design, schedule, inventory, stem, update, remove 
 function DocSection({ title, addLabel, onAdd, children }: { title: string; addLabel: string; onAdd: () => void; children: React.ReactNode }) {
   return <section className="rounded-xl border border-slate-700 bg-slate-950/30 p-3"><div className="mb-2 flex items-center justify-between"><p className="gw-kicker">{title}</p><Button variant="outline" size="sm" onClick={onAdd}>{addLabel}</Button></div><div className="space-y-2">{children}</div></section>;
 }
-
