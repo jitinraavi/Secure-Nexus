@@ -2,8 +2,17 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "buildCommand": "node scripts/deploy-after-ci.mjs --build-guard && npm run build",
-  "git": { "deploymentEnabled": { "main": false } },
-  "crons": [{ "path": "/api/ops/check", "schedule": "0 8 * * *" }],
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/ops/check",
+      "schedule": "0 8 * * *"
+    }
+  ],
   "installCommand": "npm ci --include=dev",
   "outputDirectory": "client/dist",
   "regions": [
@@ -28,7 +37,8 @@
         "X-Frame-Options": "DENY",
         "Referrer-Policy": "no-referrer",
         "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests"
+        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests",
+        "Permissions-Policy": "camera=(self), microphone=(), geolocation=(self), usb=(), browsing-topics=()"
       },
       "continue": true
     },

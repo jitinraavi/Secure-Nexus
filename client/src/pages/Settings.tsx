@@ -19,6 +19,7 @@ import { formatDate } from "../lib/format";
 import { cn } from "../lib/cn";
 import { useTheme, type ThemeMode } from "../theme";
 import { PageIntro } from "../components/PageIntro";
+import { sessionDeviceLabel } from "../lib/sessionDevice";
 
 export function Settings() {
   const { user, refresh } = useAuth();
@@ -358,11 +359,12 @@ export function Settings() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="font-semibold text-slate-100">Active sessions</h2>
-            <p className="mt-1 text-sm text-slate-400">Devices currently signed in to your account.</p>
+            <p className="mt-1 text-sm text-slate-400">Sessions confirmed active at the latest refresh. Expired and revoked sessions are excluded.</p>
           </div>
+          <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" loading={sessionLoading} onClick={() => void loadSessions()}>Refresh sessions</Button>
           <Button variant="secondary" size="sm" onClick={() => void revokeOthers().then(loadSessions).catch(error => toast.push({ title: "Could not sign out other devices", description: error instanceof Error ? error.message : undefined, tone: "error" }))}>
             Sign out all other devices
-          </Button>
+          </Button></div>
         </div>
         {sessionError && <div className="mt-4"><p role="alert" className="text-sm text-rose-300">{sessionError}</p><Button variant="secondary" size="sm" className="mt-2" onClick={() => void loadSessions()}>Retry loading sessions</Button></div>}
         {sessionLoading ? (
@@ -373,11 +375,11 @@ export function Settings() {
               <div key={s.id} className="flex items-center justify-between gap-3 py-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-medium text-slate-200">{s.user_agent || "Unknown device"}</p>
+                    <p className="truncate text-sm font-medium text-slate-200">{sessionDeviceLabel(s.user_agent)}</p>
                     {s.current && <Badge tone="emerald">This device</Badge>}
                   </div>
                   <p className="mt-0.5 text-xs text-slate-500">
-                    {s.ip ?? "local"} · signed in {formatDate(s.last_seen_at)} · expires {formatDate(s.expires_at)}
+                    {s.ip ?? "Network address not recorded"} · signed in {formatDate(s.created_at)} · last active {formatDate(s.last_seen_at)} · expires {formatDate(s.expires_at)}
                   </p>
                 </div>
                 {!s.current && (

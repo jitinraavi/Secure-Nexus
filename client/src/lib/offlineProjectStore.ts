@@ -1,5 +1,8 @@
 import type { Design, Project, ProjectType } from "../types";
 import { captureLocalWrite, localWriteAllowed, subscribeLocalDataFence } from "./localDataFence";
+import { CacheCapacityError, planCacheWrite } from "./cacheCapacity";
+import { offlineQueueStore } from "./offlineQueue";
+import { exportAccountDrafts } from "./offlineDraft";
 
 export interface CachedProjectRecord {
   userId: string;
@@ -35,7 +38,7 @@ export interface StorageQuotaInfo {
 }
 
 const DB_NAME = "groundwork_offline_projects_v2";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_PROJECTS = "cached_projects";
 const STORE_SNAPSHOTS = "cached_snapshots";
 
@@ -50,15 +53,23 @@ class OfflineProjectStore {
   private getDB(): Promise<IDBDatabase> {
     if (this.dbPromise) return this.dbPromise;
 
-    this.dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+    const opening = new Promise<IDBDatabase>((resolve, reject) => {
       if (typeof window === "undefined" || !("indexedDB" in window)) {
         reject(new Error("IndexedDB is not supported in this environment"));
         return;
       }
 
       const request = indexedDB.open(DB_NAME, DB_VERSION);
+      let settled = false;
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true; clearTimeout(timeout); reject(error);
+      };
+      const timeout = setTimeout(() => fail(new Error("Browser cache did not open. Close older Groundwork tabs and retry.")), 10_000);
+      request.onblocked = () => fail(new Error("An older Groundwork tab is blocking the browser cache update. Close it and retry."));
 
       request.onupgradeneeded = () => {
+        if (settled) { request.transaction?.abort(); return; }
         const db = request.result;
 
         if (!db.objectStoreNames.contains(STORE_PROJECTS)) {
@@ -76,13 +87,21 @@ class OfflineProjectStore {
           snapshotStore.createIndex("by_user_project", ["userId", "projectId"], { unique: false });
           snapshotStore.createIndex("by_created", "createdAt", { unique: false });
         }
+        const snapshots = request.transaction!.objectStore(STORE_SNAPSHOTS);
+        if (!snapshots.indexNames.contains("by_user")) snapshots.createIndex("by_user", "userId", { unique: false });
       };
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        if (settled) { request.result.close(); return; }
+        settled = true; clearTimeout(timeout);
+        request.result.onversionchange = () => { request.result.close(); if (this.dbPromise === opening) this.dbPromise = null; };
+        resolve(request.result);
+      };
+      request.onerror = () => fail(request.error);
     });
-
-    return this.dbPromise;
+    this.dbPromise = opening;
+    void opening.catch(() => { if (this.dbPromise === opening) this.dbPromise = null; });
+    return opening;
   }
 
   private estimateSize(obj: unknown): number {
@@ -107,8 +126,6 @@ class OfflineProjectStore {
     if (write === null) return;
 
     const sizeBytes = this.estimateSize({ project, design });
-    await this.ensureStorageCapacity(userId, sizeBytes, protectedProjectIds);
-    if (!localWriteAllowed(userId, write)) return;
 
     const now = Date.now();
     const record: CachedProjectRecord = {
@@ -126,18 +143,21 @@ class OfflineProjectStore {
     };
 
     const cacheKey = `${userId}:${project.id}`;
-    this.memoryCache.set(cacheKey, record);
-
+    let protectedIds: Set<string> | undefined;
     try {
+      protectedIds = await this.collectProtectedProjectIds(userId, protectedProjectIds);
       const db = await this.getDB();
       if (!localWriteAllowed(userId, write)) return;
-      const tx = db.transaction(STORE_PROJECTS, "readwrite");
-      tx.objectStore(STORE_PROJECTS).put(record);
-      await new Promise<void>((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
+      await this.persistEntry(db, userId, write, { project: record }, protectedIds);
     } catch (err) {
+      if (protectedIds && (typeof window === "undefined" || !("indexedDB" in window))) {
+        try {
+          const plan = planCacheWrite(this.exportUserMemory(userId), [], { project: record }, protectedIds, this.budget);
+          if (!localWriteAllowed(userId, write)) return;
+          for (const id of plan.removeProjects) this.memoryCache.delete(`${userId}:${id}`);
+          this.memoryCache.set(cacheKey, record);
+        } catch { /* Preserve existing recovery copies when capacity is unavailable. */ }
+      }
       if (typeof window !== "undefined" && "indexedDB" in window) {
         console.warn("[OfflineProjectStore] Could not persist project to IndexedDB:", err);
       }
@@ -216,6 +236,7 @@ class OfflineProjectStore {
     userId: string,
     projectId: string,
     snapshot: { id: string; revision: number; description?: string; snapshotData: string },
+    protectedProjectIds: Set<string> = new Set(),
   ): Promise<void> {
     const write = captureLocalWrite(userId);
     if (write === null) return;
@@ -235,34 +256,10 @@ class OfflineProjectStore {
     };
 
     try {
+      const protectedIds = await this.collectProtectedProjectIds(userId, protectedProjectIds);
       const db = await this.getDB();
       if (!localWriteAllowed(userId, write)) return;
-      const tx = db.transaction(STORE_SNAPSHOTS, "readwrite");
-      const store = tx.objectStore(STORE_SNAPSHOTS);
-
-      // Check existing snapshots count for this project
-      const index = store.index("by_user_project");
-      const existingReq = index.getAll([userId, projectId]);
-      const existing = await new Promise<CachedSnapshotRecord[]>((resolve, reject) => {
-        existingReq.onsuccess = () => resolve((existingReq.result as CachedSnapshotRecord[]) || []);
-        existingReq.onerror = () => reject(existingReq.error);
-      });
-
-      // Evict oldest if exceeding limit
-      if (existing.length >= MAX_SNAPSHOTS_PER_PROJECT) {
-        existing.sort((a, b) => a.createdAt - b.createdAt);
-        const toDelete = existing.slice(0, existing.length - MAX_SNAPSHOTS_PER_PROJECT + 1);
-        for (const item of toDelete) {
-          store.delete([item.userId, item.projectId, item.snapshotId]);
-        }
-      }
-
-      if (!localWriteAllowed(userId, write)) return;
-      store.put(record);
-      await new Promise<void>((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
+      await this.persistEntry(db, userId, write, { snapshot: record }, protectedIds);
     } catch (err) {
       if (typeof window !== "undefined" && "indexedDB" in window) {
         console.warn("[OfflineProjectStore] Could not cache snapshot:", err);
@@ -340,56 +337,66 @@ class OfflineProjectStore {
    * Ensure user's cached storage stays within bounded limits using LRU eviction.
    * Never evicts projects that have pending offline queue items (`protectedProjectIds`).
    */
-  private async ensureStorageCapacity(
-    userId: string,
-    incomingBytes: number,
-    protectedProjectIds: Set<string>,
-  ): Promise<void> {
-    const projects = await this.listCachedProjects(userId);
-    let totalBytes = projects.reduce((acc, p) => acc + (p.sizeBytes || 0), 0);
+  private readonly budget = { maxBytes: MAX_USER_STORAGE_BYTES, maxProjects: MAX_PROJECTS_PER_USER, maxSnapshots: MAX_SNAPSHOTS_PER_PROJECT };
 
-    if (totalBytes + incomingBytes <= MAX_USER_STORAGE_BYTES && projects.length < MAX_PROJECTS_PER_USER) {
-      return;
-    }
-
-    // Sort projects from least recently accessed to most recently accessed
-    const candidates = projects
-      .filter((p) => !protectedProjectIds.has(p.projectId))
-      .sort((a, b) => a.lastAccessedAt - b.lastAccessedAt);
-
+  /** Callers cannot accidentally evict recovery copies by omitting the optional set. */
+  private async collectProtectedProjectIds(userId: string, explicit: ReadonlySet<string>): Promise<Set<string>> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const db = await this.getDB();
-      const tx = db.transaction([STORE_PROJECTS, STORE_SNAPSHOTS], "readwrite");
-      const pStore = tx.objectStore(STORE_PROJECTS);
-      const sStore = tx.objectStore(STORE_SNAPSHOTS);
+      const queue = await Promise.race([
+        offlineQueueStore.listQueue(userId, undefined, { requireDurable: true }),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Recovery queue could not be checked; browser cache was left unchanged.")), 10_000); }),
+      ]);
+      const protectedIds = new Set(explicit);
+      for (const item of queue) if (item.userId === userId && item.status !== "completed" && item.status !== "superseded") protectedIds.add(item.projectId);
+      this.protectDraftProjects(userId, protectedIds);
+      return protectedIds;
+    } finally { clearTimeout(timeout); }
+  }
 
-      for (const candidate of candidates) {
-        if (totalBytes + incomingBytes <= MAX_USER_STORAGE_BYTES && projects.length <= MAX_PROJECTS_PER_USER) {
-          break;
-        }
-
-        // Delete project and remove from memory cache
-        pStore.delete([candidate.userId, candidate.projectId]);
-        this.memoryCache.delete(`${candidate.userId}:${candidate.projectId}`);
-        totalBytes -= candidate.sizeBytes;
-
-        // Delete associated snapshots
-        const sIndex = sStore.index("by_user_project");
-        const sReq = sIndex.getAllKeys([candidate.userId, candidate.projectId]);
-        sReq.onsuccess = () => {
-          for (const key of sReq.result) {
-            sStore.delete(key);
-          }
-        };
-      }
-
-      await new Promise<void>((resolve) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-      });
-    } catch {
-      /* ignore */
+  private protectDraftProjects(userId: string, protectedIds: Set<string>): void {
+    const prefix = `groundwork:draft:v2:${encodeURIComponent(userId)}:`, legacyPrefix = `groundwork:draft:${userId}:`;
+    // Keys alone protect even a damaged recovery record; cache eviction must not discard its base.
+    for (const draft of exportAccountDrafts(userId)) {
+      if (draft.key.startsWith(prefix)) {
+        const project = draft.key.slice(prefix.length).split(":")[0];
+        try { if (project) protectedIds.add(decodeURIComponent(project)); } catch { throw new Error("A recovery key could not be checked; browser cache was left unchanged."); }
+      } else if (draft.key.startsWith(legacyPrefix)) protectedIds.add(draft.key.slice(legacyPrefix.length));
     }
+  }
+
+  /** Read, plan, evict and insert under one serialized IndexedDB transaction. */
+  private persistEntry(db: IDBDatabase, userId: string, write: NonNullable<ReturnType<typeof captureLocalWrite>>,
+    incoming: { project?: CachedProjectRecord; snapshot?: CachedSnapshotRecord }, protectedIds: Set<string>): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE_PROJECTS, STORE_SNAPSHOTS], "readwrite");
+      const pStore = tx.objectStore(STORE_PROJECTS), sStore = tx.objectStore(STORE_SNAPSHOTS);
+      const pRequest = pStore.index("by_user").getAll(userId), sRequest = sStore.index("by_user").getAll(userId);
+      let remaining = 2, failure: unknown, plan: ReturnType<typeof planCacheWrite> | undefined;
+      const prepare = () => {
+        if (--remaining) return;
+        try {
+          if (!localWriteAllowed(userId, write)) throw new Error("Local cache write was cancelled during account transition.");
+          const projects = (pRequest.result as CachedProjectRecord[]).filter(item => item.userId === userId);
+          const snapshots = (sRequest.result as CachedSnapshotRecord[]).filter(item => item.userId === userId);
+          this.protectDraftProjects(userId, protectedIds);
+          plan = planCacheWrite(projects, snapshots, incoming, protectedIds, this.budget);
+          for (const id of plan.removeProjects) pStore.delete([userId, id]);
+          for (const item of plan.removeSnapshots) sStore.delete([userId, item.projectId, item.snapshotId]);
+          if (incoming.project) pStore.put(incoming.project);
+          if (incoming.snapshot) sStore.put(incoming.snapshot);
+        } catch (error) { failure = error; tx.abort(); }
+      };
+      pRequest.onsuccess = prepare; sRequest.onsuccess = prepare;
+      tx.oncomplete = () => {
+        if (localWriteAllowed(userId, write)) {
+          for (const id of plan?.removeProjects ?? []) this.memoryCache.delete(`${userId}:${id}`);
+          if (incoming.project) this.memoryCache.set(`${userId}:${incoming.project.projectId}`, incoming.project);
+        }
+        resolve();
+      };
+      tx.onabort = tx.onerror = () => reject(failure ?? tx.error ?? new CacheCapacityError());
+    });
   }
 
   /**

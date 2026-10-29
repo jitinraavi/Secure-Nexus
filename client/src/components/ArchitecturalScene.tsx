@@ -57,7 +57,7 @@ export function ArchitecturalScene({ variant = "pavilion", className = "", inter
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.25;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.setClearColor(0x171d1a, 0);
     renderer.domElement.setAttribute("aria-hidden", "true");
     renderer.domElement.style.display = "block";

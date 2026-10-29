@@ -106,6 +106,32 @@ async function session(userId: string, pending = false) {
 const seedRow = async (id: string) => await db.prepare("SELECT totp_secret FROM users WHERE id=?").get(id) as {
     totp_secret: string | null;
 };
+test("session listing excludes expired, revoked, stale-epoch, pending and other-account records", async () => {
+    const account = await user(), otherAccount = await user();
+    const owner = await session(account.id), valid = await session(account.id);
+    const expired = await session(account.id), boundary = await session(account.id);
+    const revoked = await session(account.id), markedRevoked = await session(account.id);
+    const stale = await session(account.id), pending = await session(account.id, true);
+    const foreign = await session(otherAccount.id);
+    await db.prepare("UPDATE sessions SET expires_at=? WHERE id=?").run(now() - 1, expired.id);
+    await db.prepare("UPDATE sessions SET expires_at=? WHERE id=?").run(now(), boundary.id);
+    await db.prepare("UPDATE sessions SET status='revoked',revoked_at=? WHERE id=?").run(now(), revoked.id);
+    await db.prepare("UPDATE sessions SET revoked_at=? WHERE id=?").run(now(), markedRevoked.id);
+    await db.prepare("UPDATE sessions SET credential_version=credential_version-1 WHERE id=?").run(stale.id);
+    const before = now(), result = await owner.client.request("GET", "/api/auth/sessions");
+    assert.equal(result.status, 200);
+    assert.ok(Number(result.body.checkedAt) >= before && Number(result.body.checkedAt) <= now());
+    const rows = result.body.sessions as { id: string; current: boolean; expires_at: number }[];
+    assert.deepEqual(new Set(rows.map(row => row.id)), new Set([owner.id, valid.id]));
+    assert.equal(rows.find(row => row.id === owner.id)?.current, true);
+    assert.equal(rows.find(row => row.id === valid.id)?.current, false);
+    assert.ok(rows.every(row => row.expires_at > Number(result.body.checkedAt)));
+    assert.ok(!rows.some(row => row.id === foreign.id));
+    assert.equal((await pending.client.request("GET", "/api/auth/sessions")).status, 401);
+    assert.equal((await expired.client.request("GET", "/api/auth/sessions")).status, 401);
+    assert.equal((await markedRevoked.client.request("GET", "/api/auth/sessions")).status, 401);
+    assert.equal((await new Client("", "").request("GET", "/api/auth/sessions")).status, 401);
+});
 test("legacy seeds migrate and previous-key seeds reseal without disabling MFA", async () => {
     const migrated = (await seedRow("legacy-user")).totp_secret!;
     const rotated = (await seedRow("rotated-user")).totp_secret!;

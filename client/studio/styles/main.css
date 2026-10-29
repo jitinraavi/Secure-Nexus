@@ -7,3 +7,12 @@
 @import './projects.css';
 @import './process.css';
 @import './footer.css';
+
+/* Supporting copy remains readable on narrow displays. */
+@media (max-width: 600px) {
+  .eyebrow, .micro-label, .hero-eyebrow { font-size: 10px; line-height: 1.6; }
+  .hero-statement p { font-size: 15px; line-height: 1.7; }
+  .hero-statement .text-link { min-height: 44px; }
+  .hero-statement { max-width: 280px; }
+  .motion-toggle, .menu-toggle { min-width: 40px; min-height: 40px; }
+}

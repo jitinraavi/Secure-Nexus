@@ -184,7 +184,7 @@ class OfflineQueueStore {
   /**
    * List all queue items for the given user, optionally filtered by status.
    */
-  async listQueue(userId: string, filterStatus?: OfflineQueueStatus): Promise<OfflineQueueItem[]> {
+  async listQueue(userId: string, filterStatus?: OfflineQueueStatus, options: { requireDurable?: boolean } = {}): Promise<OfflineQueueItem[]> {
     if (!userId) return [];
 
     try {
@@ -204,7 +204,9 @@ class OfflineQueueStore {
         filtered = filtered.filter((item) => item.status === filterStatus);
       }
       return filtered.sort((a, b) => b.createdAt - a.createdAt);
-    } catch {
+    } catch (error) {
+      // Eviction callers must not mistake a partial memory view for an empty durable queue.
+      if (options.requireDurable && typeof window !== "undefined" && "indexedDB" in window) throw error;
       let filtered = Array.from(this.memoryQueue.values()).filter((item) => item.userId === userId);
       if (filterStatus) {
         filtered = filtered.filter((item) => item.status === filterStatus);

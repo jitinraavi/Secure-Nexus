@@ -4,7 +4,7 @@ import { Badge, Button, Card, Modal } from "./ui";
 import { useOfflineSync } from "../lib/offlineSyncManager";
 import { offlineQueueStore, type OfflineQueueItem, type OfflineQueueStatus } from "../lib/offlineQueue";
 import { offlineProjectStore, type StorageQuotaInfo } from "../lib/offlineProjectStore";
-import { refreshOfflineShellStatus, useOfflineShellStatus } from "../lib/pwa";
+import { prepareOfflineShell, refreshOfflineShellStatus, useOfflineShellStatus } from "../lib/pwa";
 
 function downloadJson(filename: string, data: unknown) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -173,10 +173,14 @@ export function OfflineSyncIndicator() {
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-medium text-slate-400">Application Shell</span>
                 <Badge tone={shell.phase === "ready" ? "emerald" : shell.phase === "failed" ? "rose" : "amber"}>
-                  {shell.phase === "ready" ? "Verified cache ready" : shell.phase === "prepared" ? "Prepared; reopen app" : shell.phase === "installing" ? "Preparing" : shell.phase === "failed" ? "Readiness unverified" : "Unavailable"}
+                  {shell.phase === "ready" ? "Verified cache ready" : shell.phase === "prepared" ? "Prepared; reopen app" : shell.phase === "installing" ? "Preparing" : shell.phase === "failed" ? "Readiness unverified" : shell.phase === "available" ? "Optional; not prepared" : "Unavailable"}
                 </Badge>
               </div>
               {shell.message && <p className="mt-2 text-xs text-slate-400">{shell.message}</p>}
+              {(shell.phase === "available" || shell.phase === "failed") && <div className="mt-3 space-y-2">
+                <p className="text-xs text-slate-400">Preparing downloads the complete public app files, including specialist tools and images, and can use several MiB of data/storage. Saved project access and recovery copies are separate. Choose when to prepare, especially on a metered connection.</p>
+                <Button size="sm" variant="outline" disabled={!sync.isOnline} onClick={() => void prepareOfflineShell()}>{shell.phase === "failed" ? "Retry offline preparation" : "Prepare offline files"}</Button>
+              </div>}
               {shell.phase === "ready" && <p className="mt-2 text-xs text-slate-400">{shell.files} public files · {(shell.bytes / (1024 * 1024)).toFixed(1)} MiB. Project access and saved data are checked separately.</p>}
               {shell.updateWaiting && <p className="mt-2 text-xs text-amber-300">An update is waiting. Save your work, close all Groundwork tabs, then reopen the app. Current editor tabs keep their existing version.</p>}
               {dataError && <p role="alert" className="mt-2 text-xs text-rose-300">{dataError}</p>}

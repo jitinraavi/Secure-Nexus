@@ -56,7 +56,7 @@ app.use(
         scriptSrc: IS_PROD ? ["'self'"] : ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "blob:"],
-        connectSrc: ["'self'", "ws:", "wss:"],
+        connectSrc: IS_PROD ? ["'self'"] : ["'self'", "ws:", "wss:"],
         fontSrc: ["'self'", "data:"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
@@ -69,6 +69,12 @@ app.use(
     crossOriginEmbedderPolicy: false,
   }),
 );
+
+app.use((_req, res, next) => {
+  // Camera and location are available only to this app; unrelated device APIs are disabled.
+  res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=(self), usb=(), browsing-topics=()");
+  next();
+});
 
 // Stable v1 prefix; retain the original path for existing installed clients.
 app.use((req, res, next) => {

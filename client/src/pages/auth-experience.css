@@ -318,3 +318,15 @@ html.studio-auth-open .gw-toast-stack > div > p + p { color: #64685b; }
   .gw-public.public-auth .auth-perspective-card { bottom: 18%; }
   .gw-public.public-auth .public-auth-art-copy > p:last-child { max-width: 165px; }
 }
+
+/* Account tasks precede decorative artwork on small screens. */
+.gw-public.public-auth .public-auth-content:focus { outline: none; }
+.gw-public.public-auth .public-auth-footnote { font-size: 12px; line-height: 1.8; }
+.gw-public.public-auth .public-auth-footnote a { text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 780px) {
+  .gw-public.public-auth .public-auth-content { order: -1; max-width: 100%; }
+  .gw-public.public-auth .public-auth-art { margin-top: 12px; }
+  .gw-public.public-auth .public-auth-progress { font-size: 11px; }
+  .gw-public.public-auth .auth-card h1 + p { font-size: 15px; }
+  .gw-public.public-auth .public-auth-back { min-width: 32px; min-height: 44px; justify-content: center; }
+}

@@ -39,15 +39,17 @@ function box(page: PdfPage, x: number, y: number, w: number, h: number, gray = 0
   command(page, `${gray} G ${num(x)} ${num(y)} ${num(w)} ${num(h)} re S`);
 }
 function fill(page: PdfPage, x: number, y: number, w: number, h: number, gray = 0.96) {
-  command(page, `${gray} g ${num(x)} ${num(y)} ${num(w)} ${num(h)} re f 0 G`);
+  command(page, `${gray} g ${num(x)} ${num(y)} ${num(w)} ${num(h)} re f 0 g 0 G`);
 }
 function titleBlock(page: PdfPage, projectName: string, definition: DocumentationSheet, docs: DocumentationMetadata, continuation: number, view?: DocumentationView) {
   box(page, margin, margin, W - margin * 2, H - margin * 2, 0.15);
+  fill(page, margin + 12, H - 53, W - margin * 2 - 24, 18, 0.93);
+  text(page, "SCHEMATIC / NOT TO SCALE / NOT FOR CONSTRUCTION", margin + 18, H - 47, 9, true);
   line(page, margin, 58, W - margin, 58, 0.15);
   text(page, definition.titleBlock || docs.titleBlock || "GROUNDWORK DESIGN STUDIO", margin + 8, 42, 8, true);
   text(page, safe(projectName).toUpperCase(), 250, 42, 8, true);
   text(page, `${definition.number}${continuation > 1 ? ` / ${continuation}` : ""} | ${definition.name}`.slice(0, 40), W - 205, 42, 8, true);
-  text(page, `${docs.projectNumber} | ${docs.client || "UNASSIGNED CLIENT"} | ${docs.issueDate} | ${view ? `${view.orientation.toUpperCase()} (schematic)` : ""}`.slice(0, 100), margin + 8, 67, 7, true);
+  text(page, `${docs.projectNumber} | ${docs.client || "UNASSIGNED CLIENT"} | ${docs.issueDate}${view ? " | SCHEMATIC VIEW" : ""}`.slice(0, 100), margin + 8, 67, 7, true);
   text(page, docs.status.toUpperCase(), W - 115, 67, 7, true);
 }
 function heading(page: PdfPage, value: string) {
@@ -177,6 +179,8 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
     const p: PdfPage = [];
     pageBudgets.set(p, budget);
     titleBlock(p, projectName, sheet, docs, count, view); heading(p, label);
+    const omittedCadObjects = (design.community?.drafts ?? design.infra?.drafts ?? design.drafts ?? []).length;
+    if (omittedCadObjects) text(p, `${omittedCadObjects} authored CAD object(s) are not drawn in PDF views. Schedules list supported records; use model exports for geometry.`, 46, H - 96, 7, true);
     const revisions = sheet.revisionIds === undefined ? docs.revisions : docs.revisions.filter(revision => sheet.revisionIds!.includes(revision.id));
     const latest = revisions[revisions.length - 1];
     if (latest) text(p, `Revision ${latest.number} | ${latest.date} | ${latest.description}`.slice(0, 120), 70, 82, 7);
@@ -241,9 +245,9 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
   for (const sheet of sheets) {
     if (sheet.number === "G-001") {
       const p = page(sheet);
-      text(p, safe(projectName).toUpperCase().slice(0, 40), 90, 385, 25, true); text(p, "PRELIMINARY SHEET PRODUCTION SET", 90, 355, 13);
+      text(p, safe(projectName).toUpperCase().slice(0, 40), 90, 385, 25, true); text(p, "SCHEMATIC REVIEW SET - NOT FOR CONSTRUCTION", 90, 355, 13);
       text(p, `${docs.status.toUpperCase()} | ${docs.views.filter(view => view.visible).length} visible views | ${docs.schedules.length} schedules`, 90, 320, 9);
-      text(p, "Geometry pages are fitted schematic studies. Requested scale/orientation are metadata.", 90, 290, 8);
+      text(p, "NOT TO SCALE. Geometry is fitted to the page; recorded scale/orientation are metadata only.", 90, 290, 8);
       text(p, "Live schedules include stored occurrences; envelope areas and volumes are approximate.", 90, 272, 8);
       text(p, `SCREENING PROFILE: ${compliance.profile.name}`, 90, 240, 8, true);
       listPages(sheet, "Sheet index", docs.sheets.map(item => `${item.number} ${item.name} | ${item.viewIds.length} bound view(s)`));
@@ -266,7 +270,7 @@ function buildPages(projectName: string, design: Design): PdfPage[] {
           continue;
         }
         const p = page(sheet, view.name, view);
-        text(p, `Requested ${view.scale} / ${view.orientation} | schematic fit; dimensions shown as stored`.slice(0, 120), 70, 485, 7);
+        text(p, `RECORDED METADATA ONLY: scale ${view.scale} / orientation ${view.orientation}`.slice(0, 120), 70, 485, 7);
         if (!view.visible) text(p, `VIEW HIDDEN: ${view.name}`, 90, 430, 9);
         else if (view.kind === "plan") renderPlan(p); else if (view.kind === "elevation") renderElevation(p); else if (view.kind === "section") renderSection(p);
         else text(p, "Detail view has no generated detail geometry; annotations follow on continuation pages.", 90, 430, 8);
